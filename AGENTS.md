@@ -1,6 +1,7 @@
 # AGENTS.md
 
 Read this file before doing any work in this repository. It defines the architecture, the contracts between components, and the rules every change must follow. If a task conflicts with this file, stop and ask the maintainer instead of guessing.
+As an agent, don't add your signature to commits or PRs.
 
 ---
 
