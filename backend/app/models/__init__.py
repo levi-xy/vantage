@@ -9,6 +9,7 @@ from app.models.channel import Channel, ChannelType
 from app.models.dashboard import Dashboard
 from app.models.instance import Instance
 from app.models.link import Link
+from app.models.session import UserSession
 from app.models.setting import Setting
 from app.models.user import Role, User
 
@@ -25,4 +26,5 @@ __all__ = [
     "Role",
     "Setting",
     "User",
+    "UserSession",
 ]

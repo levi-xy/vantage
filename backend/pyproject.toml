@@ -11,6 +11,8 @@ dependencies = [
     "alembic>=1.14,<2",
     # AES-GCM and HKDF for secrets at rest (M1.2).
     "cryptography>=46,<51",
+    # Password hashing (M1.3).
+    "argon2-cffi>=25.1,<26",
 ]
 
 [project.optional-dependencies]

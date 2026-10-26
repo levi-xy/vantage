@@ -14,6 +14,9 @@ services:
       VANTAGE_DATABASE_URL: ${VANTAGE_DATABASE_URL:-sqlite:////data/vantage.db}
       VANTAGE_MASTER_KEY_FILE: /run/secrets/master_key
       VANTAGE_PROMETHEUS_TOKEN_FILE: /run/secrets/prometheus_token
+      VANTAGE_COOKIE_SECURE: ${VANTAGE_COOKIE_SECURE:-true}
+      VANTAGE_SESSION_MAX_HOURS: ${VANTAGE_SESSION_MAX_HOURS:-12}
+      VANTAGE_SESSION_IDLE_MINUTES: ${VANTAGE_SESSION_IDLE_MINUTES:-120}
     secrets: [master_key, prometheus_token]
     volumes:
       - backend-data:/data

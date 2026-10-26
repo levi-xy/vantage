@@ -24,6 +24,12 @@ class Settings:
     database_url: str = DEFAULT_DATABASE_URL
     # Interactive API docs (/docs, /redoc, /openapi.json). Off by default; for development only.
     api_docs: bool = False
+    # Mark session cookies Secure. Only turn off to reach the UI over plain HTTP on a LAN
+    # before HTTPS is set up (M8.1); browsers treat http://localhost as secure anyway.
+    cookie_secure: bool = True
+    # A session ends this long after login, or after this long without any request.
+    session_max_hours: int = 12
+    session_idle_minutes: int = 120
 
 
 def _parse_bool(name: str, raw: str) -> bool:
@@ -33,6 +39,19 @@ def _parse_bool(name: str, raw: str) -> bool:
     if value in _FALSE:
         return False
     raise ConfigError(f"{name} must be true or false")
+
+
+def _parse_int(name: str, raw: str, default: int, low: int, high: int) -> int:
+    value = raw.strip()
+    if not value:
+        return default
+    try:
+        number = int(value)
+    except ValueError:
+        number = low - 1
+    if not low <= number <= high:
+        raise ConfigError(f"{name} must be a whole number from {low} to {high}")
+    return number
 
 
 def normalize_database_url(url: str) -> str:
@@ -60,7 +79,22 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         normalize_database_url(env.get("VANTAGE_DATABASE_URL") or DEFAULT_DATABASE_URL)
     )
     api_docs = _parse_bool("VANTAGE_API_DOCS", env.get("VANTAGE_API_DOCS", ""))
-    return Settings(database_url=database_url, api_docs=api_docs)
+    cookie_secure = _parse_bool(
+        "VANTAGE_COOKIE_SECURE", env.get("VANTAGE_COOKIE_SECURE", "").strip() or "true"
+    )
+    session_max_hours = _parse_int(
+        "VANTAGE_SESSION_MAX_HOURS", env.get("VANTAGE_SESSION_MAX_HOURS", ""), 12, 1, 720
+    )
+    session_idle_minutes = _parse_int(
+        "VANTAGE_SESSION_IDLE_MINUTES", env.get("VANTAGE_SESSION_IDLE_MINUTES", ""), 120, 5, 43200
+    )
+    return Settings(
+        database_url=database_url,
+        api_docs=api_docs,
+        cookie_secure=cookie_secure,
+        session_max_hours=session_max_hours,
+        session_idle_minutes=session_idle_minutes,
+    )
 
 
 @lru_cache(maxsize=1)

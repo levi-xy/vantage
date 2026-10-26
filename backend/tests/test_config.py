@@ -49,3 +49,40 @@ def test_api_docs_flag(raw: str, expected: bool) -> None:
 def test_invalid_bool_is_rejected() -> None:
     with pytest.raises(ConfigError, match="VANTAGE_API_DOCS"):
         load_settings({"VANTAGE_API_DOCS": "maybe"})
+
+
+def test_session_defaults_are_secure() -> None:
+    settings = load_settings({})
+    assert settings.cookie_secure is True
+    assert settings.session_max_hours == 12
+    assert settings.session_idle_minutes == 120
+
+
+@pytest.mark.parametrize("raw", ["", "  "])
+def test_empty_cookie_secure_stays_on(raw: str) -> None:
+    assert load_settings({"VANTAGE_COOKIE_SECURE": raw}).cookie_secure is True
+
+
+def test_cookie_secure_can_be_turned_off() -> None:
+    assert load_settings({"VANTAGE_COOKIE_SECURE": "false"}).cookie_secure is False
+
+
+def test_session_lengths_are_read() -> None:
+    env = {"VANTAGE_SESSION_MAX_HOURS": "24", "VANTAGE_SESSION_IDLE_MINUTES": "30"}
+    settings = load_settings(env)
+    assert (settings.session_max_hours, settings.session_idle_minutes) == (24, 30)
+
+
+@pytest.mark.parametrize(
+    "name,raw",
+    [
+        ("VANTAGE_SESSION_MAX_HOURS", "0"),
+        ("VANTAGE_SESSION_MAX_HOURS", "721"),
+        ("VANTAGE_SESSION_MAX_HOURS", "twelve"),
+        ("VANTAGE_SESSION_IDLE_MINUTES", "1"),
+        ("VANTAGE_COOKIE_SECURE", "maybe"),
+    ],
+)
+def test_bad_session_settings_are_rejected(name: str, raw: str) -> None:
+    with pytest.raises(ConfigError, match=name):
+        load_settings({name: raw})
