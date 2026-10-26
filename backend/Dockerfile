@@ -16,4 +16,4 @@ RUN pip install ".[postgres]" && useradd --system --uid 10001 --no-create-home v
 USER vantage
 EXPOSE 8000
 # Apply database migrations, then start the API.
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn --factory app.main:create_app --host 0.0.0.0 --port 8000"]
