@@ -183,25 +183,23 @@ ALLOWED = [
 
 
 @pytest.mark.parametrize("address", DENIED)
-@pytest.mark.parametrize("allow_public", [False, True])
-def test_denied_addresses(address: str, allow_public: bool) -> None:
+@pytest.mark.parametrize("cloud_host", [False, True])
+def test_denied_addresses(address: str, cloud_host: bool) -> None:
     with pytest.raises(NetGuardError):
-        check_address(ip_address(address), NetPolicy(), allow_public=allow_public)
+        check_address(ip_address(address), NetPolicy(), cloud_host=cloud_host)
 
 
 @pytest.mark.parametrize(("address", "expected"), ALLOWED)
 def test_allowed_addresses(address: str, expected: str) -> None:
-    assert check_address(ip_address(address), NetPolicy(), allow_public=False) == ip_address(
-        expected
-    )
+    assert check_address(ip_address(address), NetPolicy(), cloud_host=False) == ip_address(expected)
 
 
 def test_extra_allowed_cidrs() -> None:
     policy = NetPolicy(extra_allowed=parse_cidrs(["192.0.2.0/24", "2001:db8:1::/48"]))
-    assert check_address(ip_address("192.0.2.7"), policy, allow_public=False)
-    assert check_address(ip_address("2001:db8:1::7"), policy, allow_public=False)
+    assert check_address(ip_address("192.0.2.7"), policy, cloud_host=False)
+    assert check_address(ip_address("2001:db8:1::7"), policy, cloud_host=False)
     with pytest.raises(NetGuardError):
-        check_address(ip_address("198.51.100.7"), policy, allow_public=False)
+        check_address(ip_address("198.51.100.7"), policy, cloud_host=False)
 
 
 @pytest.mark.parametrize(
@@ -211,7 +209,7 @@ def test_extra_allowed_cidrs_never_override_denied(cidr: str) -> None:
     policy = NetPolicy(extra_allowed=parse_cidrs([cidr]))
     for address in ("127.0.0.1", "169.254.169.254", "::1", "fd00:ec2::254", "::ffff:127.0.0.1"):
         with pytest.raises(NetGuardError):
-            check_address(ip_address(address), policy, allow_public=True)
+            check_address(ip_address(address), policy, cloud_host=True)
 
 
 @pytest.mark.parametrize("bad", ["10.0.0.1/8", "not-a-cidr", "10.0.0.0/33", ""])
@@ -224,8 +222,8 @@ def test_own_addresses_denied() -> None:
     policy = NetPolicy(own_addresses=frozenset({IPv4Address("10.0.0.5"), IPv6Address("fd00::5")}))
     for address in ("10.0.0.5", "::ffff:10.0.0.5", "fd00::5"):
         with pytest.raises(NetGuardError):
-            check_address(ip_address(address), policy, allow_public=False)
-    assert check_address(ip_address("10.0.0.6"), policy, allow_public=False)
+            check_address(ip_address(address), policy, cloud_host=False)
+    assert check_address(ip_address("10.0.0.6"), policy, cloud_host=False)
 
 
 def test_discover_own_addresses(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -243,7 +241,7 @@ async def test_default_policy_discovers_own_addresses() -> None:
     """Fail safe: a caller who never mentions own addresses still gets them denied."""
     assert IPv4Address("10.255.0.1") in NetPolicy().own_addresses
     with pytest.raises(NetGuardError):
-        check_address(ip_address("10.255.0.1"), NetPolicy(), allow_public=False)
+        check_address(ip_address("10.255.0.1"), NetPolicy(), cloud_host=False)
     with pytest.raises(NetGuardError):
         await NetGuard(resolver=no_resolver).resolve("10.255.0.1", 80)
     with pytest.raises(NetGuardError):
@@ -252,10 +250,20 @@ async def test_default_policy_discovers_own_addresses() -> None:
     assert NetPolicy(own_addresses=frozenset()).own_addresses == frozenset()
 
 
-def test_public_needs_allow_public(public_test_net: None) -> None:
-    assert check_address(ip_address("192.0.2.10"), NetPolicy(), allow_public=True)
+def test_cloud_host_requires_public_address(public_test_net: None) -> None:
+    for address in ("10.0.0.7", "172.16.0.7", "192.168.0.7", "100.64.0.7", "fc00::7"):
+        with pytest.raises(NetGuardError):
+            check_address(ip_address(address), NetPolicy(), cloud_host=True)
+    # Extra allowed CIDRs don't make a non-public answer acceptable for a cloud host.
+    policy = NetPolicy(extra_allowed=parse_cidrs(["198.51.100.0/24"]))
     with pytest.raises(NetGuardError):
-        check_address(ip_address("192.0.2.10"), NetPolicy(), allow_public=False)
+        check_address(ip_address("198.51.100.7"), policy, cloud_host=True)
+
+
+def test_public_needs_cloud_host(public_test_net: None) -> None:
+    assert check_address(ip_address("192.0.2.10"), NetPolicy(), cloud_host=True)
+    with pytest.raises(NetGuardError):
+        check_address(ip_address("192.0.2.10"), NetPolicy(), cloud_host=False)
 
 
 # --- host parsing ------------------------------------------------------------------
@@ -602,6 +610,12 @@ async def test_cloud_host_over_https_reaches_public_address(public_test_net: Non
     assert context.verify_mode == ssl.CERT_REQUIRED and context.check_hostname
 
 
+async def test_cloud_host_public_only_answers_allowed(public_test_net: None) -> None:
+    resolver = FakeResolver(["192.0.2.50", "192.0.2.51"])
+    guard = NetGuard(cloud_hosts=["api.example.com"], resolver=resolver)
+    assert await guard.resolve("api.example.com", 443, cloud_host=True) == IPv4Address("192.0.2.50")
+
+
 async def test_cloud_host_plain_http_refused(public_test_net: None) -> None:
     backend = RecordingBackend()
     guard = NetGuard(cloud_hosts=["api.example.com"], resolver=no_resolver)
@@ -636,7 +650,23 @@ async def test_undeclared_host_cannot_reach_public(public_test_net: None) -> Non
 
 
 @pytest.mark.parametrize(
-    "answers", [["169.254.169.254"], ["192.0.2.50", "127.0.0.1"], ["::ffff:127.0.0.1"]]
+    "answers",
+    [
+        ["169.254.169.254"],
+        ["192.0.2.50", "127.0.0.1"],
+        ["::ffff:127.0.0.1"],
+        # Cloud hosts must resolve to public addresses only.
+        ["10.0.0.7"],
+        ["100.64.0.7"],
+        ["fc00::7"],
+        ["fd12:3456::7"],
+        ["::ffff:10.0.0.7"],
+        ["192.0.2.50", "10.0.0.7"],
+        ["10.0.0.7", "192.0.2.50"],
+        ["192.0.2.50", "100.64.0.7"],
+        ["192.0.2.50", "fc00::7"],
+        ["198.51.100.7"],  # non-global (documentation) and not our stand-in public range
+    ],
 )
 async def test_cloud_host_still_denied_internal(public_test_net: None, answers: list[str]) -> None:
     backend = RecordingBackend()

@@ -208,9 +208,9 @@ Nothing device-specific is ever added to it.
 `core/net_guard.py` resolves the hostname **once**, checks every resolved address, then connects to that checked address (prevents DNS rebinding).
 
 - **Allowed by default:** RFC 1918, RFC 6598 (CGNAT), IPv6 ULA (`fc00::/7`)
-- **Always denied:** loopback, link-local (`169.254.0.0/16`, `fe80::/10`), `0.0.0.0/8`, multicast, the cloud metadata address, and the Vantage host's own addresses
+- **Always denied:** loopback, link-local (`169.254.0.0/16`, `fe80::/10`), `0.0.0.0/8`, multicast, reserved `240.0.0.0/4` (incl. broadcast), deprecated site-local `fec0::/10`, `::/96` (unspecified, loopback, IPv4-compatible), the cloud metadata addresses (`169.254.169.254`, `fd00:ec2::254`, `100.100.100.200`, `168.63.129.16`), and the Vantage host's own addresses
 - **Configurable:** extra allowed CIDRs via settings (admin only)
-- **Public internet:** only an integration's declared `cloud_hosts`, over HTTPS, with certificate verification on
+- **Public internet:** only an integration's declared `cloud_hosts`, over HTTPS, with certificate verification on; a declared cloud host must resolve to public addresses only (any private, CGNAT, ULA or otherwise non-global answer denies it)
 - Redirects are not followed automatically. If needed, each hop is re-checked
 - Timeouts on every request (connect 5 s, total 15 s by default)
 
