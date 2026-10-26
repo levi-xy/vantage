@@ -46,3 +46,35 @@ Further rules:
 - **Tests.** `backend/tests/test_audit.py` sends known secret values through every
   audited flow. It then scans the raw `audit_log` rows and the `GET /api/v1/audit`
   response to prove none of the values appear.
+
+## Network guard
+
+Every outbound connection to a device or cloud API goes through the SSRF guard in
+`backend/app/core/net_guard.py` (Contract 5 in `AGENTS.md`). In short:
+
+- A hostname is resolved once, every answer is checked, and the connection goes to
+  the checked address, so DNS rebinding can't redirect it.
+- Allowed by default: RFC 1918, RFC 6598 (CGNAT) and IPv6 ULA (`fc00::/7`), plus
+  extra CIDRs an admin configures.
+- Always denied: loopback, link-local, `0.0.0.0/8`, multicast, `240.0.0.0/4`,
+  `fec0::/10`, `::/96`, cloud metadata addresses (`169.254.169.254`, `fd00:ec2::254`,
+  `100.100.100.200`, `168.63.129.16`) and the Vantage host's own addresses.
+  IPv4-mapped, NAT64 (`64:ff9b::/96`, `64:ff9b:1::/48`) and 6to4 forms of denied
+  addresses are denied too.
+- The public internet is reachable only for an integration's declared cloud hosts,
+  over HTTPS with certificate verification, and a cloud host must resolve to public
+  addresses only. For cloud hosts, NAT64 (`64:ff9b::/96`, `64:ff9b:1::/48`), 6to4
+  (`2002::/16`) and `192.0.0.0/24` addresses are never treated as public, because a
+  translated address can carry a private IPv4 address.
+- Redirects are not followed automatically; timeouts are connect 5 s, total 15 s.
+
+### Known limitation: the Docker host's LAN address
+
+"The Vantage host's own addresses" are discovered from inside the process: the
+addresses the hostname resolves to and the source address of the default route.
+When Vantage runs in Docker, that is the **container's** address. The Docker host's
+own LAN address (and the bridge gateway, e.g. `172.17.0.1`) are ordinary private
+addresses from the container's point of view and are **not** denied automatically.
+An admin who adds a device pointing at the Docker host can therefore reach services
+listening on it. If that matters in your setup, bind host services to addresses the
+container can't reach, or firewall the Docker bridge.

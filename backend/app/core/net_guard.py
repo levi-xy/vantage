@@ -13,7 +13,8 @@ Contract 5 (AGENTS.md):
   address is.
 * Extra allowed CIDRs are configurable (admin-only setting).
 * The public internet is reachable only for an integration's declared
-  ``cloud_hosts``, over HTTPS, with certificate verification on.
+  ``cloud_hosts``, over HTTPS, with certificate verification on. A cloud host must
+  resolve to public addresses only; any non-public answer denies it.
 * Redirects are never followed automatically. If a caller opts in per request,
   every hop still goes through the transport and is re-checked.
 * Every request has timeouts: connect 5 s, total 15 s by default.
@@ -114,7 +115,16 @@ ALWAYS_DENIED: tuple[IPNetwork, ...] = (
     IPv6Network("fd00:ec2::254/128"),  # AWS metadata over IPv6 (inside ULA)
 )
 
-_NAT64 = (IPv6Network("64:ff9b::/96"),)  # RFC 6052 well-known prefix
+_NAT64 = (
+    IPv6Network("64:ff9b::/96"),  # RFC 6052 well-known prefix
+    IPv6Network("64:ff9b:1::/48"),  # RFC 8215 local-use prefix (IPv4 judged as the last 32 bits)
+)
+_SIXTOFOUR = IPv6Network("2002::/16")
+
+# Never acceptable as a cloud host's address, even when is_global says "public":
+# NAT64 and 6to4 addresses can carry a private IPv4 address and reach the LAN through a
+# translator, and 192.0.0.0/24 (IETF protocol assignments) has global-looking entries.
+_CLOUD_DENIED: tuple[IPNetwork, ...] = (*_NAT64, _SIXTOFOUR, IPv4Network("192.0.0.0/24"))
 
 
 def parse_cidrs(values: Iterable[str]) -> tuple[IPNetwork, ...]:
@@ -167,8 +177,8 @@ def discover_own_addresses() -> frozenset[IPAddress]:
         ):
             s.connect((probe, 9))
             found.add(_parse_ip(str(s.getsockname()[0])))
-    # TODO(maintainer): inside Docker this sees the container's addresses, not the
-    # Docker host's LAN address. Decide whether to accept an explicit list (env var).
+    # Inside Docker this sees the container's addresses only, not the Docker host's
+    # LAN address (documented in docs/SECURITY.md, "Network guard").
     return frozenset(_unwrap(a) for a in found)
 
 
@@ -192,17 +202,23 @@ def _embedded_ipv4(address: IPv6Address) -> IPv4Address | None:
     return None
 
 
-def check_address(address: IPAddress, policy: NetPolicy, *, allow_public: bool) -> IPAddress:
+def check_address(address: IPAddress, policy: NetPolicy, *, cloud_host: bool) -> IPAddress:
     """Return the address to connect to, or raise :class:`NetGuardError`.
 
-    ``allow_public`` is true only for a declared cloud host reached over HTTPS.
+    ``cloud_host`` is true only for a declared cloud host reached over HTTPS. A cloud
+    host must resolve to public addresses only: a private, CGNAT, ULA or otherwise
+    non-global answer is denied, so a cloud host name can't be pointed at the LAN.
     """
     addr = _unwrap(address)
     if _is_denied(addr, policy):
         raise NetGuardError(f"address {addr} is not allowed")
+    if cloud_host:
+        if any(addr in net for net in _CLOUD_DENIED):
+            raise NetGuardError(f"cloud host resolved to non-public address {addr}")
+        if _is_public(addr):
+            return addr
+        raise NetGuardError(f"cloud host resolved to non-public address {addr}")
     if any(addr in net for net in DEFAULT_ALLOWED + policy.extra_allowed):
-        return addr
-    if allow_public and _is_public(addr):
         return addr
     raise NetGuardError(f"address {addr} is not in an allowed range")
 
@@ -291,7 +307,7 @@ class NetGuard:
         parsed = parse_host(host)
         return isinstance(parsed, str) and parsed in self.cloud_hosts
 
-    async def resolve(self, host: str, port: int, *, allow_public: bool = False) -> IPAddress:
+    async def resolve(self, host: str, port: int, *, cloud_host: bool = False) -> IPAddress:
         """Resolve ``host`` once, check every answer, return the address to use.
 
         If any answer is denied the whole host is denied: an attacker controlling DNS
@@ -301,7 +317,7 @@ class NetGuard:
             raise NetGuardError("invalid port")
         target = parse_host(host)
         if not isinstance(target, str):
-            return check_address(target, self.policy, allow_public=allow_public)
+            return check_address(target, self.policy, cloud_host=cloud_host)
         try:
             answers = await self._resolver(target, port)
         except OSError:
@@ -316,7 +332,7 @@ class NetGuard:
                 raise NetGuardError(f"resolver returned an invalid address for {target}") from None
             if isinstance(address, IPv6Address) and address.scope_id:
                 raise NetGuardError(f"address {address} is not allowed")
-            checked.append(check_address(address, self.policy, allow_public=allow_public))
+            checked.append(check_address(address, self.policy, cloud_host=cloud_host))
         return checked[0]
 
 
@@ -343,10 +359,10 @@ class _GuardedNetworkBackend(httpcore.AsyncNetworkBackend):
         socket_options: Iterable[httpcore.SOCKET_OPTION] | None = None,
     ) -> httpcore.AsyncNetworkStream:
         # The transport only lets a cloud host through over verified HTTPS.
-        allow_public = self._guard.is_cloud_host(host)
+        cloud_host = self._guard.is_cloud_host(host)
         try:
             async with asyncio.timeout(timeout):
-                address = await self._guard.resolve(host, port, allow_public=allow_public)
+                address = await self._guard.resolve(host, port, cloud_host=cloud_host)
         except TimeoutError:
             raise httpcore.ConnectTimeout(f"timed out resolving {host}") from None
         return await self._inner.connect_tcp(
@@ -687,7 +703,7 @@ class GuardedSnmpClient:
 
     async def _target(self) -> Any:
         # SNMP never goes to the public internet: no cloud exemption.
-        address = await self._guard.resolve(self._host, self._port, allow_public=False)
+        address = await self._guard.resolve(self._host, self._port, cloud_host=False)
         if isinstance(address, IPv4Address):
             cls = _checked_target_class(UdpTransportTarget, (str(address), self._port))
         else:
