@@ -1,0 +1,51 @@
+name: vantage
+
+x-hardening: &hardening
+  read_only: true
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+  restart: unless-stopped
+
+services:
+  backend:
+    <<: *hardening
+    build: ../backend
+    environment:
+      VANTAGE_DATABASE_URL: ${VANTAGE_DATABASE_URL:-sqlite:////data/vantage.db}
+      VANTAGE_MASTER_KEY_FILE: /run/secrets/master_key
+      VANTAGE_PROMETHEUS_TOKEN_FILE: /run/secrets/prometheus_token
+    secrets: [master_key, prometheus_token]
+    volumes:
+      - backend-data:/data
+    tmpfs: [/tmp]
+
+  frontend:
+    <<: *hardening
+    build: ../frontend
+    depends_on: [backend]
+    ports:
+      - "${VANTAGE_BIND_ADDRESS:-127.0.0.1}:${VANTAGE_HTTP_PORT:-8080}:8080"
+    tmpfs: [/tmp]
+
+  prometheus:
+    <<: *hardening
+    image: prom/prometheus:v3.0.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${VANTAGE_PROMETHEUS_RETENTION:-30d}
+    secrets: [prometheus_token]
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    # No published port: only the backend talks to Prometheus.
+
+secrets:
+  master_key:
+    file: ./secrets/master.key
+  prometheus_token:
+    file: ./secrets/prometheus_token
+
+volumes:
+  backend-data:
+  prometheus-data:
