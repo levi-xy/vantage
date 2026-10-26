@@ -36,8 +36,13 @@ Further rules:
   object's text form could contain a secret.
 - **Fail closed.** Changes to `instance` and `channel` targets must come with the schema
   that marks their secret fields. If no schema is given, `record()` raises.
-- **What is recorded.** Failed logins are not audited. Successful logins and logouts are
-  audited, with no secret data.
+- **Logins.** Successful logins and logouts are audited, with no secret data. Failed
+  logins that reached the password check are audited as `login_failed`. The username is
+  stored only when it matches an existing user (`target_id` is then that user's id).
+  Otherwise it is recorded as `"<unknown>"`, because the typed text is
+  attacker-controlled and is sometimes a password. The submitted password is never
+  passed in. Attempts refused by the rate limiter (429) are not recorded, so the table
+  can't be flooded.
 - **Tests.** `backend/tests/test_audit.py` sends known secret values through every
   audited flow. It then scans the raw `audit_log` rows and the `GET /api/v1/audit`
   response to prove none of the values appear.

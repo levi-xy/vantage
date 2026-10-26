@@ -365,11 +365,62 @@ def test_login_and_logout_are_recorded(client: TestClient, db: Session) -> None:
     assert rows[0].changes == {}
 
 
-def test_failed_login_writes_nothing(client: TestClient, db: Session) -> None:
-    add_user(db, "viewer1", Role.VIEWER)
-    r = client.post("/api/v1/auth/login", json={"username": "viewer1", "password": "wrong-pw"})
+def raw_contains(engine: Engine, needle: str) -> bool:
+    return needle in raw_audit_table(engine)
+
+
+def test_failed_login_for_a_real_user_is_recorded(client: TestClient, db: Session) -> None:
+    user = add_user(db, "viewer1", Role.VIEWER)
+    wrong = "example-wrong-password-1"
+    r = client.post("/api/v1/auth/login", json={"username": "viewer1", "password": wrong})
     assert r.status_code == 401
-    assert entries(db) == []
+    (row,) = entries(db)
+    assert (row.action, row.target_type, row.target_id, row.user_id) == (
+        "login_failed",
+        "user",
+        str(user.id),
+        None,
+    )
+    assert row.changes == {"username": "viewer1"}
+
+
+def test_failed_login_for_an_unknown_user_stores_no_typed_text(
+    client: TestClient, db: Session, engine: Engine
+) -> None:
+    add_user(db, "viewer1", Role.VIEWER)
+    typed_username = "example-typo-user-q7"
+    typed_password = "example-typed-password-q8"
+    r = client.post(
+        "/api/v1/auth/login", json={"username": typed_username, "password": typed_password}
+    )
+    assert r.status_code == 401
+    (row,) = entries(db)
+    assert row.action == "login_failed" and row.target_id is None and row.user_id is None
+    assert row.changes == {"username": "<unknown>"}
+    assert not raw_contains(engine, typed_username)
+    assert not raw_contains(engine, typed_password)
+
+
+def test_password_typed_as_username_is_not_stored(
+    client: TestClient, db: Session, engine: Engine
+) -> None:
+    add_user(db, "viewer1", Role.VIEWER)
+    # The user typed their password into the username box.
+    r = client.post("/api/v1/auth/login", json={"username": PASSWORD, "password": "viewer1"})
+    assert r.status_code == 401
+    assert [r.changes for r in entries(db)] == [{"username": "<unknown>"}]
+    assert not raw_contains(engine, PASSWORD)
+
+
+def test_rate_limited_attempts_write_nothing(client: TestClient, db: Session) -> None:
+    add_user(db, "viewer1", Role.VIEWER)
+    body = {"username": "viewer1", "password": "example-wrong-password-2"}
+    for _ in range(5):
+        assert client.post("/api/v1/auth/login", json=body).status_code == 401
+    assert len(entries(db)) == 5
+    for _ in range(3):
+        assert client.post("/api/v1/auth/login", json=body).status_code == 429
+    assert len(entries(db)) == 5
 
 
 def test_rehash_on_login_is_recorded_as_changed(client: TestClient, db: Session) -> None:
@@ -401,6 +452,9 @@ def test_no_secret_ever_reaches_the_audit_table(
     vme = login(client, "viewer1", viewer_password)  # also rehashes
     viewer_cookie = client.cookies[SECURE_COOKIE]
     client.post("/api/v1/auth/logout", headers={"X-CSRF-Token": vme["csrf_token"]})
+    wrong_password = "example-wrong-password-3"
+    client.post("/api/v1/auth/login", json={"username": ADMIN, "password": wrong_password})
+    client.post("/api/v1/auth/login", json={"username": setup_password, "password": "x"})
     login(client, ADMIN, setup_password)
 
     # Service-level flows later milestones will use (instances, channels).
@@ -440,6 +494,7 @@ def test_no_secret_ever_reaches_the_audit_table(
     secrets: list[str] = [
         setup_password,
         viewer_password,
+        wrong_password,
         stale_hash,
         viewer_hash,
         admin_hash,

@@ -73,6 +73,12 @@ class Action(enum.StrEnum):
     DELETE = "delete"
     LOGIN = "login"
     LOGOUT = "logout"
+    LOGIN_FAILED = "login_failed"
+
+
+# Recorded instead of a submitted username that matches no user: the raw string is
+# attacker-controlled and is sometimes a password typed into the wrong box.
+UNKNOWN_USERNAME = "<unknown>"
 
 
 # --- secret detection --------------------------------------------------------------

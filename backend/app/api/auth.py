@@ -142,6 +142,25 @@ def setup(
     return _me(user, token)
 
 
+def _record_failed_login(db: Session, user: User | None) -> None:
+    """Audit a login that reached the password check and failed.
+
+    Committed right away: the 401 that follows rolls back the request's transaction.
+    Only a known user's stored username is kept; anything else becomes "<unknown>".
+    The submitted password is never passed in. Rate-limited (429) attempts never get
+    here, so they can't be used to flood the table.
+    """
+    audit.record(
+        db,
+        action=audit.Action.LOGIN_FAILED,
+        target_type="user",
+        target_id=user.id if user else None,
+        user_id=None,
+        changes={"username": user.username if user else audit.UNKNOWN_USERNAME},
+    )
+    db.commit()
+
+
 @router.post("/auth/login", dependencies=[Depends(require_json)])
 def login(
     body: LoginRequest,
@@ -169,6 +188,7 @@ def login(
     user = db.scalar(select(User).where(User.username == body.username))
     password = body.password.get_secret_value()
     if not passwords.verify(user.password_hash if user else None, password) or user is None:
+        _record_failed_login(db, user)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid username or password")
     limiter.succeeded(user_key, [client_key])
 
