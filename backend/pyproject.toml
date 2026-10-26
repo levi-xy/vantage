@@ -7,9 +7,15 @@ license = "Apache-2.0"
 dependencies = [
     "fastapi>=0.115,<1",
     "uvicorn[standard]>=0.32,<1",
+    "sqlalchemy>=2.0.36,<3",
+    "alembic>=1.14,<2",
 ]
 
 [project.optional-dependencies]
+# Postgres driver. SQLite needs nothing extra.
+postgres = [
+    "psycopg[binary]>=3.2,<4",
+]
 dev = [
     "pytest>=9.0.3,<10",
     "pytest-asyncio>=1.2,<2",
@@ -43,7 +49,7 @@ select = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101"]  # assert is fine in tests
+"tests/**" = ["S101", "S105", "S106"]  # asserts and obviously fake credentials are fine in tests
 
 [tool.mypy]
 python_version = "3.12"

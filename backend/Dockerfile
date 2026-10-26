@@ -8,9 +8,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 COPY pyproject.toml ./
 COPY app ./app
-RUN pip install . && useradd --system --uid 10001 --no-create-home vantage \
+COPY alembic.ini ./
+COPY migrations ./migrations
+RUN pip install ".[postgres]" && useradd --system --uid 10001 --no-create-home vantage \
     && mkdir /data && chown vantage /data
 
 USER vantage
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Apply database migrations, then start the API.
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
