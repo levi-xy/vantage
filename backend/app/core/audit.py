@@ -7,14 +7,20 @@ Secret values never reach the ``audit_log`` table. Before anything is stored, ``
 is passed through :func:`redact`, which replaces the value of every secret field with the
 literal ``"<changed>"``. A field counts as secret when any of these hold:
 
-* its key is in :data:`ALWAYS_SECRET_KEYS` (passwords, password hashes, tokens, ...);
+* its normalised key (lowercase, letters and digits only, so ``API-Key``, ``apiKey`` and
+  ``api_key`` are all ``apikey``) contains any of :data:`SECRET_KEY_SUBSTRINGS`
+  (``secret``, ``token``, ``password``, ``key``, ``psk``, ``credential``, ...);
 * its key is listed in ``secret_keys`` passed by the caller;
 * its key is a ``SecretStr``/``SecretBytes`` field of a Pydantic ``schema`` passed by the
   caller (for example an integration's ``config_schema``), at any nesting level;
 * its value is a ``SecretStr``/``SecretBytes`` or raw ``bytes`` (encrypted blobs).
 
-Key matching applies at every nesting level and ignores case. Over-redacting a field that
-merely shares a name with a secret is the safe direction, and is accepted.
+Key matching applies at every nesting level. Over-redacting a field that merely shares a
+name with a secret is the safe direction, and is accepted. Keys must be ``str`` (``bytes``
+keys are decoded); anything else is refused rather than stringified.
+
+Fail closed: changes to targets in :data:`SCHEMA_REQUIRED_TARGETS` (instances, channels)
+must come with the schema that marks their secret fields, or :func:`record` raises.
 
 Omitted keys are not recorded at all: on a PATCH an omitted secret means "unchanged", so
 callers should pass only the fields that were actually sent (``exclude_unset=True``).
@@ -37,24 +43,24 @@ from app.models import AuditLog
 
 REDACTED = "<changed>"
 
-# Field names that are secret wherever they appear, whatever the schema says.
-ALWAYS_SECRET_KEYS: frozenset[str] = frozenset(
-    {
-        "password",
-        "password_hash",
-        "new_password",
-        "current_password",
-        "secret",
-        "secrets",
-        "token",
-        "api_key",
-        "api_token",
-        "session_token",
-        "csrf_token",
-        "community",
-        "master_key",
-    }
+# A key is secret wherever it appears when its normalised form (see ``normalize_key``)
+# contains any of these. Deliberately broad: "key" also hits harmless names such as
+# "keyboard_layout". Over-redaction is the safe direction and is accepted.
+SECRET_KEY_SUBSTRINGS: tuple[str, ...] = (
+    "secret",
+    "token",
+    "password",
+    "passwd",
+    "passphrase",
+    "community",
+    "key",
+    "psk",
+    "authorization",
+    "credential",
 )
+
+# Target types whose changes must come with the schema that marks their secret fields.
+SCHEMA_REQUIRED_TARGETS: frozenset[str] = frozenset({"instance", "channel"})
 
 _SECRET_TYPES = (SecretStr, SecretBytes)
 # Values redacted whatever their key: secrets, and raw bytes (encrypted blobs).
@@ -121,6 +127,25 @@ def _model_items(model: BaseModel) -> dict[str, Any]:
     return {name: getattr(model, name) for name in type(model).model_fields}
 
 
+def normalize_key(key: str) -> str:
+    """Lowercase with everything but letters and digits removed: ``API-Key`` -> ``apikey``."""
+    return "".join(ch for ch in key.lower() if ch.isalnum())
+
+
+def _is_secret_key(key: str, secret_keys: frozenset[str]) -> bool:
+    norm = normalize_key(key)
+    return norm in secret_keys or any(part in norm for part in SECRET_KEY_SUBSTRINGS)
+
+
+def _key_text(key: object) -> str:
+    if isinstance(key, str):
+        return key
+    if isinstance(key, bytes):
+        return key.decode("utf-8", errors="replace")
+    # str() of an arbitrary key could dodge the secret-name checks; refuse instead.
+    raise TypeError(f"audit changes need str keys, got {type(key).__name__}")
+
+
 def _clean(value: Any, secret_keys: frozenset[str]) -> Any:
     if isinstance(value, _REDACTED_VALUE_TYPES):
         return REDACTED
@@ -129,8 +154,8 @@ def _clean(value: Any, secret_keys: frozenset[str]) -> Any:
     if isinstance(value, Mapping):
         out: dict[str, Any] = {}
         for key, item in value.items():
-            k = str(key)
-            out[k] = REDACTED if k.lower() in secret_keys else _clean(item, secret_keys)
+            k = _key_text(key)
+            out[k] = REDACTED if _is_secret_key(k, secret_keys) else _clean(item, secret_keys)
         return out
     if isinstance(value, list | tuple | set | frozenset):
         return [_clean(item, secret_keys) for item in value]
@@ -153,12 +178,12 @@ def redact(
     schema: type[BaseModel] | None = None,
 ) -> dict[str, Any]:
     """A JSON-safe copy of ``changes`` with every secret value replaced by ``"<changed>"``."""
-    keys = set(ALWAYS_SECRET_KEYS) | set(secret_keys)
+    keys = set(secret_keys)
     if schema is not None:
         keys |= secret_fields(schema)
     if isinstance(changes, BaseModel):
         keys |= secret_fields(type(changes))
-    cleaned: dict[str, Any] = _clean(changes, frozenset(k.lower() for k in keys))
+    cleaned: dict[str, Any] = _clean(changes, frozenset(normalize_key(k) for k in keys))
     return cleaned
 
 
@@ -190,7 +215,18 @@ def record(
 
     For updates, ``changes`` should be a :func:`diff` of the touched fields; any secret
     key in it, at any depth, is collapsed to ``"<changed>"`` (old and new alike).
+
+    Raises ``ValueError`` when ``target_type`` is in :data:`SCHEMA_REQUIRED_TARGETS`,
+    ``changes`` is non-empty and no ``schema`` is given (and ``changes`` isn't a model
+    instance, which carries its own schema).
     """
+    if (
+        target_type in SCHEMA_REQUIRED_TARGETS
+        and schema is None
+        and changes
+        and not isinstance(changes, BaseModel)
+    ):
+        raise ValueError(f"audit changes for {target_type!r} need the schema of its secrets")
     entry = AuditLog(
         user_id=user_id,
         action=str(action),

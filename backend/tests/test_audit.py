@@ -31,6 +31,7 @@ from tests.test_auth import (
 FAKE_API_TOKEN = "example-token-0f1e2d3c"
 FAKE_COMMUNITY = "example-community-xyz"
 FAKE_BOT_TOKEN = "example-bot-token-123456"
+FAKE_RELAY_VALUE = "example-relay-value-789"
 
 
 class Credentials(BaseModel):
@@ -48,6 +49,13 @@ class FakeIntegrationConfig(BaseModel):
     login: Credentials | None = None
     aliased: SecretStr | None = Field(default=None, alias="privKey")
     raw_key: SecretBytes | None = None
+
+
+class FakeChannelConfig(BaseModel):
+    """Shaped like a future channel schema; the secret has a name no heuristic catches."""
+
+    chat_id: str
+    relay_value: SecretStr
 
 
 @pytest.fixture
@@ -102,8 +110,81 @@ def test_always_secret_keys_are_redacted() -> None:
 
 
 def test_explicit_secret_keys() -> None:
-    out = redact({"bot_token_x": FAKE_BOT_TOKEN, "chat": "1"}, secret_keys=["bot_token_x"])
-    assert out == {"bot_token_x": REDACTED, "chat": "1"}
+    out = redact({"relay_value": FAKE_RELAY_VALUE, "chat": "1"}, secret_keys=["Relay-Value"])
+    assert out == {"relay_value": REDACTED, "chat": "1"}
+
+
+LEAKED_IN_REVIEW = [
+    "client_secret",
+    "private_key",
+    "passphrase",
+    "psk",
+    "authorization",
+    "snmp_community",
+    "bot_token",
+    "API-Key",
+    "apiKey",
+    "api_key",
+    "Password ",
+    "PASSWORD",
+    "x-auth-token",
+    "credentials",
+    "passwd",
+]
+
+
+@pytest.mark.parametrize("key", LEAKED_IN_REVIEW)
+def test_secret_key_variants_are_redacted_top_level_and_nested(key: str) -> None:
+    value = "example-value-not-a-secret"
+    changes = {key: value, "outer": {"inner": [{key: value}]}, "diff": {key: {"old": value}}}
+    out = redact(changes)
+    assert out == {
+        key: REDACTED,
+        "outer": {"inner": [{key: REDACTED}]},
+        "diff": {key: REDACTED},
+    }
+    assert value not in repr(out)
+
+
+def test_harmless_keys_are_kept() -> None:
+    changes = {"host": "192.0.2.1", "port": 161, "name": "sw1", "site": "lab", "enabled": True}
+    assert redact(changes) == changes
+
+
+def test_bytes_keys_are_decoded_before_matching() -> None:
+    assert redact({b"password": "p", b"host": "h"}) == {"password": REDACTED, "host": "h"}  # type: ignore[dict-item]
+
+
+@pytest.mark.parametrize("key", [1, ("password",), None])
+def test_non_string_keys_are_refused(key: object) -> None:
+    with pytest.raises(TypeError):
+        redact({key: "x"})  # type: ignore[dict-item]
+
+
+@pytest.mark.parametrize("target_type", ["instance", "channel"])
+def test_instance_and_channel_changes_need_a_schema(db: Session, target_type: str) -> None:
+    with pytest.raises(ValueError, match="schema"):
+        record(
+            db,
+            action=Action.UPDATE,
+            target_type=target_type,
+            target_id=1,
+            user_id=None,
+            changes={"relay_value": FAKE_RELAY_VALUE},
+        )
+    # Nothing to leak: a delete without changes, or a model instance (its own schema).
+    record(db, action=Action.DELETE, target_type=target_type, target_id=1, user_id=None)
+    record(
+        db,
+        action=Action.CREATE,
+        target_type=target_type,
+        target_id=2,
+        user_id=None,
+        changes=FakeChannelConfig(chat_id="1", relay_value=SecretStr(FAKE_RELAY_VALUE)),
+    )
+    db.commit()
+    rows = entries(db)
+    assert len(rows) == 2 and rows[1].changes == {"chat_id": "1", "relay_value": REDACTED}
 
 
 def test_secretstr_values_are_redacted_whatever_the_key() -> None:
@@ -267,7 +348,7 @@ def test_setup_writes_a_create_entry(client: TestClient, db: Session) -> None:
     me = do_setup(client)
     (row,) = entries(db)
     assert row.action == "create" and row.target_type == "user"
-    assert row.user_id == me["id"] and row.target_id == str(me["id"])
+    assert row.user_id == int(me["id"]) and row.target_id == str(me["id"])
     assert row.changes == {"username": ADMIN, "role": "admin", "password": REDACTED}
 
 
@@ -328,7 +409,7 @@ def test_no_secret_ever_reaches_the_audit_table(
         action=Action.CREATE,
         target_type="instance",
         target_id="00000000-0000-4000-8000-0000000000bb",
-        user_id=me["id"],
+        user_id=int(me["id"]),
         changes=FakeIntegrationConfig(
             host="192.0.2.20",
             token_value=SecretStr(FAKE_API_TOKEN),
@@ -340,9 +421,13 @@ def test_no_secret_ever_reaches_the_audit_table(
         action=Action.UPDATE,
         target_type="channel",
         target_id=1,
-        user_id=me["id"],
-        changes={"config": {"chat_id": "-100"}, "bot_token": {"old": None, "new": FAKE_BOT_TOKEN}},
-        secret_keys=["bot_token"],
+        user_id=int(me["id"]),
+        changes={
+            "config": {"chat_id": "-100"},
+            "bot_token": {"old": None, "new": FAKE_BOT_TOKEN},
+            "relay_value": FAKE_RELAY_VALUE,
+        },
+        schema=FakeChannelConfig,
     )
     db.commit()
 
@@ -367,6 +452,7 @@ def test_no_secret_ever_reaches_the_audit_table(
         FAKE_API_TOKEN,
         FAKE_COMMUNITY,
         FAKE_BOT_TOKEN,
+        FAKE_RELAY_VALUE,
     ]
     for secret in secrets:
         assert secret not in raw
@@ -390,7 +476,7 @@ def test_audit_endpoint_is_admin_only(client: TestClient, db: Session) -> None:
 def test_audit_endpoint_lists_newest_first_with_paging(client: TestClient, db: Session) -> None:
     me = do_setup(client)
     for i in range(3):
-        record(db, action=Action.DELETE, target_type="link", target_id=i, user_id=me["id"])
+        record(db, action=Action.DELETE, target_type="link", target_id=i, user_id=int(me["id"]))
     db.commit()
 
     r = client.get("/api/v1/audit", params={"limit": 2})
