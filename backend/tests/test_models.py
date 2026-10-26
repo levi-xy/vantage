@@ -133,12 +133,16 @@ def test_username_is_unique(session: Session) -> None:
 
 @pytest.mark.parametrize(
     ("table", "bad"),
-    [("users", "superuser"), ("alert_events", "pending"), ("channels", "email")],
+    [("users", "owner"), ("alert_events", "pending"), ("channels", "email")],
 )
 def test_enum_columns_reject_unknown_values_at_db_level(
     engine: Engine, table: str, bad: str
 ) -> None:
-    """The CHECK constraint holds even for writes that bypass the ORM."""
+    """The CHECK constraint holds even for writes that bypass the ORM.
+
+    Bad values must fit the column length: Postgres enforces VARCHAR length and would
+    reject a longer value with a different error before reaching the CHECK.
+    """
     with make_session_factory(engine)() as s:
         if table == "alert_events":
             rule = AlertRule(name="r", expr="up == 0", severity="warning")
