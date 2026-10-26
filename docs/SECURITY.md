@@ -59,10 +59,13 @@ Every outbound connection to a device or cloud API goes through the SSRF guard i
 - Always denied: loopback, link-local, `0.0.0.0/8`, multicast, `240.0.0.0/4`,
   `fec0::/10`, `::/96`, cloud metadata addresses (`169.254.169.254`, `fd00:ec2::254`,
   `100.100.100.200`, `168.63.129.16`) and the Vantage host's own addresses.
-  IPv4-mapped, NAT64 and 6to4 forms of denied addresses are denied too.
+  IPv4-mapped, NAT64 (`64:ff9b::/96`, `64:ff9b:1::/48`) and 6to4 forms of denied
+  addresses are denied too.
 - The public internet is reachable only for an integration's declared cloud hosts,
   over HTTPS with certificate verification, and a cloud host must resolve to public
-  addresses only.
+  addresses only. For cloud hosts, NAT64 (`64:ff9b::/96`, `64:ff9b:1::/48`), 6to4
+  (`2002::/16`) and `192.0.0.0/24` addresses are never treated as public, because a
+  translated address can carry a private IPv4 address.
 - Redirects are not followed automatically; timeouts are connect 5 s, total 15 s.
 
 ### Known limitation: the Docker host's LAN address

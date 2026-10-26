@@ -115,7 +115,16 @@ ALWAYS_DENIED: tuple[IPNetwork, ...] = (
     IPv6Network("fd00:ec2::254/128"),  # AWS metadata over IPv6 (inside ULA)
 )
 
-_NAT64 = (IPv6Network("64:ff9b::/96"),)  # RFC 6052 well-known prefix
+_NAT64 = (
+    IPv6Network("64:ff9b::/96"),  # RFC 6052 well-known prefix
+    IPv6Network("64:ff9b:1::/48"),  # RFC 8215 local-use prefix (IPv4 judged as the last 32 bits)
+)
+_SIXTOFOUR = IPv6Network("2002::/16")
+
+# Never acceptable as a cloud host's address, even when is_global says "public":
+# NAT64 and 6to4 addresses can carry a private IPv4 address and reach the LAN through a
+# translator, and 192.0.0.0/24 (IETF protocol assignments) has global-looking entries.
+_CLOUD_DENIED: tuple[IPNetwork, ...] = (*_NAT64, _SIXTOFOUR, IPv4Network("192.0.0.0/24"))
 
 
 def parse_cidrs(values: Iterable[str]) -> tuple[IPNetwork, ...]:
@@ -204,6 +213,8 @@ def check_address(address: IPAddress, policy: NetPolicy, *, cloud_host: bool) ->
     if _is_denied(addr, policy):
         raise NetGuardError(f"address {addr} is not allowed")
     if cloud_host:
+        if any(addr in net for net in _CLOUD_DENIED):
+            raise NetGuardError(f"cloud host resolved to non-public address {addr}")
         if _is_public(addr):
             return addr
         raise NetGuardError(f"cloud host resolved to non-public address {addr}")

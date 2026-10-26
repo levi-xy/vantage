@@ -158,6 +158,8 @@ DENIED = [
     "::127.0.0.1",  # deprecated IPv4-compatible
     "64:ff9b::7f00:1",  # NAT64 of 127.0.0.1
     "64:ff9b::a9fe:a9fe",  # NAT64 of 169.254.169.254
+    "64:ff9b:1::7f00:1",  # RFC 8215 local-use NAT64 of 127.0.0.1
+    "64:ff9b:1::a9fe:a9fe",  # RFC 8215 local-use NAT64 of 169.254.169.254
     "2002:7f00:1::1",  # 6to4 of 127.0.0.1
     "2002:a9fe:a9fe::1",  # 6to4 of 169.254.169.254
     # outside every allowed range
@@ -200,6 +202,15 @@ def test_extra_allowed_cidrs() -> None:
     assert check_address(ip_address("2001:db8:1::7"), policy, cloud_host=False)
     with pytest.raises(NetGuardError):
         check_address(ip_address("198.51.100.7"), policy, cloud_host=False)
+
+
+def test_local_use_nat64_embedded_ipv4_judged_like_nat64() -> None:
+    # Even when an admin allows the local-use NAT64 prefix, embedded denied IPv4 wins.
+    policy = NetPolicy(extra_allowed=parse_cidrs(["64:ff9b:1::/48"]))
+    for address in ("64:ff9b:1::7f00:1", "64:ff9b:1::a9fe:a9fe"):
+        with pytest.raises(NetGuardError):
+            check_address(ip_address(address), policy, cloud_host=False)
+    assert check_address(ip_address("64:ff9b:1::a00:1"), policy, cloud_host=False)
 
 
 @pytest.mark.parametrize(
@@ -252,6 +263,9 @@ async def test_default_policy_discovers_own_addresses() -> None:
 
 def test_cloud_host_requires_public_address(public_test_net: None) -> None:
     for address in ("10.0.0.7", "172.16.0.7", "192.168.0.7", "100.64.0.7", "fc00::7"):
+        with pytest.raises(NetGuardError):
+            check_address(ip_address(address), NetPolicy(), cloud_host=True)
+    for address in ("64:ff9b::a00:1", "2002:a00:1::", "64:ff9b:1::a00:1", "192.0.0.9"):
         with pytest.raises(NetGuardError):
             check_address(ip_address(address), NetPolicy(), cloud_host=True)
     # Extra allowed CIDRs don't make a non-public answer acceptable for a cloud host.
@@ -665,6 +679,18 @@ async def test_undeclared_host_cannot_reach_public(public_test_net: None) -> Non
         ["10.0.0.7", "192.0.2.50"],
         ["192.0.2.50", "100.64.0.7"],
         ["192.0.2.50", "fc00::7"],
+        # IPv6 forms embedding a private IPv4 address are not "public".
+        ["64:ff9b::a00:1"],  # NAT64 of 10.0.0.1
+        ["2002:a00:1::"],  # 6to4 of 10.0.0.1
+        ["64:ff9b:1::a00:1"],  # RFC 8215 local-use NAT64 of 10.0.0.1
+        ["192.0.2.50", "64:ff9b::a00:1"],
+        ["64:ff9b::a00:1", "192.0.2.50"],
+        ["192.0.2.50", "2002:a00:1::"],
+        ["2002:a00:1::", "192.0.2.50"],
+        ["192.0.2.50", "64:ff9b:1::a00:1"],
+        ["64:ff9b:1::a00:1", "192.0.2.50"],
+        ["192.0.0.9"],  # 192.0.0.0/24 has is_global entries
+        ["192.0.2.50", "192.0.0.10"],
         ["198.51.100.7"],  # non-global (documentation) and not our stand-in public range
     ],
 )
