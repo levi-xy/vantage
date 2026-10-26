@@ -20,6 +20,7 @@ from app.api.deps import (
     session_token,
     set_session_cookie,
 )
+from app.core import audit
 from app.core.auth import LoginRateLimiter, Passwords, csrf_token, new_session_token, session_id
 from app.core.config import Settings
 from app.core.db import utcnow
@@ -127,10 +128,37 @@ def setup(
     except IntegrityError:
         db.rollback()
         raise _setup_closed() from None
+    audit.record(
+        db,
+        action=audit.Action.CREATE,
+        target_type="user",
+        target_id=user.id,
+        user_id=user.id,
+        changes={"username": user.username, "role": user.role, "password": body.password},
+    )
     token = _start_session(db, user, settings)
     db.commit()
     set_session_cookie(response, token, settings)
     return _me(user, token)
+
+
+def _record_failed_login(db: Session, user: User | None) -> None:
+    """Audit a login that reached the password check and failed.
+
+    Committed right away: the 401 that follows rolls back the request's transaction.
+    Only a known user's stored username is kept; anything else becomes "<unknown>".
+    The submitted password is never passed in. Rate-limited (429) attempts never get
+    here, so they can't be used to flood the table.
+    """
+    audit.record(
+        db,
+        action=audit.Action.LOGIN_FAILED,
+        target_type="user",
+        target_id=user.id if user else None,
+        user_id=None,
+        changes={"username": user.username if user else audit.UNKNOWN_USERNAME},
+    )
+    db.commit()
 
 
 @router.post("/auth/login", dependencies=[Depends(require_json)])
@@ -160,13 +188,24 @@ def login(
     user = db.scalar(select(User).where(User.username == body.username))
     password = body.password.get_secret_value()
     if not passwords.verify(user.password_hash if user else None, password) or user is None:
+        _record_failed_login(db, user)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid username or password")
     limiter.succeeded(user_key, [client_key])
 
     now = utcnow()
+    changes: dict[str, object] = {}
     if passwords.needs_rehash(user.password_hash):
         user.password_hash = passwords.hash(password)
+        changes["password_hash"] = user.password_hash  # stored as "<changed>"
     user.last_login_at = now
+    audit.record(
+        db,
+        action=audit.Action.LOGIN,
+        target_type="user",
+        target_id=user.id,
+        user_id=user.id,
+        changes=changes,
+    )
     # A new login replaces this browser's old session and clears out expired ones.
     old_token = session_token(request, settings)
     if old_token is not None:
@@ -181,6 +220,13 @@ def login(
 @router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(auth: AuthDep, db: DbDep, settings: SettingsDep) -> Response:
     db.delete(auth.session)
+    audit.record(
+        db,
+        action=audit.Action.LOGOUT,
+        target_type="user",
+        target_id=auth.user.id,
+        user_id=auth.user.id,
+    )
     db.commit()
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
     clear_session_cookie(response, settings)

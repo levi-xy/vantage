@@ -153,7 +153,7 @@ class Integration(ABC):
 | `alert_rules` | id, name, expr (PromQL), for_seconds, severity, instance_id (nullable), channel_ids, enabled |
 | `alert_events` | id, rule_id, state (`firing` / `resolved`), started_at, ended_at, summary |
 | `channels` | id, type (`telegram`), name, config (json), secrets (encrypted blob) |
-| `audit_log` | id, user_id, action, target_type, target_id, at, changes (json, **secret fields replaced with `"<changed>"`**) |
+| `audit_log` | id, user_id, action (`create` / `update` / `delete` / `login` / `logout` / `login_failed`), target_type, target_id, at, changes (json, **secret fields replaced with `"<changed>"`**) |
 | `settings` | key, value (json) |
 
 - `instances.config` and `instances.secrets` are split by the integration's schema: `SecretStr` fields go to `secrets`, everything else to `config`.
@@ -183,7 +183,7 @@ All routes under `/api/v1`, JSON, session auth, CSRF token on state-changing req
 | CRUD | `/links` | any / admin | Network map links |
 | CRUD | `/alerts/rules`, `/channels` | admin | Alerts |
 | GET | `/alerts/events` | any | Alert history |
-| GET | `/audit` | admin | Audit log |
+| GET | `/audit` | admin | Audit log, newest first: `limit` (1–200, default 50), `before_id` (keyset paging) |
 | WS | `/ws` | any | Live pushes: instance status changes, alert events, card data refresh hints |
 
 Outside `/api/v1`:
