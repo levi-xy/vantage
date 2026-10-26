@@ -1,0 +1,29 @@
+# Fixed bootstrap config (AGENTS.md Contract 4). Never add anything
+# device-specific here: devices reach Prometheus through /sd/targets.
+
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs:
+  # Exporter targets for every enabled instance, served by the backend.
+  # Each target carries its own __metrics_path__ and __scheme__ labels.
+  - job_name: vantage-targets
+    http_sd_configs:
+      - url: http://backend:8000/sd/targets
+        refresh_interval: 60s
+        authorization:
+          type: Bearer
+          credentials_file: /run/secrets/prometheus_token
+
+  # Metrics polled by the backend (API/SNMP sources) plus its own health.
+  - job_name: vantage-backend
+    static_configs:
+      - targets: ["backend:8000"]
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/prometheus_token
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
