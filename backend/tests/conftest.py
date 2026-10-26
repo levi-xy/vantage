@@ -8,11 +8,15 @@ from alembic.config import Config
 from sqlalchemy import Engine, MetaData
 from sqlalchemy.orm import Session
 
+from app.core.crypto import SecretBox
 from app.core.db import make_engine, make_session_factory
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 # Set in CI to run DB tests against Postgres as well as SQLite.
 POSTGRES_URL = os.environ.get("VANTAGE_TEST_POSTGRES_URL")
+
+# Obviously fake, fixed 32-byte key for tests. Never use outside tests.
+TEST_MASTER_KEY = b"vantage-test-key-not-a-secret-00"
 
 _BACKENDS = ["sqlite"] + (["postgres"] if POSTGRES_URL else [])
 
@@ -60,3 +64,8 @@ def engine(db_url: str) -> Iterator[Engine]:
 def session(engine: Engine) -> Iterator[Session]:
     with make_session_factory(engine)() as s:
         yield s
+
+
+@pytest.fixture
+def secret_box() -> SecretBox:
+    return SecretBox(TEST_MASTER_KEY)
