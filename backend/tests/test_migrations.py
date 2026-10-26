@@ -18,6 +18,8 @@ EXPECTED_TABLES = {
     "channels",
     "audit_log",
     "settings",
+    # Added in M1.3 with maintainer approval (not in the original Contract 2).
+    "sessions",
 }
 
 
