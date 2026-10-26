@@ -15,6 +15,22 @@ concurrency:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: vantage
+          POSTGRES_PASSWORD: example-password
+          POSTGRES_DB: vantage_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U vantage"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Runs the DB tests against Postgres as well as SQLite.
+      VANTAGE_TEST_POSTGRES_URL: postgresql://vantage:example-password@localhost:5432/vantage_test
     defaults:
       run:
         working-directory: backend
@@ -25,7 +41,7 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/pyproject.toml
-      - run: pip install -e ".[dev]"
+      - run: pip install -e ".[dev,postgres]"
       - name: Lint
         run: ruff check . && ruff format --check .
       - name: Type check
