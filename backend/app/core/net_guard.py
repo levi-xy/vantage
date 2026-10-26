@@ -135,13 +135,17 @@ def parse_cidrs(values: Iterable[str]) -> tuple[IPNetwork, ...]:
 class NetPolicy:
     """Which addresses may be reached.
 
-    ``own_addresses`` should come from :func:`discover_own_addresses` at startup.
+    ``own_addresses`` defaults to :func:`discover_own_addresses`, so forgetting to
+    pass it can never silently drop the "own addresses" denial. Pass an explicit set
+    only to add to or replace the discovered one deliberately.
     """
 
     # TODO(maintainer): load from the settings table once the admin-only settings API
     # exists (key name and shape to be decided there); use parse_cidrs() to validate.
     extra_allowed: tuple[IPNetwork, ...] = ()
-    own_addresses: frozenset[IPAddress] = field(default_factory=frozenset)
+    own_addresses: frozenset[IPAddress] = field(
+        default_factory=lambda: discover_own_addresses()  # late-bound, patchable in tests
+    )
 
 
 def discover_own_addresses() -> frozenset[IPAddress]:
@@ -475,7 +479,9 @@ class GuardedTransport(httpx.AsyncBaseTransport):
         url = request.url
         if url.scheme not in ("http", "https"):
             raise NetGuardError("only http and https are allowed")
-        host = url.host
+        # The ASCII (punycode) form: url.host decodes IDN labels to Unicode, but the
+        # connection, SNI and resolver all use the raw ASCII host.
+        host = url.raw_host.decode("ascii")
         parse_host(host)
         if self._guard.is_cloud_host(host) and (
             url.scheme != "https" or not _ssl_verified(self._ssl)

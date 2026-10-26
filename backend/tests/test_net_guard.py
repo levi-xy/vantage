@@ -40,6 +40,9 @@ from app.core.net_guard import (
 
 FAKE_COMMUNITY = "example-community"
 
+# Kept before the autouse fixture below patches the module attribute.
+real_discover_own_addresses = net_guard.discover_own_addresses
+
 # --- fakes -------------------------------------------------------------------------
 
 
@@ -106,6 +109,15 @@ class RecordingBackend(httpcore.AsyncNetworkBackend):
 
     async def sleep(self, seconds: float) -> None:
         await asyncio.sleep(seconds)
+
+
+@pytest.fixture(autouse=True)
+def fixed_own_addresses(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make NetPolicy()'s default discovery deterministic: the test machine's real
+    addresses must not decide whether a private test address is allowed."""
+    monkeypatch.setattr(
+        net_guard, "discover_own_addresses", lambda: frozenset({IPv4Address("10.255.0.1")})
+    )
 
 
 @pytest.fixture
@@ -221,10 +233,23 @@ def test_discover_own_addresses(monkeypatch: pytest.MonkeyPatch) -> None:
         return [(2, 1, 6, "", ("10.0.0.42", 0)), (10, 1, 6, "", ("::ffff:10.0.0.43", 0, 0, 0))]
 
     monkeypatch.setattr(net_guard.socket, "getaddrinfo", fake_getaddrinfo)
-    found = net_guard.discover_own_addresses()
+    found = real_discover_own_addresses()
     assert IPv4Address("10.0.0.42") in found
     assert IPv4Address("10.0.0.43") in found  # stored unwrapped
     assert all(not (isinstance(a, IPv6Address) and a.ipv4_mapped) for a in found)
+
+
+async def test_default_policy_discovers_own_addresses() -> None:
+    """Fail safe: a caller who never mentions own addresses still gets them denied."""
+    assert IPv4Address("10.255.0.1") in NetPolicy().own_addresses
+    with pytest.raises(NetGuardError):
+        check_address(ip_address("10.255.0.1"), NetPolicy(), allow_public=False)
+    with pytest.raises(NetGuardError):
+        await NetGuard(resolver=no_resolver).resolve("10.255.0.1", 80)
+    with pytest.raises(NetGuardError):
+        await NetGuard(resolver=FakeResolver(["10.255.0.1"])).resolve("nas.example.com", 80)
+    # An explicit set is used as given.
+    assert NetPolicy(own_addresses=frozenset()).own_addresses == frozenset()
 
 
 def test_public_needs_allow_public(public_test_net: None) -> None:
@@ -346,6 +371,32 @@ async def test_http_connects_to_checked_address_with_original_host_header() -> N
     assert backend.connects[0][:2] == ("10.0.0.7", 8080)
     assert b"Host: nas.example.com:8080\r\n" in backend.written
     assert resolver.calls == [("nas.example.com", 8080)]
+
+
+IDN_HOST = "xn--e1afmkfd.example"  # punycode label, as the user would configure it
+
+
+@pytest.mark.parametrize(
+    "url", [f"http://{IDN_HOST}/", "http://\u043f\u0440\u0438\u043c\u0435\u0440.example/"]
+)
+async def test_idn_host_allowed_private(url: str) -> None:
+    resolver = FakeResolver(["10.0.0.30"])
+    backend = RecordingBackend()
+    async with guarded_http_client(NetGuard(resolver=resolver), network_backend=backend) as c:
+        response = await c.get(url)
+    assert response.status_code == 200
+    assert resolver.calls == [(IDN_HOST, 80)]
+    assert backend.connects[0][:2] == ("10.0.0.30", 80)
+    assert f"Host: {IDN_HOST}\r\n".encode() in backend.written
+
+
+async def test_idn_host_resolving_to_denied_address() -> None:
+    backend = RecordingBackend()
+    guard = NetGuard(resolver=FakeResolver(["127.0.0.1"]))
+    async with guarded_http_client(guard, network_backend=backend) as c:
+        with pytest.raises(NetGuardError):
+            await c.get(f"http://{IDN_HOST}/")
+    assert backend.connects == []
 
 
 async def test_https_keeps_sni_and_verification() -> None:
