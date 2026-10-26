@@ -113,28 +113,63 @@ class LoginRateLimiter:
             return []
         return window.failures
 
-    def retry_after(self, keys: Iterable[str]) -> int | None:
-        """Seconds until a login may be tried again, or ``None`` if it's allowed now."""
-        now = self._clock()
+    def _wait(self, keys: Iterable[str], now: float) -> float:
         wait = 0.0
-        with self._lock:
-            for key in keys:
-                failures = self._recent(key, now)
-                limit = self._limit(key)
-                if len(failures) >= limit:
-                    wait = max(wait, failures[-limit] + self._window - now)
+        for key in keys:
+            failures = self._recent(key, now)
+            limit = self._limit(key)
+            if len(failures) >= limit:
+                wait = max(wait, failures[-limit] + self._window - now)
+                # Keep a locked key fresh so eviction under the key cap can't unlock it.
+                self._keys.move_to_end(key)
+        return wait
+
+    @staticmethod
+    def _seconds(wait: float) -> int | None:
         return max(1, int(wait) + 1) if wait > 0 else None
 
-    def record_failure(self, keys: Iterable[str]) -> None:
-        now = self._clock()
+    def _record(self, keys: Iterable[str], now: float) -> None:
+        for key in keys:
+            self._recent(key, now)
+            window = self._keys.setdefault(key, _Window())
+            window.failures.append(now)
+            self._keys.move_to_end(key)
+        while len(self._keys) > self._max_keys:
+            self._keys.popitem(last=False)
+
+    def retry_after(self, keys: Iterable[str]) -> int | None:
+        """Seconds until a login may be tried again, or ``None`` if it's allowed now."""
         with self._lock:
-            for key in keys:
-                self._recent(key, now)
-                window = self._keys.setdefault(key, _Window())
-                window.failures.append(now)
-                self._keys.move_to_end(key)
-            while len(self._keys) > self._max_keys:
-                self._keys.popitem(last=False)
+            return self._seconds(self._wait(keys, self._clock()))
+
+    def record_failure(self, keys: Iterable[str]) -> None:
+        with self._lock:
+            self._record(keys, self._clock())
+
+    def acquire(self, keys: list[str]) -> int | None:
+        """Check the limit and count this attempt as a failure, in one atomic step.
+
+        Counting before the (slow) password check means parallel requests can't all
+        pass the check before any failure is recorded. Call ``succeeded`` if it works.
+        Returns seconds to wait if the attempt is refused (and then counts nothing).
+        """
+        with self._lock:
+            now = self._clock()
+            wait = self._wait(keys, now)
+            if wait > 0:
+                return self._seconds(wait)
+            self._record(keys, now)
+            return None
+
+    def succeeded(self, user_key: str, other_keys: Iterable[str]) -> None:
+        """Undo ``acquire`` for a successful login: clear the user's failures, refund one
+        attempt on the other keys."""
+        with self._lock:
+            self._keys.pop(user_key, None)
+            for key in other_keys:
+                window = self._keys.get(key)
+                if window is not None and window.failures:
+                    window.failures.pop()
 
     def reset(self, key: str) -> None:
         with self._lock:

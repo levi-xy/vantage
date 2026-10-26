@@ -412,3 +412,29 @@ def test_passwords_verify_unknown_user_is_false() -> None:
     assert passwords.verify(None, PASSWORD) is False
     assert passwords.verify("not-a-hash", PASSWORD) is False
     assert passwords.verify(passwords.hash(PASSWORD), PASSWORD) is True
+
+
+def test_rate_limiter_acquire_counts_before_the_check_finishes() -> None:
+    """Parallel attempts can't all pass: each acquire counts immediately."""
+    limiter = LoginRateLimiter({"user": 5, "client": 50})
+    keys = ["user:admin", "client:192.0.2.1"]
+    allowed = [limiter.acquire(keys) is None for _ in range(40)]
+    assert allowed.count(True) == 5
+    assert limiter.acquire(keys) is not None
+
+
+def test_rate_limiter_success_refunds_attempt() -> None:
+    limiter = LoginRateLimiter({"user": 2, "client": 2})
+    for _ in range(2):
+        assert limiter.acquire(["user:a", "client:192.0.2.1"]) is None
+        limiter.succeeded("user:a", ["client:192.0.2.1"])
+    assert limiter.retry_after(["user:a", "client:192.0.2.1"]) is None
+
+
+def test_rate_limiter_eviction_keeps_active_lockout() -> None:
+    limiter = LoginRateLimiter({"user": 1}, max_keys=3)
+    limiter.record_failure(["user:admin"])
+    for i in range(10):
+        assert limiter.acquire(["user:admin"]) is not None  # attacker keeps trying admin
+        limiter.record_failure([f"user:u{i}"])
+    assert limiter.retry_after(["user:admin"]) is not None

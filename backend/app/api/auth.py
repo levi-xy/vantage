@@ -147,8 +147,9 @@ def login(
     # container, so the per-client limit is effectively global. Trusting X-Forwarded-For
     # needs a "trusted proxy" setting; left out until that's decided.
     client = request.client.host if request.client else "unknown"
-    keys = [f"user:{body.username.lower()}", f"client:{client}"]
-    retry_after = limiter.retry_after(keys)
+    user_key, client_key = f"user:{body.username.lower()}", f"client:{client}"
+    # Counted as a failure up front, so parallel requests can't all slip past the limit.
+    retry_after = limiter.acquire([user_key, client_key])
     if retry_after is not None:
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
@@ -159,9 +160,8 @@ def login(
     user = db.scalar(select(User).where(User.username == body.username))
     password = body.password.get_secret_value()
     if not passwords.verify(user.password_hash if user else None, password) or user is None:
-        limiter.record_failure(keys)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid username or password")
-    limiter.reset(keys[0])
+    limiter.succeeded(user_key, [client_key])
 
     now = utcnow()
     if passwords.needs_rehash(user.password_hash):
