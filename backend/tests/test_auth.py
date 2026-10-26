@@ -126,7 +126,7 @@ def test_setup_stays_closed_after_all_users_are_deleted(client: TestClient, db: 
 @pytest.mark.parametrize(
     "body",
     [
-        {"username": ADMIN, "password": "short-pw"},
+        {"username": ADMIN, "password": "x" * 11},  # one under the minimum
         {"username": "bad name", "password": PASSWORD},
         {"username": "", "password": PASSWORD},
         {"username": ADMIN, "password": PASSWORD, "role": "admin"},
