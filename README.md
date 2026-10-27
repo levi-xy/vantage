@@ -104,6 +104,19 @@ docker compose up -d
 
 Open `https://<host>`, create the admin account in the setup wizard, then add your first device under **Integrations → Add**.
 
+## Development
+
+Works the same on macOS, Linux and Windows. You need Python 3.12+ and Node 22.12+.
+
+```bash
+python3.12 scripts/dev_setup.py   # Windows: py -3.12 scripts/dev_setup.py
+python scripts/check.py           # runs every CI check locally (--fast skips the audits)
+```
+
+`dev_setup.py` creates `backend/.venv`, installs the backend and frontend dependencies, and installs the pre-commit hooks if `pre-commit` is on your PATH.
+
+Coding agents: `/task <ID>` runs one `BUILD-PLAN.md` task end to end (`builder` agent opens the PR, a fresh `reviewer` agent reviews it). See `.claude/`.
+
 ---
 
 ## Writing an integration

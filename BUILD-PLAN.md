@@ -11,6 +11,8 @@ How Vantage gets built by coding agents, milestone by milestone. Every agent rea
 - **Reviewer agent:** a separate session that hasn't seen the work. It reviews the PR against the `AGENTS.md` checklist and runs the tests.
 - **Maintainer (you):** answers contract questions, tests on the real lab, merges.
 
+**In Claude Code:** `/task M2.1` does all of this for one task: it checks dependencies, runs the `builder` agent (`.claude/agents/builder.md`), waits for CI, runs a fresh `reviewer` agent, allows one fix round, and reports back. `/task M4b M4c` runs several in parallel worktrees. The templates below are the manual fallback.
+
 **Ground rules for you**
 - **Never give agents real credentials, IPs or lab access.** They build against fixtures. You test against your real network yourself, using private deployment notes kept outside this repo.
 - Give each agent one task ID from this file plus `AGENTS.md`. Paste the task's acceptance criteria into the prompt.

@@ -1,0 +1,8 @@
+# LF everywhere, on every OS. Without this, Windows checkouts with core.autocrlf=true
+# get CRLF files and Prettier/ruff format checks fail locally.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary

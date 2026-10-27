@@ -44,6 +44,8 @@ jobs:
       - run: pip install -e ".[dev,postgres]"
       - name: Lint
         run: ruff check . && ruff format --check .
+      - name: Lint dev scripts
+        run: ruff check --config pyproject.toml ../scripts && ruff format --config pyproject.toml --check ../scripts
       - name: Type check
         run: mypy
       - name: Tests
@@ -72,6 +74,8 @@ jobs:
         run: npm run typecheck
       - name: Tests
         run: npm test
+      - name: Agent hook tests
+        run: node --test "../.claude/hooks/*.test.mjs"
       - name: npm audit
         run: npm audit --audit-level=high
 
