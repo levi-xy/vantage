@@ -56,10 +56,10 @@ export function SessionGate({ only, children }: { only: GateFor; children: React
       return <Navigate to={returnPath(location.state)} replace />;
     case "anonymous": {
       const from = `${location.pathname}${location.search}${location.hash}`;
-      // From the wizard there's nothing to come back to.
-      return (
-        <Navigate to="/login" replace state={only === "authenticated" ? { from } : undefined} />
-      );
+      // From the wizard there's nothing to come back to, and after an explicit logout the
+      // next person to log in shouldn't land on the previous user's page.
+      const keep = only === "authenticated" && !state.loggedOut;
+      return <Navigate to="/login" replace state={keep ? { from } : undefined} />;
     }
   }
 }

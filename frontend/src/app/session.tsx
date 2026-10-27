@@ -28,8 +28,12 @@ export type SessionState =
   | { status: "unreachable"; message: string }
   /** No admin exists yet: the first-run wizard. */
   | { status: "setup" }
-  /** Logged out. `notice` explains why, when it wasn't the user's choice. */
-  | { status: "anonymous"; notice?: string }
+  /**
+   * Logged out. `notice` explains why, when it wasn't the user's choice. `loggedOut` is
+   * set after an explicit logout: the page the user was on isn't kept as the place to
+   * return to, so whoever logs in next on this browser starts at the dashboard.
+   */
+  | { status: "anonymous"; notice?: string; loggedOut?: boolean }
   | { status: "authenticated"; user: SessionUser };
 
 export interface SessionContextValue {
@@ -38,10 +42,15 @@ export interface SessionContextValue {
   login: (credentials: Credentials) => Promise<void>;
   /** Create the first admin; the backend logs them in. Throws on failure. */
   setup: (credentials: Credentials) => Promise<void>;
-  /** Throws if the backend couldn't end the session; the user then stays logged in. */
+  /**
+   * Throws if the backend couldn't end the session; the user then stays logged in. If it
+   * then can't even be asked for the session again, the state becomes "unreachable".
+   */
   logout: () => Promise<void>;
   /** Ask the backend again (after "unreachable"). */
   reload: () => void;
+  /** The API client this session uses (tests pass one with a fake fetch). */
+  client: ApiClient;
 }
 
 export const SESSION_ENDED = "Your session has ended. Log in again.";
@@ -149,13 +158,24 @@ export function SessionProvider({ client, children }: { client: ApiClient; child
       if (!(error instanceof ApiError && error.status === 401)) {
         // The cookie may still be valid. The client dropped the CSRF token anyway, so get
         // it back, or the user couldn't save anything (a 401 here logs them out instead).
-        await client.me().catch(() => undefined);
+        try {
+          await client.me();
+        } catch (meError) {
+          if (!(meError instanceof ApiError && meError.status === 401)) {
+            // No token and no way to get one: every write would fail with 403. Show the
+            // "can't reach the backend" screen; its retry asks GET /me again.
+            generation.current++;
+            queryClient.clear();
+            setState(unreachable(meError));
+            return;
+          }
+        }
         throw error;
       }
     }
     generation.current++;
     queryClient.clear();
-    setState({ status: "anonymous" });
+    setState({ status: "anonymous", loggedOut: true });
   }, [client, queryClient]);
 
   const reload = useCallback(() => {
@@ -164,8 +184,8 @@ export function SessionProvider({ client, children }: { client: ApiClient; child
   }, [load]);
 
   const value = useMemo(
-    () => ({ state, login, setup, logout, reload }),
-    [state, login, setup, logout, reload],
+    () => ({ state, login, setup, logout, reload, client }),
+    [state, login, setup, logout, reload, client],
   );
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }
@@ -175,6 +195,12 @@ export function useSession(): SessionContextValue {
   const value = useContext(SessionContext);
   if (!value) throw new Error("useSession must be used inside <SessionProvider>");
   return value;
+}
+
+/** The API client of the session. Pages fetch through this, never the global `api`. */
+// eslint-disable-next-line react-refresh/only-export-components
+export function useApi(): ApiClient {
+  return useSession().client;
 }
 
 /** The logged-in user. Only for components rendered behind the authenticated gate. */

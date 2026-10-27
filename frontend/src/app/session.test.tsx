@@ -266,6 +266,33 @@ describe("logout", () => {
     expect(backend.requests().at(-1)?.route).toBe("GET /me");
   });
 
+  it("shows the unreachable screen when neither logout nor the session check get through", async () => {
+    const backend = fakeBackend({ session: exampleMe() });
+    const { client } = renderApp("/", backend);
+    await mainNav();
+    backend.fetch.mockRejectedValueOnce(new TypeError("example failure"));
+    backend.fetch.mockRejectedValueOnce(new TypeError("example failure"));
+    fireEvent.click(screen.getByRole("button", { name: "Log out" }));
+
+    expect(await screen.findByRole("heading", { name: "Can't load Vantage" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not reach the Vantage backend.");
+    expect(client.hasSession).toBe(false);
+    // The retry asks GET /me again: the cookie was still valid, so the token is back.
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await mainNav()).toBeInTheDocument();
+    expect(client.hasSession).toBe(true);
+  });
+
+  it("doesn't send the next user back to the previous user's page", async () => {
+    const { router } = renderApp("/devices?x=1");
+    await mainNav();
+    fireEvent.click(screen.getByRole("button", { name: "Log out" }));
+    await logIn("viewer");
+    await mainNav();
+    expect(router.state.location.pathname).toBe("/");
+    expect(router.state.location.search).toBe("");
+  });
+
   it("treats a 401 on logout as already logged out", async () => {
     const backend = fakeBackend({ session: exampleMe() });
     const { router } = renderApp("/", backend);
