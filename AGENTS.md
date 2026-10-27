@@ -100,8 +100,8 @@ class TestResult(BaseModel):
     hint: "FirewallHint | None" = None
 
 class FirewallHint(BaseModel):
-    protocol: Literal["tcp", "udp"]
-    port: int
+    protocol: Literal["tcp", "udp", "icmp"]
+    port: int | None                 # required for tcp/udp; None (and only None) for icmp
     destination: str                 # the instance host, as configured
     reason: str
 

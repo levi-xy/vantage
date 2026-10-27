@@ -52,8 +52,11 @@ export function TestOutcome({ result }: { result: TestResult }) {
         <div className="mt-2 border-t border-red-200 pt-2 dark:border-red-900">
           <p className="font-medium">Firewall check</p>
           <p>
-            Allow {hint.protocol.toUpperCase()} port {hint.port} from the Vantage server to{" "}
-            <span className="font-mono">{hint.destination}</span>.
+            Allow{" "}
+            {hint.protocol === "icmp" || hint.port === null
+              ? "ICMP echo (ping)"
+              : `${hint.protocol.toUpperCase()} port ${hint.port}`}{" "}
+            from the Vantage server to <span className="font-mono">{hint.destination}</span>.
           </p>
           {hint.reason && <p className="text-xs">{hint.reason}</p>}
         </div>

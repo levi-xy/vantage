@@ -117,8 +117,9 @@ export interface InstanceTest {
 }
 
 export interface FirewallHint {
-  protocol: "tcp" | "udp";
-  port: number;
+  protocol: "tcp" | "udp" | "icmp";
+  /** null for icmp (ICMP echo has no port). */
+  port: number | null;
   destination: string;
   reason: string;
 }

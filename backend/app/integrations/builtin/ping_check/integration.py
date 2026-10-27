@@ -26,6 +26,8 @@ from app.core.net_guard import (
     MAX_PING_COUNT,
     MAX_PING_REPLY_TIMEOUT,
     MAX_PING_TOTAL_TIMEOUT,
+    PING_INTERVAL,
+    PING_RESOLVE_TIMEOUT,
     NetGuardError,
     PingError,
     PingResult,
@@ -50,8 +52,9 @@ METRIC_RTT_MIN = f"vantage_{TYPE_ID}_rtt_min_seconds"
 METRIC_RTT_AVG = f"vantage_{TYPE_ID}_rtt_avg_seconds"
 METRIC_RTT_MAX = f"vantage_{TYPE_ID}_rtt_max_seconds"
 
-# The ping client sends one packet per second; this is its spacing in the budget below.
-_INTERVAL_SECONDS = 1
+# Time the packets may take: the client's 15 s total minus what it lets DNS use. A config
+# that fits here gets every reply its full timeout, however slow the lookup was.
+PACKET_BUDGET_SECONDS = MAX_PING_TOTAL_TIMEOUT - PING_RESOLVE_TIMEOUT
 
 
 class NoReply(Exception):
@@ -80,7 +83,7 @@ class PingCheckConfig(BaseModel):
         ge=1,
         le=MAX_PING_COUNT,
         title="Packets per check",
-        description="Echo requests sent per check, one per second.",
+        description=f"Echo requests sent per check, one every {PING_INTERVAL:g} s.",
     )
     timeout_seconds: int = Field(
         default=1,
@@ -97,12 +100,18 @@ class PingCheckConfig(BaseModel):
         # path, so a host accepted here is one the guard can check.
         return checked_host(value)
 
+    def worst_case_seconds(self) -> float:
+        """Longest the packets can take: each waits for the later of the next send and
+        its reply timeout. DNS comes on top, within the client's own resolve limit."""
+        return self.count * max(PING_INTERVAL, float(self.timeout_seconds))
+
     @model_validator(mode="after")
     def _fits_time_limit(self) -> Self:
-        # The ping client stops after 15 s in total; refuse settings that can't finish.
-        if self.count * max(_INTERVAL_SECONDS, self.timeout_seconds) > MAX_PING_TOTAL_TIMEOUT:
+        # The ping client stops after 15 s in total, DNS included; refuse settings whose
+        # packets wouldn't all get their full reply timeout after the slowest lookup.
+        if self.worst_case_seconds() > PACKET_BUDGET_SECONDS:
             raise ValueError(
-                f"packets x reply timeout must be at most {MAX_PING_TOTAL_TIMEOUT:.0f} seconds"
+                f"packets x reply timeout must be at most {PACKET_BUDGET_SECONDS:.0f} seconds"
             )
         return self
 
@@ -137,11 +146,11 @@ class PingCheck(Integration):
             return TestResult(ok=False, message=f"ping failed: {exc}")
         # Anything else propagates: the instance API reports only its type.
         if result.received == 0:
-            # TODO(maintainer): FirewallHint.protocol is "tcp" | "udp" (Contract 1), so no
-            # ICMP hint can be given here. Add "icmp" (with port unused) to the contract?
+            # Silence is what a firewall dropping ICMP looks like: give the hint.
             return TestResult(
                 ok=False,
                 message=f"no reply from {host} ({result.sent} packets sent, ICMP may be blocked)",
+                hint=self._hint(host),
             )
         return TestResult(
             ok=True,
@@ -179,6 +188,17 @@ class PingCheck(Integration):
         return [CardSpec(card_type="ping-check", title="Ping check", default_size=(2, 2))]
 
     def firewall_hints(self, ctx: InstanceContext) -> list[FirewallHint]:
-        # ICMP has no port and FirewallHint can only say tcp or udp (see the TODO in
-        # test_connection), so there is nothing to hint yet.
-        return []
+        return [self._hint(ctx.config_as(PingCheckConfig).host)]
+
+    @staticmethod
+    def _hint(host: str) -> FirewallHint:
+        # ICMP has no port: an icmp hint carries port=None (Contract 1).
+        return FirewallHint(
+            protocol="icmp",
+            port=None,
+            destination=host,
+            reason=(
+                "The Vantage backend pings this host: allow ICMP echo requests to it and "
+                "its echo replies back."
+            ),
+        )

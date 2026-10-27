@@ -238,18 +238,27 @@ def reply_for(request: SentPing, *, v6: bool, payload: bytes | None = None) -> b
     return _HEADER.pack(ECHO_REPLY[v6], 0, 0, request.identifier, request.sequence) + body
 
 
+Inbound = bytes | tuple[bytes, str] | BaseException
+
+
 class FakeIcmpSocket:
     def __init__(self, network: FakeIcmp, address: IPAddress) -> None:
         self._network = network
         self.address = address
         self.v6 = isinstance(address, IPv6Address)
-        self._inbox: asyncio.Queue[bytes | BaseException] = asyncio.Queue()
+        self._inbox: asyncio.Queue[Inbound] = asyncio.Queue()
+        self.connected = False
         self.closed = False
         for item in network.preload:
             self._inbox.put_nowait(item)
 
+    def connect(self) -> None:
+        if self._network.connect_error is not None:
+            raise self._network.connect_error
+        self.connected = True
+
     async def send(self, packet: bytes) -> None:
-        assert not self.closed
+        assert self.connected and not self.closed
         kind, code, _, identifier, sequence = _HEADER.unpack_from(packet)
         sent = SentPing(
             str(self.address), kind, code, identifier, sequence, packet[_HEADER.size :], packet
@@ -260,13 +269,16 @@ class FakeIcmpSocket:
         responder = self._network.hosts.get(str(self.address), never)
         delay = responder(sequence)
         if delay is not None and kind == ECHO_REQUEST[self.v6]:
-            message = reply_for(sent, v6=self.v6)
+            source = self._network.reply_source or str(self.address)
+            message = (reply_for(sent, v6=self.v6), source)
             asyncio.get_running_loop().call_later(delay, self._inbox.put_nowait, message)
 
-    async def recv(self) -> bytes:
+    async def recv(self) -> tuple[bytes, str]:
         item = await self._inbox.get()
         if isinstance(item, BaseException):
             raise item
+        if isinstance(item, bytes):
+            return item, str(self.address)  # preloaded junk "from" the checked address
         return item
 
     def close(self) -> None:
@@ -282,9 +294,13 @@ class FakeIcmp:
     opened: list[FakeIcmpSocket] = field(default_factory=list)
     sent: list[SentPing] = field(default_factory=list)
     open_error: BaseException | None = None
+    connect_error: BaseException | None = None
     send_error: BaseException | None = None
-    # Messages every new socket receives first (junk, stale replies, errors).
-    preload: list[bytes | BaseException] = field(default_factory=list)
+    # Answer from this source address instead of the pinged one (a spoofed reply).
+    reply_source: str | None = None
+    # Messages every new socket receives first (junk, stale replies, errors); bare bytes
+    # come "from" the checked address, (bytes, source) pairs from that source.
+    preload: list[Inbound] = field(default_factory=list)
 
     def answer(self, address: str, responder: Responder | None = None) -> None:
         self.hosts[address] = responder or always()

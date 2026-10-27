@@ -24,7 +24,15 @@ from app.collectors.scheduler import PollScheduler, PollSpec
 from app.collectors.store import MetricsStore, make_registry
 from app.core.crypto import SecretBox
 from app.core.db import make_session_factory, utcnow
-from app.core.net_guard import NetGuardError, PingError
+from app.core.net_guard import (
+    MAX_PING_COUNT,
+    MAX_PING_REPLY_TIMEOUT,
+    MAX_PING_TOTAL_TIMEOUT,
+    PING_INTERVAL,
+    PING_RESOLVE_TIMEOUT,
+    NetGuardError,
+    PingError,
+)
 from app.integrations import builtin
 from app.integrations import instance_config as ic
 from app.integrations.base import TestResult
@@ -38,6 +46,15 @@ from tests.test_auth import do_setup, make_client
 
 HOST = "ping.example.internal"
 ADDRESS = "10.0.0.30"
+ICMP_HINT = {
+    "protocol": "icmp",
+    "port": None,
+    "destination": HOST,
+    "reason": (
+        "The Vantage backend pings this host: allow ICMP echo requests to it and its echo "
+        "replies back."
+    ),
+}
 
 
 def config(**overrides: Any) -> dict[str, Any]:
@@ -110,7 +127,9 @@ def test_schema_rejects_host(host: str) -> None:
         {"count": 11},
         {"timeout_seconds": 0},
         {"timeout_seconds": 6},
-        {"count": 4, "timeout_seconds": 5},  # can't finish within the 15 s cap
+        # Packets must fit in 15 s minus the 5 s DNS may take.
+        {"count": 3, "timeout_seconds": 5},
+        {"count": 4, "timeout_seconds": 3},
         {"count": 10, "timeout_seconds": 2},
     ],
 )
@@ -121,7 +140,36 @@ def test_schema_rejects_fields(overrides: dict[str, Any]) -> None:
 
 def test_schema_largest_settings_fit_the_time_cap() -> None:
     PingCheckConfig.model_validate(config(count=10, timeout_seconds=1))
-    PingCheckConfig.model_validate(config(count=3, timeout_seconds=5))
+    PingCheckConfig.model_validate(config(count=2, timeout_seconds=5))
+    PingCheckConfig.model_validate(config(count=3, timeout_seconds=3))
+
+
+def test_every_accepted_config_survives_the_slowest_dns() -> None:
+    """A slow lookup must never make a slow reply count as lost: for every config the
+    schema accepts, the slowest DNS the client allows plus the packets' worst case still
+    fits in the client's total limit."""
+    accepted = 0
+    for count in range(1, MAX_PING_COUNT + 1):
+        for timeout in range(1, int(MAX_PING_REPLY_TIMEOUT) + 1):
+            try:
+                cfg = PingCheckConfig.model_validate(config(count=count, timeout_seconds=timeout))
+            except ValidationError:
+                continue
+            accepted += 1
+            assert PING_RESOLVE_TIMEOUT + cfg.worst_case_seconds() <= MAX_PING_TOTAL_TIMEOUT
+            # worst_case_seconds really is the client's worst case: every packet but the
+            # last waits for the later of its timeout and the next send.
+            last = (count - 1) * max(PING_INTERVAL, timeout) + timeout
+            assert last <= cfg.worst_case_seconds()
+    assert accepted > 10
+    # The timing itself (slow DNS, then slow replies all counted) is tested on the client:
+    # test_net_guard.py::test_ping_slow_dns_does_not_shorten_reply_windows.
+
+
+def test_ping_check_uses_the_clients_interval() -> None:
+    ctx = make_ctx(PingCheck, config())
+    client = ctx.ping_client(HOST)
+    assert client._interval == PING_INTERVAL
 
 
 def test_host_is_a_host_field_and_nothing_is_secret() -> None:
@@ -164,7 +212,8 @@ async def test_connection_no_reply(fake_icmp: FakeIcmp) -> None:
     result = await run_test()
     assert not result.ok
     assert result.message == f"no reply from {HOST} (1 packets sent, ICMP may be blocked)"
-    assert result.hint is None  # FirewallHint can't express ICMP (TODO(maintainer))
+    assert result.hint is not None
+    assert result.hint.model_dump() == ICMP_HINT
 
 
 async def test_connection_refused_by_guard(fake_icmp: FakeIcmp) -> None:
@@ -195,6 +244,18 @@ async def test_connection_icmp_not_permitted(fake_icmp: FakeIcmp) -> None:
     assert not result.ok
     assert result.message.startswith("ping failed: ICMP is not permitted")
     assert "ping_group_range" in result.message
+    assert result.hint is None  # a local permission problem, not a firewall
+
+
+async def test_connection_broadcast_refused(fake_icmp: FakeIcmp) -> None:
+    fake_icmp.connect_error = PermissionError(13, "Permission denied")
+    result = await run_test(host="10.0.0.255")
+    assert not result.ok
+    assert result.message == (
+        "ping failed: the system refused to ping 10.0.0.255 (is it a broadcast address?)"
+    )
+    assert result.hint is None
+    assert fake_icmp.sent == []
 
 
 async def test_unrecognised_errors_propagate(fake_icmp: FakeIcmp) -> None:
@@ -379,13 +440,22 @@ def test_api_refuses_unicode_host(admin: TestClient) -> None:
     assert r.status_code == 422
 
 
+def test_api_serves_icmp_hint_without_port(admin: TestClient, fake_icmp: FakeIcmp) -> None:
+    r = admin.post("/api/v1/instances/test", json={"type_id": "ping_check", "config": config()})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is False
+    assert body["hint"] == ICMP_HINT  # "port": null for icmp
+
+
 # --- static parts ----------------------------------------------------------------------
 
 
 def test_firewall_hints_and_cards() -> None:
     ctx = make_ctx(PingCheck, config())
-    # TODO(maintainer): FirewallHint has no ICMP protocol (Contract 1).
-    assert PingCheck().firewall_hints(ctx) == []
+    assert [h.model_dump() for h in PingCheck().firewall_hints(ctx)] == [ICMP_HINT]
+    [hint] = PingCheck().firewall_hints(make_ctx(PingCheck, config(host="[fd00::30]")))
+    assert (hint.protocol, hint.port, hint.destination) == ("icmp", None, "fd00::30")
     assert PingCheck().poll_interval_seconds() == 60
     assert [c.card_type for c in PingCheck().cards()] == ["ping-check"]
 
