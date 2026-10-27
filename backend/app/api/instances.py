@@ -13,7 +13,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -24,6 +24,8 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import AdminDep, AuthDep, DbDep
 from app.api.integrations import RegistryDep
+from app.collectors.scheduler import polls
+from app.collectors.store import InstanceStatus, MetricsStore
 from app.core import audit
 from app.core.crypto import DecryptionError, SecretBox
 from app.core.net_guard import NetGuardError
@@ -61,7 +63,13 @@ def get_net_guard_factory(request: Request) -> ic.NetGuardFactory:
     return factory
 
 
+def get_metrics_store(request: Request) -> MetricsStore:
+    store: MetricsStore = request.app.state.metrics_store
+    return store
+
+
 SecretBoxDep = Annotated[SecretBox, Depends(get_secret_box)]
+StoreDep = Annotated[MetricsStore, Depends(get_metrics_store)]
 GuardFactoryDep = Annotated[ic.NetGuardFactory, Depends(get_net_guard_factory)]
 
 
@@ -98,6 +106,16 @@ class InstanceTest(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)
 
 
+class StatusOut(BaseModel):
+    """Contract 3: the poll collector's in-memory view of the instance."""
+
+    state: Literal["pending", "up", "down", "unknown"]
+    checked_at: datetime | None = None
+    last_success_at: datetime | None = None
+    # The collector's short, secret-free description of the last failure.
+    error: str | None = None
+
+
 class InstanceOut(BaseModel):
     id: uuid.UUID
     type_id: str
@@ -109,6 +127,7 @@ class InstanceOut(BaseModel):
     config: dict[str, Any]
     # For each secret field of the schema: whether a value is stored. Never the value.
     secrets_set: dict[str, bool]
+    status: StatusOut
     created_at: datetime
     updated_at: datetime
 
@@ -202,7 +221,27 @@ def _stored_secrets(box: SecretBox, row: Instance) -> dict[str, str]:
         ) from None
 
 
-def _out(row: Instance, registry: RegistryDep, box: SecretBox) -> InstanceOut:
+def _status(
+    row: Instance, cls: type[Integration] | None, polled: InstanceStatus | None
+) -> StatusOut:
+    """``unknown`` unless the collector polls this instance (enabled, and its integration
+    polls). One it polls but hasn't picked up yet (it re-reads instances periodically)
+    is ``pending``."""
+    if not row.enabled or cls is None or not polls(cls):
+        return StatusOut(state="unknown")
+    if polled is None:
+        return StatusOut(state="pending")
+    return StatusOut(
+        state=polled.state,
+        checked_at=polled.checked_at,
+        last_success_at=polled.last_success_at,
+        error=polled.error,
+    )
+
+
+def _out(
+    row: Instance, registry: RegistryDep, box: SecretBox, polled: InstanceStatus | None
+) -> InstanceOut:
     cls = registry.get(row.type_id)
     schema = cls.config_schema if cls is not None else None
     secrets_set: dict[str, bool] = {}
@@ -223,6 +262,7 @@ def _out(row: Instance, registry: RegistryDep, box: SecretBox) -> InstanceOut:
         enabled=row.enabled,
         config=ic.public_config(row.config, schema),
         secrets_set=secrets_set,
+        status=_status(row, cls, polled),
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -301,10 +341,11 @@ def _hint(integration: Integration, ctx: InstanceContext) -> FirewallHint | None
 
 @router.get("/instances")
 def list_instances(
-    _auth: AuthDep, db: DbDep, registry: RegistryDep, box: SecretBoxDep
+    _auth: AuthDep, db: DbDep, registry: RegistryDep, box: SecretBoxDep, store: StoreDep
 ) -> list[InstanceOut]:
     rows = db.scalars(select(Instance).order_by(Instance.name))
-    return [_out(row, registry, box) for row in rows]
+    statuses = store.statuses()
+    return [_out(row, registry, box, statuses.get(row.id)) for row in rows]
 
 
 @router.post("/instances", status_code=status.HTTP_201_CREATED)
@@ -315,6 +356,7 @@ async def create_instance(
     registry: RegistryDep,
     box: SecretBoxDep,
     factory: GuardFactoryDep,
+    store: StoreDep,
 ) -> InstanceOut:
     cls = _integration(registry, body.type_id)
     model = _validate(cls.config_schema, body.config)
@@ -353,7 +395,7 @@ async def create_instance(
         schema=cls.config_schema,
     )
     db.commit()
-    return _out(row, registry, box)
+    return _out(row, registry, box, store.status(row.id))
 
 
 @router.post("/instances/test")
@@ -374,9 +416,15 @@ async def test_unsaved_instance(
 
 @router.get("/instances/{instance_id}")
 def get_instance(
-    instance_id: uuid.UUID, _auth: AuthDep, db: DbDep, registry: RegistryDep, box: SecretBoxDep
+    instance_id: uuid.UUID,
+    _auth: AuthDep,
+    db: DbDep,
+    registry: RegistryDep,
+    box: SecretBoxDep,
+    store: StoreDep,
 ) -> InstanceOut:
-    return _out(_get_row(db, instance_id), registry, box)
+    row = _get_row(db, instance_id)
+    return _out(row, registry, box, store.status(row.id))
 
 
 @router.patch("/instances/{instance_id}")
@@ -388,6 +436,7 @@ async def update_instance(
     registry: RegistryDep,
     box: SecretBoxDep,
     factory: GuardFactoryDep,
+    store: StoreDep,
 ) -> InstanceOut:
     row = _get_row(db, instance_id)
     cls = _stored_integration(registry, row)
@@ -438,7 +487,7 @@ async def update_instance(
         schema=cls.config_schema,
     )
     db.commit()
-    return _out(row, registry, box)
+    return _out(row, registry, box, store.status(row.id))
 
 
 @router.delete("/instances/{instance_id}", status_code=status.HTTP_204_NO_CONTENT)

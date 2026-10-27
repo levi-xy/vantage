@@ -8,6 +8,7 @@ import asyncio
 import logging
 import uuid
 from collections.abc import Iterator, Sequence
+from datetime import UTC, datetime
 from typing import Any, ClassVar
 
 import httpx
@@ -19,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.api import instances as instances_api
 from app.api.deps import CSRF_HEADER
+from app.collectors.store import MetricsStore
 from app.core.crypto import SecretBox, row_context
 from app.core.net_guard import NetGuard, NetGuardError, NetPolicy
 from app.integrations import instance_config as ic
@@ -97,7 +99,15 @@ class UrlDevice(FakeIntegration):
         return []
 
 
-REGISTRY = Registry([FakeIntegration, FakeCloudIntegration, Probe, UrlDevice])
+class ScrapeOnly(FakeIntegration):
+    """A test-only integration with nothing to poll (Prometheus scrapes it)."""
+
+    type_id = "scrape_only"
+    display_name = "Scrape only"
+    poll = Integration.poll  # type: ignore[assignment]
+
+
+REGISTRY = Registry([FakeIntegration, FakeCloudIntegration, Probe, UrlDevice, ScrapeOnly])
 
 
 def fake_config(**overrides: Any) -> dict[str, Any]:
@@ -448,6 +458,69 @@ def test_delete(admin: TestClient, session: Session) -> None:
     assert admin.delete(f"{API}/instances/{data['id']}").status_code == 404
     session.expire_all()
     assert session.scalars(select(Instance)).all() == []
+
+
+# --- status ----------------------------------------------------------------------------
+
+
+def metrics_store(client: TestClient) -> MetricsStore:
+    store: MetricsStore = client.app.state.metrics_store  # type: ignore[attr-defined]
+    return store
+
+
+def test_status_comes_from_the_collector(admin: TestClient) -> None:
+    data = create(admin)
+    # Polled, but the collector hasn't picked the new instance up yet.
+    assert data["status"] == {
+        "state": "pending",
+        "checked_at": None,
+        "last_success_at": None,
+        "error": None,
+    }
+    instance_id = uuid.UUID(data["id"])
+    store = metrics_store(admin)
+    store.track(instance_id, {})
+    ok_at = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+    store.record_success(instance_id, "fake_device", [], at=ok_at, duration_seconds=0.1)
+    r = admin.get(f"{API}/instances/{data['id']}")
+    assert r.json()["status"]["state"] == "up"
+    assert r.json()["status"]["last_success_at"] == "2026-01-02T03:04:05Z"
+
+    failed_at = datetime(2026, 1, 2, 3, 5, 5, tzinfo=UTC)
+    store.record_failure(instance_id, "ConnectTimeout", at=failed_at, duration_seconds=5)
+    for status in (
+        admin.get(f"{API}/instances").json()[0]["status"],
+        admin.get(f"{API}/instances/{data['id']}").json()["status"],
+    ):
+        assert status == {
+            "state": "down",
+            "checked_at": "2026-01-02T03:05:05Z",
+            "last_success_at": "2026-01-02T03:04:05Z",
+            "error": "ConnectTimeout",
+        }
+    r = admin.patch(f"{API}/instances/{data['id']}", json={"tags": []})
+    assert r.json()["status"]["state"] == "down"
+
+
+def test_status_unknown_when_not_polled(admin: TestClient) -> None:
+    disabled = create(admin, enabled=False)
+    scrape = create(admin, name="scrape-1", type_id="scrape_only")
+    assert disabled["status"]["state"] == "unknown"
+    assert scrape["status"]["state"] == "unknown"
+    # Still tracked by the collector until its next refresh: disabled wins.
+    instance_id = uuid.UUID(disabled["id"])
+    metrics_store(admin).track(instance_id, {})
+    metrics_store(admin).record_failure(
+        instance_id, "ConnectTimeout", at=datetime.now(UTC), duration_seconds=1
+    )
+    states = {i["name"]: i["status"] for i in admin.get(f"{API}/instances").json()}
+    assert states["nas-1"] == {
+        "state": "unknown",
+        "checked_at": None,
+        "last_success_at": None,
+        "error": None,
+    }
+    assert states["scrape-1"]["state"] == "unknown"
 
 
 # --- audit -----------------------------------------------------------------------------
