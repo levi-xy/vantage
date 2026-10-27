@@ -11,6 +11,11 @@ resolved and checked by the SSRF guard (Contract 5). A host is any string field 
 ``host`` or ``*_host``, and the host part of any field named ``url`` or ``*_url``.
 Connections are checked again by the guard at connect time; this check exists so a
 denied address is refused when the admin enters it, with a clear message.
+URL fields must not carry credentials (``user:pw@``): they'd be stored in plaintext.
+
+TODO(maintainer): host fields are found by name only. Proposal: let integrations mark
+them explicitly (e.g. ``Field(json_schema_extra={"vantage_host": True})``), documented
+in docs/INTEGRATIONS.md (M2.6), and keep the naming convention as a fallback.
 """
 
 import uuid
@@ -90,6 +95,16 @@ def split(model: BaseModel) -> tuple[dict[str, Any], dict[str, str]]:
     return config, secrets
 
 
+def empty_secrets(model: BaseModel) -> list[str]:
+    """Keys of secret fields set to an empty or whitespace-only value.
+
+    Such a value would count as "set" while holding nothing, so it is refused. ``None``
+    (an optional secret left unset or cleared) is fine.
+    """
+    _, secrets = split(model)
+    return sorted(key for key, value in secrets.items() if not value.strip())
+
+
 def public_config(config: Mapping[str, Any], schema: type[BaseModel] | None) -> dict[str, Any]:
     """The stored config without any secret key, as returned by the API.
 
@@ -140,6 +155,12 @@ def configured_hosts(config: Mapping[str, Any]) -> list[tuple[str, str, int, str
                 raise HostCheckError(key, "invalid URL") from None
             if url.scheme not in ("http", "https") or not url.host:
                 raise HostCheckError(key, "URL must be http:// or https:// with a host")
+            if url.userinfo:
+                # The config column is plaintext and served by GET: credentials belong
+                # in the integration's secret fields. The URL itself is never echoed.
+                raise HostCheckError(
+                    key, "URL must not contain a username or password; use the secret fields"
+                )
             found.append(
                 (key, url.host, url.port or (443 if url.scheme == "https" else 80), url.scheme)
             )

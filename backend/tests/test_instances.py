@@ -22,7 +22,7 @@ from app.api.deps import CSRF_HEADER
 from app.core.crypto import SecretBox, row_context
 from app.core.net_guard import NetGuard, NetGuardError, NetPolicy
 from app.integrations import instance_config as ic
-from app.integrations.base import InstanceContext, Integration, TestResult
+from app.integrations.base import FirewallHint, InstanceContext, Integration, TestResult
 from app.integrations.registry import Registry
 from app.models import AuditLog, Instance, Role
 from tests.conftest import TEST_MASTER_KEY
@@ -81,7 +81,23 @@ class Probe(FakeIntegration):
         return TestResult(ok=True, message="reachable")
 
 
-REGISTRY = Registry([FakeIntegration, FakeCloudIntegration, Probe])
+class UrlConfig(BaseModel):
+    api_url: str
+    api_token: SecretStr
+
+
+class UrlDevice(FakeIntegration):
+    """A test-only integration configured by URL instead of host."""
+
+    type_id = "url_device"
+    display_name = "URL device"
+    config_schema = UrlConfig
+
+    def firewall_hints(self, ctx: InstanceContext) -> list[FirewallHint]:
+        return []
+
+
+REGISTRY = Registry([FakeIntegration, FakeCloudIntegration, Probe, UrlDevice])
 
 
 def fake_config(**overrides: Any) -> dict[str, Any]:
@@ -763,3 +779,121 @@ async def test_check_hosts_passes_allowed_and_wraps_guard_errors() -> None:
         await ic.check_hosts(guard, {"host": "10.0.0.1", "api_url": "https://127.0.0.1/"})
     assert info.value.field == "api_url"
     assert not isinstance(info.value, NetGuardError)
+
+
+# --- missing/empty secrets, credentials in URLs, host rechecks -------------------------
+
+
+def test_create_missing_required_secret(admin: TestClient) -> None:
+    config = fake_config()
+    del config["api_token"]
+    r = admin.post(f"{API}/instances", json=body(config=config))
+    assert r.status_code == 422
+    assert [e["loc"] for e in r.json()["detail"]] == [["body", "config", "api_token"]]
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_create_rejects_empty_secret(admin: TestClient, session: Session, value: str) -> None:
+    r = admin.post(f"{API}/instances", json=body(config=fake_config(snmp_community=value)))
+    assert r.status_code == 422
+    assert r.json()["detail"] == [
+        {
+            "loc": ["body", "config", "snmp_community"],
+            "msg": "must not be empty",
+            "type": "value_error",
+        }
+    ]
+    assert_no_secrets(r.text)
+    assert session.scalars(select(Instance)).all() == []
+
+
+def test_patch_rejects_empty_secret(admin: TestClient, session: Session) -> None:
+    data = create(admin)
+    r = admin.patch(f"{API}/instances/{data['id']}", json={"config": {"api_token": ""}})
+    assert r.status_code == 422
+    assert r.json()["detail"][0]["loc"] == ["body", "config", "api_token"]
+    assert stored_secrets(stored(session, data["id"]))["api_token"] == TOKEN
+
+
+def test_patch_null_clears_optional_secret(admin: TestClient, session: Session) -> None:
+    data = create(admin, config=fake_config(snmp_community=COMMUNITY))
+    assert data["secrets_set"]["snmp_community"] is True
+    r = admin.patch(f"{API}/instances/{data['id']}", json={"config": {"snmp_community": None}})
+    assert r.status_code == 200
+    assert r.json()["secrets_set"]["snmp_community"] is False
+    assert "snmp_community" not in stored_secrets(stored(session, data["id"]))
+
+
+def test_unsaved_test_rejects_empty_secret(admin: TestClient) -> None:
+    r = admin.post(
+        f"{API}/instances/test",
+        json={"type_id": "probe_device", "config": fake_config(api_token="")},
+    )
+    assert r.status_code == 422
+    assert r.json()["detail"][0]["msg"] == "must not be empty"
+    assert Probe.seen == []
+
+
+def test_saved_test_rejects_stored_empty_secret(admin: TestClient, session: Session) -> None:
+    data = probe(admin)
+    row = stored(session, data["id"])
+    row.secrets = ic.encrypt(SecretBox(TEST_MASTER_KEY), row.id, {"api_token": ""})
+    session.commit()
+    r = admin.post(f"{API}/instances/{data['id']}/test")
+    assert r.status_code == 422
+    assert Probe.seen == []
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://admin:example-password-u1@10.0.0.40/api",
+        "https://example-password-u1@10.0.0.40/api",
+        "http://admin:example-password-u1@nas.example.internal:8080/",
+    ],
+)
+def test_url_with_credentials_is_refused(admin: TestClient, session: Session, url: str) -> None:
+    config = {"api_url": url, "api_token": TOKEN}
+    for path, payload in (
+        ("/instances", body(type_id="url_device", config=config)),
+        ("/instances/test", {"type_id": "url_device", "config": config}),
+    ):
+        r = admin.post(f"{API}{path}", json=payload)
+        assert r.status_code == 422, r.text
+        [error] = r.json()["detail"]
+        assert error["loc"] == ["body", "config", "api_url"]
+        assert "username or password" in error["msg"]
+        assert "example-password-u1" not in r.text
+        assert url not in r.text
+    assert session.scalars(select(Instance)).all() == []
+
+
+def test_patch_url_with_credentials_is_refused(admin: TestClient) -> None:
+    data = create(
+        admin, type_id="url_device", config={"api_url": "https://10.0.0.40/", "api_token": TOKEN}
+    )
+    assert data["config"] == {"api_url": "https://10.0.0.40/"}
+    r = admin.patch(
+        f"{API}/instances/{data['id']}",
+        json={"config": {"api_url": "https://admin:example-password-u1@10.0.0.40/"}},
+    )
+    assert r.status_code == 422
+    assert "example-password-u1" not in r.text
+    assert admin.get(f"{API}/instances/{data['id']}").json() == data
+
+
+@pytest.mark.parametrize(
+    "host", ["127.0.0.1", "169.254.169.254", "rebind.example.internal", "unknown.example.internal"]
+)
+def test_patch_host_only_change_is_rechecked(admin: TestClient, host: str) -> None:
+    data = create(admin)
+    r = admin.patch(f"{API}/instances/{data['id']}", json={"config": {"host": host}})
+    assert r.status_code == 422
+    assert r.json()["detail"][0]["type"] == "net_guard"
+    assert admin.get(f"{API}/instances/{data['id']}").json() == data
+    # An allowed host-only change goes through.
+    r = admin.patch(
+        f"{API}/instances/{data['id']}", json={"config": {"host": "nas.example.internal"}}
+    )
+    assert r.status_code == 200
+    assert r.json()["config"]["host"] == "nas.example.internal"

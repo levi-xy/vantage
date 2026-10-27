@@ -148,7 +148,7 @@ def _stored_integration(registry: RegistryDep, row: Instance) -> type[Integratio
 def _validate(schema: type[BaseModel], config: dict[str, Any]) -> BaseModel:
     """Validate against the integration's schema. Errors never echo the submitted values."""
     try:
-        return schema.model_validate(config)
+        model = schema.model_validate(config)
     except ValidationError as exc:
         errors = [
             {
@@ -159,6 +159,20 @@ def _validate(schema: type[BaseModel], config: dict[str, Any]) -> BaseModel:
             for err in exc.errors(include_url=False, include_input=False, include_context=False)
         ]
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, errors) from None
+    _refuse_empty_secrets(model)
+    return model
+
+
+def _refuse_empty_secrets(model: BaseModel) -> None:
+    empty = ic.empty_secrets(model)
+    if empty:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            [
+                {"loc": ["body", "config", key], "msg": "must not be empty", "type": "value_error"}
+                for key in empty
+            ],
+        )
 
 
 async def _check_hosts(factory: ic.NetGuardFactory, cls: type[Integration], config: Any) -> None:
@@ -467,6 +481,7 @@ async def test_instance(
             status.HTTP_409_CONFLICT,
             "the stored config no longer matches the integration's schema; edit the instance",
         ) from None
+    _refuse_empty_secrets(model)  # only rows stored before empty secrets were refused
     return await _run_test(cls, instance_id=row.id, name=row.name, model=model, factory=factory)
 
 
