@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { useNavigate } from "react-router";
 import type { Instance, IntegrationInfo, TestResult } from "../../api";
-import { useApi } from "../../app/session";
+import { useApiClient } from "../../app/session";
 import {
   alertError,
   alertInfo,
@@ -71,7 +71,7 @@ interface Props {
 /** Add or edit form for one instance, generated from the integration's config schema. */
 export function InstanceForm({ integration, instance }: Props) {
   const editing = instance !== undefined;
-  const api = useApi();
+  const api = useApiClient();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const fields = useMemo(() => configFields(integration.schema), [integration.schema]);

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { ApiError } from "../../api";
-import { useApi } from "../../app/session";
+import { useApiClient } from "../../app/session";
 
 /** A readable line for a failed request. API errors never carry secrets (backend rule). */
 export function errorText(error: unknown): string {
@@ -18,7 +18,7 @@ export const INSTANCES_KEY = ["instances"] as const;
 export const INTEGRATIONS_KEY = ["integrations"] as const;
 
 export function useInstances() {
-  const api = useApi();
+  const api = useApiClient();
   return useQuery({
     queryKey: INSTANCES_KEY,
     queryFn: () => api.instances(),
@@ -27,12 +27,12 @@ export function useInstances() {
 }
 
 export function useInstance(id: string) {
-  const api = useApi();
+  const api = useApiClient();
   return useQuery({ queryKey: [...INSTANCES_KEY, id], queryFn: () => api.instance(id) });
 }
 
 export function useIntegrations() {
-  const api = useApi();
+  const api = useApiClient();
   return useQuery({
     queryKey: INTEGRATIONS_KEY,
     queryFn: () => api.integrations(),

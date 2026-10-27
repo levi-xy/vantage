@@ -49,7 +49,7 @@ export interface SessionContextValue {
   logout: () => Promise<void>;
   /** Ask the backend again (after "unreachable"). */
   reload: () => void;
-  /** The API client this session uses (tests pass one with a fake fetch). */
+  /** The API client this session belongs to (tests pass one with a fake fetch). */
   client: ApiClient;
 }
 
@@ -197,16 +197,16 @@ export function useSession(): SessionContextValue {
   return value;
 }
 
-/** The API client of the session. Pages fetch through this, never the global `api`. */
-// eslint-disable-next-line react-refresh/only-export-components
-export function useApi(): ApiClient {
-  return useSession().client;
-}
-
 /** The logged-in user. Only for components rendered behind the authenticated gate. */
 // eslint-disable-next-line react-refresh/only-export-components
 export function useUser(): SessionUser {
   const { state } = useSession();
   if (state.status !== "authenticated") throw new Error("useUser needs a logged-in user");
   return state.user;
+}
+
+/** The API client pages fetch through, so their requests share the session's CSRF token. */
+// eslint-disable-next-line react-refresh/only-export-components
+export function useApiClient(): ApiClient {
+  return useSession().client;
 }

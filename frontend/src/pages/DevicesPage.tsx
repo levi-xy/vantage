@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
 import type { Instance, InstanceStatus, TestResult } from "../api";
-import { useApi, useUser } from "../app/session";
+import { useApiClient, useUser } from "../app/session";
 import { EmptyState, PageHeader } from "../components/PageHeader";
 import { alertError, buttonPrimary, buttonSecondary } from "../components/styles";
 import { TestOutcome } from "./devices/InstanceForm";
@@ -49,7 +49,7 @@ function StatusBadge({ status }: { status: InstanceStatus }) {
 }
 
 function AdminActions({ instance }: { instance: Instance }) {
-  const api = useApi();
+  const api = useApiClient();
   const queryClient = useQueryClient();
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
