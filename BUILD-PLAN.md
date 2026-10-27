@@ -84,6 +84,12 @@ M0 ──► M1 ──► M2 ──┬──► M4a ─┐
 | M2.5 | Reference integrations | **HTTP/ping check** and **Linux host** (node_exporter scrape), fully tested. These are the templates for M4 |
 | M2.6 | Integration docs | `docs/INTEGRATIONS.md`: how to write one, using M2.5 as the worked example |
 
+**Carried over from reviews (include in the M2.6 task):**
+- Host fields: the SSRF pre-check on save finds them by name only (`host`, `*_host`, `url`, `*_url`). Document the convention, and decide on explicit marking (proposal: `Field(json_schema_extra={"vantage_host": True})`, naming as fallback). See the `TODO(maintainer)` in `backend/app/integrations/instance_config.py`. (PR #12)
+- URL fields must not carry credentials; they're refused at save time. Credentials go in `SecretStr` fields. (PR #12)
+- Secret fields are top-level `SecretStr` (or `SecretStr | None`) only; nested and list secrets are rejected by the conformance suite. (PR #10)
+- Author text on a secret field (`description`, `json_schema_extra`) is served in the schema as-is: never put example secret values there. (PR #10)
+
 ## M3: Frontend shell
 
 | ID | Task | Acceptance criteria |
@@ -92,6 +98,12 @@ M0 ──► M1 ──► M2 ──┬──► M4a ─┐
 | M3.2 | Setup and login | First-run wizard, login, logout, session handling, role-aware navigation |
 | M3.3 | Integrations UI | "Add device": pick type → form generated from schema → test connection (showing firewall hints on failure) → save; list, edit, disable, delete instances |
 | M3.4 | Audit page | Admin-only table of audit entries |
+
+**Carried over from reviews (include in the M3.2 task):**
+- Call `api.me()` at app start, before any POST/PATCH/PUT/DELETE: the CSRF token lives only in memory, so after a reload writes are rejected until `me()` has run. (PR #11)
+- The API client clears the CSRF token on every 401, including a failed `POST /auth/login`. `onUnauthorized` must not redirect-loop when the 401 comes from the login call itself. (PR #11)
+- Navigation isn't role-aware yet (everyone sees "Audit log"); M3.2 hides admin-only links from viewers. (PR #11)
+- Instance responses carry `secrets_set: {field: bool}` for the "set" / "not set" display (M3.3). (PR #12)
 
 ## M4: Built-in integrations (parallel, one agent each)
 

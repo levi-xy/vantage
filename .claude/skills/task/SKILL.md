@@ -17,13 +17,16 @@ You coordinate. You don't write the task's code yourself. Task IDs: `$ARGUMENTS`
 
 Spawn the `builder` agent, one per ID. With more than one ID, use `isolation: "worktree"` for each and launch them in the same message so they run in parallel. One ID → no worktree needed.
 
-Prompt (fill in the ID and paste the task's row from BUILD-PLAN.md):
+Prompt (fill in the ID and paste the task's row from BUILD-PLAN.md, plus any "Carried over from reviews" notes for that task under its milestone):
 
 ```
 Do task <ID> from BUILD-PLAN.md only.
 Acceptance criteria: <paste the row>
+Also required (carried over from earlier reviews): <paste the notes, or "none">
 Follow AGENTS.md. Open the PR when scripts/check.py passes and report back.
 ```
+
+When a review leaves non-blocking notes that belong to a later task, add them to that milestone's "Carried over from reviews" list in BUILD-PLAN.md in a small PR, so they reach every machine.
 
 If the builder stops with a contract question, relay it to the maintainer word for word and stop.
 
