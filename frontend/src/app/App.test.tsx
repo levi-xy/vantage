@@ -1,6 +1,13 @@
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import { mockSystemTheme, renderApp } from "../test-utils";
 
+/** Render as a logged-in admin and wait until the session check has finished. */
+async function renderReady(path: string) {
+  const result = renderApp(path);
+  await screen.findByRole("navigation", { name: "Main" });
+  return result;
+}
+
 beforeEach(() => {
   mockSystemTheme(false);
 });
@@ -19,7 +26,7 @@ describe("routing", () => {
   });
 
   it("navigates with the main menu and marks the current page", async () => {
-    const { router } = renderApp("/");
+    const { router } = await renderReady("/");
     const nav = screen.getByRole("navigation", { name: "Main" });
     expect(within(nav).getByRole("link", { name: "Dashboard" })).toHaveAttribute(
       "aria-current",
@@ -47,7 +54,7 @@ describe("routing", () => {
 
 describe("layout", () => {
   it("collapses the menu on phones and closes it after navigating", async () => {
-    renderApp("/");
+    await renderReady("/");
     const nav = screen.getByRole("navigation", { name: "Main" });
     const button = screen.getByRole("button", { name: "Open menu" });
     // Hidden below md, always shown from md up.
@@ -69,7 +76,7 @@ describe("layout", () => {
   });
 
   it("uses one column on phones and a grid on wider screens", async () => {
-    renderApp("/");
+    await renderReady("/");
     await screen.findByRole("heading", { level: 1, name: "Dashboard" });
     const grid = screen.getByText(/No cards yet/).parentElement;
     expect(grid).toHaveClass("grid-cols-1", "md:grid-cols-2");
@@ -79,9 +86,9 @@ describe("layout", () => {
 describe("theme", () => {
   const html = document.documentElement;
 
-  it("follows the OS preference by default, live", () => {
+  it("follows the OS preference by default, live", async () => {
     const system = mockSystemTheme(true);
-    renderApp("/");
+    await renderReady("/");
     expect(html).toHaveClass("dark");
     expect(html.style.colorScheme).toBe("dark");
     expect(screen.getByRole("button", { name: /^Theme: System/ })).toBeInTheDocument();
@@ -91,9 +98,9 @@ describe("theme", () => {
     expect(html.style.colorScheme).toBe("light");
   });
 
-  it("cycles system → light → dark → system and remembers the choice", () => {
+  it("cycles system → light → dark → system and remembers the choice", async () => {
     const system = mockSystemTheme(true);
-    renderApp("/");
+    await renderReady("/");
     const toggle = () => fireEvent.click(screen.getByRole("button", { name: /^Theme:/ }));
 
     toggle();
@@ -115,21 +122,21 @@ describe("theme", () => {
     expect(html).toHaveClass("dark");
   });
 
-  it("restores a saved choice on load", () => {
+  it("restores a saved choice on load", async () => {
     mockSystemTheme(false);
     localStorage.setItem("vantage.theme", "dark");
-    renderApp("/");
+    await renderReady("/");
     expect(html).toHaveClass("dark");
     expect(screen.getByRole("button", { name: /^Theme: Dark/ })).toBeInTheDocument();
   });
 
-  it("ignores an unknown saved value", () => {
+  it("ignores an unknown saved value", async () => {
     localStorage.setItem("vantage.theme", "<script>");
-    renderApp("/");
+    await renderReady("/");
     expect(screen.getByRole("button", { name: /^Theme: System/ })).toBeInTheDocument();
   });
 
-  it("still works when storage is blocked", () => {
+  it("still works when storage is blocked", async () => {
     const blocked = () => {
       throw new DOMException("blocked", "SecurityError");
     };
@@ -138,7 +145,7 @@ describe("theme", () => {
       vi.spyOn(Storage.prototype, "setItem").mockImplementation(blocked),
     ];
     try {
-      renderApp("/");
+      await renderReady("/");
       fireEvent.click(screen.getByRole("button", { name: /^Theme:/ }));
       expect(screen.getByRole("button", { name: /^Theme: Light/ })).toBeInTheDocument();
     } finally {
@@ -146,8 +153,8 @@ describe("theme", () => {
     }
   });
 
-  it("stores nothing but the theme preference", () => {
-    renderApp("/");
+  it("stores nothing but the theme preference", async () => {
+    await renderReady("/");
     fireEvent.click(screen.getByRole("button", { name: /^Theme:/ }));
     expect(Object.keys(localStorage)).toEqual(["vantage.theme"]);
     expect(sessionStorage.length).toBe(0);

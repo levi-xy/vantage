@@ -29,9 +29,16 @@ export class ApiError extends Error {
 
 export interface ApiClientOptions {
   fetch?: typeof fetch;
-  /** Called whenever the backend answers 401 (no session, or it expired). */
+  /**
+   * Called whenever the backend answers 401 (no session, or it expired), except on a
+   * login attempt: there a 401 means wrong credentials, and the login form reports it.
+   */
   onUnauthorized?: () => void;
 }
+
+// A 401 from these paths is a failed credential check, not an ended session, so it
+// doesn't notify the unauthorized listeners (which send the user to the login page).
+const CREDENTIAL_PATHS: ReadonlySet<string> = new Set(["/auth/login"]);
 
 /** Turn FastAPI's `{"detail": ...}` error body into one readable line. */
 function errorMessage(body: unknown, fallback: string): string {
@@ -51,13 +58,21 @@ function errorMessage(body: unknown, fallback: string): string {
 
 export class ApiClient {
   readonly #fetch: typeof fetch;
-  readonly #onUnauthorized: (() => void) | undefined;
+  readonly #unauthorizedListeners = new Set<() => void>();
   // In memory only: never written to localStorage/sessionStorage (AGENTS.md frontend rules).
   #csrfToken: string | null = null;
 
   constructor(options: ApiClientOptions = {}) {
     this.#fetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
-    this.#onUnauthorized = options.onUnauthorized;
+    if (options.onUnauthorized) this.#unauthorizedListeners.add(options.onUnauthorized);
+  }
+
+  /** Like the `onUnauthorized` option, added later. Returns a function that removes it. */
+  addUnauthorizedListener(listener: () => void): () => void {
+    this.#unauthorizedListeners.add(listener);
+    return () => {
+      this.#unauthorizedListeners.delete(listener);
+    };
   }
 
   /** Whether a session's CSRF token is held (set by setup, login and me). */
@@ -91,8 +106,11 @@ export class ApiClient {
     }
 
     if (response.status === 401) {
+      // Always: whatever session this token belonged to is no longer usable.
       this.#csrfToken = null;
-      this.#onUnauthorized?.();
+      if (!CREDENTIAL_PATHS.has(path)) {
+        for (const listener of [...this.#unauthorizedListeners]) listener();
+      }
     }
     if (response.status === 204) {
       return undefined as T;

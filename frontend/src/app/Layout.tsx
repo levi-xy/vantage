@@ -1,13 +1,62 @@
 import { useState } from "react";
 import { NavLink, Outlet } from "react-router";
+import type { Role } from "../api";
 import { ThemeToggle } from "../components/ThemeToggle";
+import { buttonSecondary } from "../components/styles";
+import { useSession, useUser } from "./session";
 
-// Shown to everyone for now; M3.2 makes it role-aware (the audit log is admin-only).
-const NAV = [
+interface NavItem {
+  to: string;
+  label: string;
+  end: boolean;
+  /** Only users with this role see the link. The route and the backend check it too. */
+  role?: Role;
+}
+
+const NAV: readonly NavItem[] = [
   { to: "/", label: "Dashboard", end: true },
   { to: "/devices", label: "Devices", end: false },
-  { to: "/audit", label: "Audit log", end: false },
-] as const;
+  { to: "/audit", label: "Audit log", end: false, role: "admin" },
+];
+
+const ROLE_LABELS: Record<Role, string> = { admin: "Admin", viewer: "Viewer" };
+
+/** The user's name and role, and the logout button. */
+function UserMenu() {
+  const user = useUser();
+  const { logout } = useSession();
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  async function onLogout() {
+    setBusy(true);
+    setFailed(false);
+    try {
+      // On success the session gate sends the user to the login page.
+      await logout();
+    } catch {
+      setFailed(true);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-3">
+      <span className="hidden text-sm sm:inline">
+        <span className="font-medium">{user.username}</span>{" "}
+        <span className="text-slate-500 dark:text-slate-400">({ROLE_LABELS[user.role]})</span>
+      </span>
+      {failed && (
+        <span role="alert" className="text-xs text-red-700 dark:text-red-400">
+          Logout failed
+        </span>
+      )}
+      <button type="button" onClick={onLogout} disabled={busy} className={buttonSecondary}>
+        Log out
+      </button>
+    </div>
+  );
+}
 
 function navClass({ isActive }: { isActive: boolean }): string {
   const base =
@@ -20,6 +69,8 @@ function navClass({ isActive }: { isActive: boolean }): string {
 /** Header + navigation around every page. Sidebar on desktop, collapsible menu on phones. */
 export function Layout() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const user = useUser();
+  const nav = NAV.filter((item) => item.role === undefined || item.role === user.role);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
@@ -42,8 +93,9 @@ export function Layout() {
             <span aria-hidden="true">{menuOpen ? "✕" : "☰"}</span>
           </button>
           <span className="text-lg font-semibold tracking-tight">Vantage</span>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-3">
             <ThemeToggle />
+            <UserMenu />
           </div>
         </div>
       </header>
@@ -55,7 +107,7 @@ export function Layout() {
           className={`${menuOpen ? "block" : "hidden"} border-b border-slate-200 bg-white p-3 md:sticky md:top-14 md:block md:h-[calc(100vh-3.5rem)] md:w-56 md:shrink-0 md:border-r md:border-b-0 dark:border-slate-800 dark:bg-slate-900`}
         >
           <ul className="space-y-1">
-            {NAV.map((item) => (
+            {nav.map((item) => (
               <li key={item.to}>
                 <NavLink
                   to={item.to}
