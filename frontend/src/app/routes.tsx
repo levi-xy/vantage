@@ -2,17 +2,47 @@ import type { RouteObject } from "react-router";
 import { AuditPage } from "../pages/AuditPage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { DevicesPage } from "../pages/DevicesPage";
+import { LoginPage } from "../pages/LoginPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
+import { SetupPage } from "../pages/SetupPage";
+import { RequireRole, SessionGate } from "./gates";
 import { Layout } from "./Layout";
 
 /** Shared by the browser router (main.tsx) and the memory routers used in tests. */
 export const routes: RouteObject[] = [
   {
-    element: <Layout />,
+    path: "setup",
+    element: (
+      <SessionGate only="setup">
+        <SetupPage />
+      </SessionGate>
+    ),
+  },
+  {
+    path: "login",
+    element: (
+      <SessionGate only="anonymous">
+        <LoginPage />
+      </SessionGate>
+    ),
+  },
+  {
+    element: (
+      <SessionGate only="authenticated">
+        <Layout />
+      </SessionGate>
+    ),
     children: [
       { index: true, element: <DashboardPage /> },
       { path: "devices", element: <DevicesPage /> },
-      { path: "audit", element: <AuditPage /> },
+      {
+        path: "audit",
+        element: (
+          <RequireRole role="admin">
+            <AuditPage />
+          </RequireRole>
+        ),
+      },
       { path: "*", element: <NotFoundPage /> },
     ],
   },

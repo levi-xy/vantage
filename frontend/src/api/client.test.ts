@@ -159,6 +159,36 @@ describe("ApiClient errors", () => {
     expect(call(fetchMock, 2).headers[CSRF_HEADER]).toBeUndefined();
   });
 
+  it("on a failed login clears the token but does not report a lost session", async () => {
+    const { client, fetchMock, onUnauthorized } = await loggedIn(
+      json({ detail: "invalid username or password" }, 401),
+      json({}),
+    );
+    await expect(
+      client.login({ username: "admin", password: "wrong-example-password" }),
+    ).rejects.toMatchObject({ status: 401, message: "invalid username or password" });
+    expect(onUnauthorized).not.toHaveBeenCalled();
+    expect(client.hasSession).toBe(false);
+    await client.request("POST", "/x", {});
+    expect(call(fetchMock, 2).headers[CSRF_HEADER]).toBeUndefined();
+  });
+
+  it("notifies listeners added later until they are removed", async () => {
+    const { client, onUnauthorized } = setup(
+      json({ detail: "no" }, 401),
+      json({ detail: "no" }, 401),
+    );
+    const listener = vi.fn();
+    const remove = client.addUnauthorizedListener(listener);
+    await client.me().catch(() => undefined);
+    expect(listener).toHaveBeenCalledOnce();
+    expect(onUnauthorized).toHaveBeenCalledOnce();
+    remove();
+    await client.me().catch(() => undefined);
+    expect(listener).toHaveBeenCalledOnce();
+    expect(onUnauthorized).toHaveBeenCalledTimes(2);
+  });
+
   it("does not treat 403 as logged out", async () => {
     const { client, onUnauthorized } = await loggedIn(json({ detail: "admin role required" }, 403));
     await expect(client.audit()).rejects.toMatchObject({
