@@ -139,6 +139,7 @@ class Integration(ABC):
 - Metric names: `vantage_<type_id>_<metric>` for polled metrics. Scraped exporter metrics keep their native names.
 - Polled-metric labels are fixed by the collector: `vantage_instance_id`, `vantage_instance`, `vantage_integration`, `vantage_site`. Integrations may add their own labels but never override these.
 - Scrape targets get the same four labels through service discovery.
+- An instance with no site gets `vantage_site=""`. Prometheus treats an empty label as absent, so such series carry three labels; that's intended. Never substitute a placeholder site name. The UI shows "No site".
 - An integration is registered by being listed in `registry.py`. No dynamic imports from user input.
 
 ---
@@ -173,7 +174,7 @@ All routes under `/api/v1`, JSON, session auth, CSRF token on state-changing req
 | POST | `/auth/login`, `/auth/logout` | none / any | Session |
 | GET | `/me` | any | Current user |
 | GET | `/integrations` | any | List types: type_id, name, category, JSON schema (secret fields flagged `writeOnly`) |
-| GET | `/instances` | any | List instances (no secrets) |
+| GET | `/instances` | any | List instances (no secrets), each with `status` (see below) |
 | POST | `/instances` | admin | Create (validates against schema + SSRF guard) |
 | GET/PATCH/DELETE | `/instances/{id}` | any / admin / admin | Read (no secrets), update (omitted secret = unchanged), delete |
 | POST | `/instances/{id}/test` | admin | Run `test_connection` |
@@ -187,9 +188,12 @@ All routes under `/api/v1`, JSON, session auth, CSRF token on state-changing req
 | GET | `/audit` | admin | Audit log, newest first: `limit` (1–200, default 50), `before_id` (keyset paging) |
 | WS | `/ws` | any | Live pushes: instance status changes, alert events, card data refresh hints |
 
+Instance responses (list and single) carry `status`: `{state, checked_at, last_success_at, error}` with `state` one of `pending` / `up` / `down` / `unknown`. It comes from the poll collector's in-memory state, so it resets on restart. `unknown` = the collector doesn't poll this instance (disabled, or a scrape-only integration). `error` is the collector's short, secret-free description. `/ws` pushes changes to the same object.
+
 Outside `/api/v1`:
 - `GET /sd/targets`: Prometheus HTTP SD format, **bearer-token protected** (token from env, shared only with Prometheus)
-- `GET /metrics`: polled metrics + Vantage's own health metrics, bearer-token protected
+- `GET /metrics`: polled metrics + Vantage's own health metrics, bearer-token protected. `vantage_instance_up` is emitted only for instances the collector polls; scrape-only targets rely on Prometheus' own `up`.
+- Prometheus token: read from `VANTAGE_PROMETHEUS_TOKEN_FILE` (preferred) or `VANTAGE_PROMETHEUS_TOKEN`, at least 32 characters. Not configured → the app starts and both endpoints answer 503. Configured but unusable (unreadable, empty, too short) → the app refuses to start.
 
 ---
 
@@ -214,6 +218,7 @@ Nothing device-specific is ever added to it.
 - **Public internet:** only an integration's declared `cloud_hosts`, over HTTPS, with certificate verification on; a declared cloud host must resolve to public addresses only (any private, CGNAT, ULA or otherwise non-global answer denies it)
 - Redirects are not followed automatically. If needed, each hop is re-checked
 - Timeouts on every request (connect 5 s, total 15 s by default)
+- **Scrape targets:** Prometheus connects to targets itself, outside `net_guard`, so `/sd/targets` checks every target with the instance's guard first and leaves out any it refuses (a DNS failure also leaves the target out). Prometheus resolves hostnames again when scraping, so only IP-literal targets are fully protected against DNS rebinding.
 
 ---
 
