@@ -21,8 +21,8 @@ from app.core.db import make_session_factory
 from app.models import Role
 from tests.test_auth import PASSWORD, add_user, login, make_client
 
-PROXY = "172.16.238.2"  # the bundled frontend's fixed address in docker-compose.yml
-TRUSTED = (ip_network("172.16.238.2/32"), ip_network("fd00:db8::/64"))
+PROXY = "192.168.255.242"  # the bundled frontend's fixed address in docker-compose.yml
+TRUSTED = (ip_network("192.168.255.242/32"), ip_network("fd00:db8::/64"))
 CLIENT_A, CLIENT_B = "192.0.2.10", "192.0.2.11"
 CLIENT_LIMIT = LOGIN_LIMITS["client"]
 
@@ -36,9 +36,9 @@ def test_setting_defaults_to_trusting_nobody() -> None:
 
 
 def test_setting_parses_cidr_list() -> None:
-    raw = "172.16.238.2/32, 10.0.0.0/8  fd00:db8::/64,192.168.1.5"
+    raw = "192.168.255.242/32, 10.0.0.0/8  fd00:db8::/64,192.168.1.5"
     assert load_settings({"VANTAGE_TRUSTED_PROXIES": raw}).trusted_proxies == (
-        ip_network("172.16.238.2/32"),
+        ip_network("192.168.255.242/32"),
         ip_network("10.0.0.0/8"),
         ip_network("fd00:db8::/64"),
         ip_network("192.168.1.5/32"),
@@ -51,8 +51,8 @@ def test_setting_parses_cidr_list() -> None:
         "frontend",  # hostnames are not accepted
         "10.0.0.5/24",  # host bits set: probably a typo
         "10.0.0.0/33",
-        "172.16.238.2/32,not-an-ip",
-        "::ffff:172.16.238.2/128",  # would never match: peers are compared as IPv4
+        "192.168.255.242/32,not-an-ip",
+        "::ffff:192.168.255.242/128",  # would never match: peers are compared as IPv4
     ],
 )
 def test_invalid_setting_stops_startup(raw: str) -> None:
@@ -108,15 +108,28 @@ def test_ipv4_mapped_header_is_reported_as_ipv4() -> None:
 
 def test_ipv6_peers() -> None:
     assert resolve_client_address("fd00:db8::7", [CLIENT_A], TRUSTED) == CLIENT_A
-    # Untrusted IPv6 peer: canonical form, header ignored.
-    assert resolve_client_address("2001:DB8:0::1", [CLIENT_A], TRUSTED) == "2001:db8::1"
+    # Untrusted IPv6 peer: its /64, header ignored.
+    assert resolve_client_address("2001:DB8:0::1", [CLIENT_A], TRUSTED) == "2001:db8::/64"
     # IPv4 networks never match IPv6 peers and the reverse.
-    assert resolve_client_address("fd00:db8::7", [CLIENT_A], TRUSTED[:1]) == "fd00:db8::7"
+    assert resolve_client_address("fd00:db8::7", [CLIENT_A], TRUSTED[:1]) == "fd00:db8::/64"
+
+
+def test_trust_check_uses_the_full_ipv6_peer_not_its_64() -> None:
+    narrow = (ip_network("fd00:db8::2/128"),)
+    assert resolve_client_address("fd00:db8::2", [CLIENT_A], narrow) == CLIENT_A
+    assert resolve_client_address("fd00:db8::3", [CLIENT_A], narrow) == "fd00:db8::/64"
+
+
+def test_ipv6_clients_are_keyed_by_their_64() -> None:
+    seen = {resolve_client_address(PROXY, [f"2001:db8:1:2::{i:x}"], TRUSTED) for i in range(1, 50)}
+    seen |= {resolve_client_address(f"2001:db8:1:2:ffff::{i:x}", [], ()) for i in range(1, 50)}
+    assert seen == {"2001:db8:1:2::/64"}
+    assert resolve_client_address(PROXY, ["2001:db8:1:3::1"], TRUSTED) == "2001:db8:1:3::/64"
 
 
 def test_ipv6_client_in_header_is_canonical_without_zone() -> None:
-    assert resolve_client_address(PROXY, ["2001:DB8::0:1"], TRUSTED) == "2001:db8::1"
-    assert resolve_client_address(PROXY, ["fe80::1%eth0"], TRUSTED) == "fe80::1"
+    assert resolve_client_address(PROXY, ["2001:DB8::0:1"], TRUSTED) == "2001:db8::/64"
+    assert resolve_client_address(PROXY, ["fe80::1%eth0"], TRUSTED) == "fe80::/64"
 
 
 def test_non_ip_or_missing_peer_keeps_old_behaviour() -> None:
@@ -236,6 +249,23 @@ def test_setting_unset_keeps_the_old_global_limit(db_url: str, engine: Engine, d
         _fail_logins(proxy, CLIENT_LIMIT, real_ip=CLIENT_A)
         # Without trusted proxies every request counts against the proxy's address.
         assert _attempt(proxy, "viewer1", real_ip=CLIENT_B) == 429
+
+
+def test_ipv6_client_rotating_addresses_shares_one_budget(
+    db_url: str, engine: Engine, db: Session
+) -> None:
+    add_user(db, "viewer1", Role.VIEWER)
+    with _client(db_url, PROXY) as proxy:
+        for i in range(CLIENT_LIMIT):
+            r = proxy.post(
+                "/api/v1/auth/login",
+                json={"username": f"nobody{i}", "password": "wrong"},
+                headers={"X-Real-IP": f"2001:db8:1:2::{i + 1:x}"},  # a new address each time
+            )
+            assert r.status_code == 401
+        assert _attempt(proxy, "viewer1", real_ip="2001:db8:1:2::ffff") == 429
+        # A different /64 is a different client.
+        assert _attempt(proxy, "viewer1", real_ip="2001:db8:1:3::1") == 200
 
 
 def test_login_works_through_trusted_proxy(db_url: str, engine: Engine, db: Session) -> None:

@@ -5,8 +5,10 @@ Trust is decided only by the direct TCP peer. When the peer is in
 ``X-Real-IP`` header, which the bundled nginx *overwrites* with ``$remote_addr``.
 ``X-Forwarded-For`` is never used: clients can prepend anything to it.
 
-Every part of the app that needs the client address uses :func:`client_address`,
-so the login limiter and anything else that records an address agree.
+Every part of the app that needs the client address uses :func:`resolve_client_address`
+(through ``get_client_address`` in ``app.api.deps``), so the login limiter and anything
+else that records an address agree. An IPv6 client is identified by its /64, because
+one host usually controls a whole /64 and could otherwise rotate through its addresses.
 """
 
 from collections.abc import Iterable, Sequence
@@ -21,6 +23,9 @@ CLIENT_ADDRESS_HEADER = "x-real-ip"
 
 # Used when the server gives no peer address at all (not seen with uvicorn over TCP).
 UNKNOWN_CLIENT = "unknown"
+
+# IPv6 clients are identified by this prefix length.
+IPV6_CLIENT_PREFIX = 64
 
 
 class TrustedProxiesError(ValueError):
@@ -40,7 +45,7 @@ def parse_trusted_proxies(raw: str, name: str = "VANTAGE_TRUSTED_PROXIES") -> tu
         except ValueError:
             raise TrustedProxiesError(
                 f"{name} entry {position} is not a valid CIDR or address "
-                "(or has host bits set); use e.g. 172.16.238.2/32"
+                "(or has host bits set); use e.g. 192.168.255.242/32"
             ) from None
         if isinstance(network, IPv6Network) and network.network_address.ipv4_mapped is not None:
             # Peers are compared in their IPv4 form, so this entry would never match.
@@ -67,6 +72,13 @@ def _parse_address(value: str) -> IPAddress | None:
     return address
 
 
+def _client_id(address: IPAddress) -> str:
+    """IPv4 as the address, IPv6 as its /64 (``2001:db8:1:2::/64``)."""
+    if isinstance(address, IPv6Address):
+        return str(IPv6Network((address, IPV6_CLIENT_PREFIX), strict=False))
+    return str(address)
+
+
 def _is_trusted(peer: IPAddress, trusted: Iterable[IPNetwork]) -> bool:
     return any(peer.version == net.version and peer in net for net in trusted)
 
@@ -80,8 +92,10 @@ def resolve_client_address(
 
     ``header_values`` are every ``X-Real-IP`` value on the request. They are used only
     when the peer is a trusted proxy and there is exactly one valid IP address among
-    them (one header, one value); anything else falls back to the peer. Addresses are
-    returned in canonical text form, IPv4-mapped IPv6 as plain IPv4.
+    them (one header, one value); anything else falls back to the peer.
+
+    Returned in canonical text form: an IPv4 address (IPv4-mapped IPv6 included), or
+    an IPv6 client's /64 network. The trust check itself uses the full peer address.
     """
     if peer is None:
         return UNKNOWN_CLIENT
@@ -92,5 +106,5 @@ def resolve_client_address(
     if trusted and _is_trusted(peer_address, trusted) and len(header_values) == 1:
         forwarded = _parse_address(header_values[0])
         if forwarded is not None:
-            return str(forwarded)
-    return str(peer_address)
+            return _client_id(forwarded)
+    return _client_id(peer_address)

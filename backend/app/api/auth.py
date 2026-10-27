@@ -174,9 +174,7 @@ def login(
     client: ClientAddressDep,
 ) -> Me:
     # `client` is the real client behind a trusted proxy (VANTAGE_TRUSTED_PROXIES), else
-    # the TCP peer. TODO(maintainer): an IPv6 client can rotate through the addresses of
-    # its /64 to get fresh per-client budgets (the per-username limit still applies).
-    # Key IPv6 clients by /64 instead?
+    # the TCP peer; an IPv6 client is its /64.
     user_key, client_key = f"user:{body.username.lower()}", f"client:{client}"
     # Counted as a failure up front, so parallel requests can't all slip past the limit.
     retry_after = limiter.acquire([user_key, client_key])

@@ -18,7 +18,7 @@ services:
       VANTAGE_SESSION_MAX_HOURS: ${VANTAGE_SESSION_MAX_HOURS:-12}
       VANTAGE_SESSION_IDLE_MINUTES: ${VANTAGE_SESSION_IDLE_MINUTES:-120}
       # Only the bundled nginx (frontend, fixed address below) may name the client.
-      VANTAGE_TRUSTED_PROXIES: ${VANTAGE_TRUSTED_PROXIES:-172.16.238.2/32}
+      VANTAGE_TRUSTED_PROXIES: ${VANTAGE_TRUSTED_PROXIES:-192.168.255.242/32}
     secrets: [master_key, prometheus_token]
     volumes:
       - backend-data:/data
@@ -34,7 +34,7 @@ services:
     networks:
       default:
         # Fixed so the backend can trust exactly this container (VANTAGE_TRUSTED_PROXIES).
-        ipv4_address: 172.16.238.2
+        ipv4_address: 192.168.255.242
 
   prometheus:
     <<: *hardening
@@ -63,8 +63,8 @@ networks:
   default:
     ipam:
       config:
-        - subnet: 172.16.238.0/28
-          ip_range: 172.16.238.8/29
+        - subnet: 192.168.255.240/28
+          ip_range: 192.168.255.248/29
 
 volumes:
   backend-data:

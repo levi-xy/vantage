@@ -83,7 +83,14 @@ class LoginRateLimiter:
     """Counts failed logins per key over a sliding window. In memory, per process.
 
     Keys are e.g. ``"user:alice"`` and ``"client:192.0.2.5"``. Each key prefix has its
-    own limit. The number of tracked keys is capped so random usernames can't use up memory.
+    own limit. At most ``max_keys`` keys are tracked, so random usernames and addresses
+    can't use up memory.
+
+    When the cap is reached, room is made by dropping keys whose failures have all
+    expired, then the least recently used keys that are still **under** their limit. A
+    key at its limit (a lockout) is never dropped, so flooding the limiter with junk
+    keys can't unlock it. If every tracked key is locked, there is no room and the
+    attempt is refused (fail closed) until enough lockouts expire.
     """
 
     def __init__(
@@ -120,7 +127,7 @@ class LoginRateLimiter:
             limit = self._limit(key)
             if len(failures) >= limit:
                 wait = max(wait, failures[-limit] + self._window - now)
-                # Keep a locked key fresh so eviction under the key cap can't unlock it.
+                # Keep locked keys at the recent end, so eviction scans reach them last.
                 self._keys.move_to_end(key)
         return wait
 
@@ -128,14 +135,41 @@ class LoginRateLimiter:
     def _seconds(wait: float) -> int | None:
         return max(1, int(wait) + 1) if wait > 0 else None
 
-    def _record(self, keys: Iterable[str], now: float) -> None:
+    def _make_room(self, keys: list[str], now: float) -> float:
+        """Free space for ``keys``. Returns 0 if they fit, else seconds until one might.
+
+        Only expired keys and keys under their limit are dropped, oldest first.
+        """
+        needed = len(self._keys) + sum(1 for k in set(keys) if k not in self._keys)
+        needed -= self._max_keys
+        if needed <= 0:
+            return 0.0
+        victims: list[str] = []
+        earliest = self._window
+        for key, window in self._keys.items():
+            if len(victims) >= needed:
+                break
+            recent = [t for t in window.failures if now - t < self._window]
+            if key not in keys and len(recent) < self._limit(key):
+                victims.append(key)
+            elif recent:
+                earliest = min(earliest, recent[0] + self._window - now)
+        for key in victims:
+            del self._keys[key]
+        return 0.0 if len(victims) >= needed else max(earliest, 1.0)
+
+    def _record(self, keys: list[str], now: float) -> float:
+        """Count a failure on every key. Returns 0, or seconds to wait if there's no room."""
         for key in keys:
             self._recent(key, now)
+        wait = self._make_room(keys, now)
+        if wait > 0:
+            return wait
+        for key in keys:
             window = self._keys.setdefault(key, _Window())
             window.failures.append(now)
             self._keys.move_to_end(key)
-        while len(self._keys) > self._max_keys:
-            self._keys.popitem(last=False)
+        return 0.0
 
     def retry_after(self, keys: Iterable[str]) -> int | None:
         """Seconds until a login may be tried again, or ``None`` if it's allowed now."""
@@ -143,23 +177,22 @@ class LoginRateLimiter:
             return self._seconds(self._wait(keys, self._clock()))
 
     def record_failure(self, keys: Iterable[str]) -> None:
+        """Count a failure (dropped if every tracked key is locked; see the class doc)."""
         with self._lock:
-            self._record(keys, self._clock())
+            self._record(list(keys), self._clock())
 
     def acquire(self, keys: list[str]) -> int | None:
         """Check the limit and count this attempt as a failure, in one atomic step.
 
         Counting before the (slow) password check means parallel requests can't all
         pass the check before any failure is recorded. Call ``succeeded`` if it works.
-        Returns seconds to wait if the attempt is refused (and then counts nothing).
+        Returns seconds to wait if the attempt is refused (and then counts nothing): the
+        keys are locked, or the limiter is full of locked keys and can't track them.
         """
         with self._lock:
             now = self._clock()
-            wait = self._wait(keys, now)
-            if wait > 0:
-                return self._seconds(wait)
-            self._record(keys, now)
-            return None
+            wait = self._wait(keys, now) or self._record(keys, now)
+            return self._seconds(wait)
 
     def succeeded(self, user_key: str, other_keys: Iterable[str]) -> None:
         """Undo ``acquire`` for a successful login: clear the user's failures, refund one

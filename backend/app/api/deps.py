@@ -47,6 +47,8 @@ DbDep = Annotated[Session, Depends(get_db)]
 def get_client_address(request: Request, settings: SettingsDep) -> str:
     """The real client's address: the TCP peer, or X-Real-IP when the peer is a trusted proxy.
 
+    IPv6 clients come back as their /64 network (see app.core.client_address).
+
     The one place the app derives a client address; use this (via ClientAddressDep)
     wherever an address is needed so every consumer agrees.
     """

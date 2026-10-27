@@ -50,7 +50,17 @@ Further rules:
 ## Client address and trusted proxies
 
 The login rate limit counts failures per username (5 per 15 minutes) and per client
-address (50 per 15 minutes). The client address comes from one helper,
+address (50 per 15 minutes). An IPv6 client counts as its whole /64, since one host
+usually controls a /64 and could otherwise rotate addresses for fresh budgets.
+
+The limiter tracks at most 10,000 keys in memory. When it is full it drops expired keys
+and then the least recently used keys that are still under their limit, but never a
+key that is locked out, so spraying junk usernames from many addresses can't unlock an
+account. If every tracked key is locked, new login attempts are refused with 429 (fail
+closed) until lockouts expire, at most 15 minutes. Already logged-in sessions are not
+affected.
+
+The client address comes from one helper,
 `backend/app/core/client_address.py` (used through `get_client_address` in
 `backend/app/api/deps.py`), so everything that needs it agrees:
 
@@ -71,12 +81,22 @@ address (50 per 15 minutes). The client address comes from one helper,
 - **uvicorn's own proxy handling is off** (`--no-proxy-headers` in the backend image),
   so the peer address the app sees is the real TCP peer.
 
-`deploy/docker-compose.yml` pins the compose network to `172.16.238.0/28`, gives the
-frontend (nginx) the fixed address `172.16.238.2`, hands out every other container's
-address from `172.16.238.8/29`, and sets `VANTAGE_TRUSTED_PROXIES=172.16.238.2/32`.
-Only nginx can therefore name the client. If that range clashes with your network,
-change the subnet, `ip_range`, the frontend's `ipv4_address` and
-`VANTAGE_TRUSTED_PROXIES` together.
+`deploy/docker-compose.yml` pins the compose network to `192.168.255.240/28`, gives the
+frontend (nginx) the fixed address `192.168.255.242`, hands out every other container's
+address from `192.168.255.248/29`, and sets `VANTAGE_TRUSTED_PROXIES=192.168.255.242/32`.
+Only nginx can therefore name the client.
+
+Why this range: a fixed subnet can clash with a network the host already uses. Docker's
+own compose examples use `172.16.238.0/24`, and the low `172.16.0.0/12` and `10.0.0.0/8`
+ranges are common on corporate LANs and VPNs. `192.168.255.240/28` is a small block at
+the very top of `192.168.0.0/16`, where home routers rarely put their LANs, and Docker
+only reaches that part of its default pools after about 30 other networks. If it still
+clashes, `docker compose up` fails with "Pool overlaps with other one on this address
+space", or the backend can't reach devices in that range. To fix it, pick another
+unused /28 and change these together in `deploy/docker-compose.yml`: the network's
+`subnet` and `ip_range` (the upper half of the subnet), the frontend's `ipv4_address`
+(an address in the lower half, not the first one, which Docker uses as the gateway),
+and the `VANTAGE_TRUSTED_PROXIES` default (that address as a /32).
 
 Limits:
 
@@ -84,9 +104,12 @@ Limits:
   `$remote_addr` is that proxy, so all clients share one per-client budget again (the
   per-username limit still applies). Vantage does not read a client address through a
   chain of proxies.
-- Docker's userland proxy can make connections to a published port on the host's
-  loopback (or over IPv6) appear to come from the network gateway; those clients then
-  share one address.
+- With the default `VANTAGE_BIND_ADDRESS=127.0.0.1`, everything reaching the dashboard
+  through the host's loopback (a browser on the host, an SSH tunnel, or an HTTPS reverse
+  proxy running on the host) arrives through Docker's userland proxy and appears to
+  come from the network gateway (`192.168.255.241`). All of those clients share one
+  per-client budget. The same can happen for connections over IPv6. The per-username
+  limit still applies to each account.
 - Never list a range that ordinary clients can reach the backend from: a trusted peer
   can claim any client address.
 

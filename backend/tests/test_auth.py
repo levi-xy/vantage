@@ -289,11 +289,44 @@ def test_rate_limiter_window_and_reset() -> None:
 
 
 def test_rate_limiter_caps_tracked_keys() -> None:
-    limiter = LoginRateLimiter({"user": 1}, max_keys=3)
+    # Keys under their limit are evicted least recently used first.
+    limiter = LoginRateLimiter({"user": 2}, max_keys=3)
     for i in range(10):
         limiter.record_failure([f"user:u{i}"])
-    assert limiter.retry_after(["user:u0"]) is None  # evicted
+    assert len(limiter._keys) == 3
+    limiter.record_failure(["user:u0"])  # u0 was evicted: this is its first failure again
+    assert limiter.retry_after(["user:u0"]) is None
+    limiter.record_failure(["user:u9"])  # u9 was kept: this is its second failure
     assert limiter.retry_after(["user:u9"]) is not None
+
+
+def test_rate_limiter_spray_cannot_evict_a_lockout() -> None:
+    """Flooding the key cap with junk usernames from many addresses doesn't unlock admin."""
+    limiter = LoginRateLimiter({"user": 5, "client": 50}, max_keys=100)
+    for i in range(5):
+        assert limiter.acquire(["user:admin", f"client:192.0.2.{i}"]) is None
+    assert limiter.acquire(["user:admin", "client:192.0.2.200"]) is not None
+    for i in range(5000):
+        limiter.acquire([f"user:junk{i}", f"client:198.51.100.{i % 100}"])
+        assert len(limiter._keys) <= 100
+    assert limiter.retry_after(["user:admin"]) is not None
+    assert limiter.acquire(["user:admin", "client:203.0.113.1"]) is not None
+
+
+def test_rate_limiter_full_of_lockouts_fails_closed_and_recovers() -> None:
+    now = [1000.0]
+    limiter = LoginRateLimiter({"user": 1}, window_seconds=60, max_keys=3, clock=lambda: now[0])
+    for i in range(3):
+        assert limiter.acquire([f"user:u{i}"]) is None  # each one now locked
+    # No room for a new key and nothing may be evicted: refused, memory stays bounded.
+    for i in range(3, 50):
+        wait = limiter.acquire([f"user:u{i}"])
+        assert wait is not None and 1 <= wait <= 61
+    assert len(limiter._keys) == 3
+    assert all(limiter.retry_after([f"user:u{i}"]) is not None for i in range(3))
+    # Once the lockouts expire, logins work again.
+    now[0] += 60
+    assert limiter.acquire(["user:fresh"]) is None
 
 
 # --- sessions, CSRF, roles -----------------------------------------------------------
