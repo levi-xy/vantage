@@ -15,8 +15,10 @@ from app.core.auth import LoginRateLimiter, Passwords
 from app.core.config import Settings, get_settings
 from app.core.crypto import SecretBox, load_master_key
 from app.core.db import make_engine, make_session_factory
+from app.core.prometheus_auth import PrometheusToken, load_prometheus_token
 from app.integrations.instance_config import NetGuardFactory, default_net_guard_factory
 from app.integrations.registry import Registry, builtin_registry
+from app.sd.targets import router as sd_router
 
 
 def create_app(
@@ -26,13 +28,17 @@ def create_app(
     passwords: Passwords | None = None,
     registry: Registry | None = None,
     net_guard_factory: NetGuardFactory | None = None,
+    prometheus_token: PrometheusToken | None = None,
 ) -> FastAPI:
     """Build the app. Run with ``uvicorn --factory app.main:create_app``.
 
-    Refuses to start (raises ``MasterKeyError``) when no valid master key is configured.
+    Refuses to start (raises ``MasterKeyError``) when no valid master key is configured,
+    or (``PrometheusTokenError``) when a Prometheus token is configured but unusable.
     """
     settings = settings or get_settings()
     secret_box = secret_box or SecretBox(load_master_key())
+    # None when not configured: the Prometheus-only endpoints then answer 503.
+    prometheus_token = prometheus_token or load_prometheus_token()
     engine = make_engine(settings.database_url)
 
     @asynccontextmanager
@@ -60,8 +66,10 @@ def create_app(
     app.state.registry = registry if registry is not None else builtin_registry()
     # Tests inject a guard with a fake resolver; production uses the default policy.
     app.state.net_guard_factory = net_guard_factory or default_net_guard_factory
+    app.state.prometheus_token = prometheus_token
 
     app.include_router(api_router)
+    app.include_router(sd_router)
     app.add_exception_handler(RequestValidationError, _validation_error)
     app.middleware("http")(_api_guard)
 
