@@ -23,7 +23,7 @@ How Vantage gets built by coding agents, milestone by milestone. Every agent rea
 
 | Tier | Builder | Reviewer | Tasks |
 |---|---|---|---|
-| **Critical** (secrets, auth, crypto, `net_guard`, contracts, anything reachable from outside) | Opus | Opus | M2.7, M4b, M4d, M4g, M5.1, M7.2, M8.1, M8.2, M8.3 |
+| **Critical** (secrets, auth, crypto, `net_guard`, contracts, anything reachable from outside) | Opus | Opus | M1.6, M1.7, M2.7, M3.5, M4b, M4d, M4g, M5.1, M7.2, M8.1, M8.2, M8.3 |
 | **Standard** | Sonnet | Sonnet | Everything else: M2.6, M4a, M4c, M4e, M4f, M4h, M5.2–M5.5, M6.1–M6.2, M7.1, M7.3, M7.4, M8.4 |
 | **Light** (docs-only or mechanical, no decisions) | Haiku | Sonnet | Docs-only PRs and plan edits; none of the numbered tasks yet |
 
@@ -75,6 +75,8 @@ M0 ──► M1 ──► M2 ──┬──► M4a ─┐
 | M0.4 | Pre-commit | gitleaks, ruff, Prettier hooks |
 | M0.5 | Deploy skeleton | `deploy/docker-compose.yml` with backend, frontend, Prometheus; fixed `prometheus.yml` per Contract 4; `.env.example` with no real values |
 
+**Follow-up (test before changing):** `deploy/.env.example` says `chmod 644 secrets/*`, which makes `master.key` readable by every user on the host. Move to `600` or `640` with ownership matching the container user, fix the comment, and check the stack still starts.
+
 ## M1: Backend core
 
 | ID | Task | Acceptance criteria |
@@ -84,6 +86,8 @@ M0 ──► M1 ──► M2 ──┬──► M4a ─┐
 | M1.3 | Auth | Setup wizard API (only works when no users exist), login/logout, Argon2, httpOnly + Secure + SameSite cookies, CSRF, login rate limit, admin/viewer roles |
 | M1.4 | Audit log | Every create/update/delete writes an entry; secret fields recorded as `"<changed>"`; test proves no secret reaches the table |
 | M1.5 | SSRF guard | `net_guard` per Contract 5 with guarded httpx and SNMP clients; full test suite including DNS rebinding |
+| M1.6 | Admin CLI | `python -m app.cli`, run on the server (`docker compose exec backend python -m app.cli ...`): `reset-password <username>` (prompts for the new password, never takes it as an argument, never prints it; audited; ends that user's sessions), `create-user <username> --role admin\|viewer`, `list-users`. Needs no login: shell access to the host is the trust boundary. Tests prove the reset is audited, old sessions stop working, and no password reaches logs or the audit table |
+| M1.7 | Trusted proxy and login rate limit | `VANTAGE_TRUSTED_PROXIES` (CIDR list; the compose file sets it to the frontend container). Only when the direct peer is a trusted proxy does the backend take the client address from a header that nginx **overwrites** from `$remote_addr` (not appends, unlike today's `X-Forwarded-For`); otherwise it uses the peer address. The login limiter keys on that real client address; remove the `TODO(maintainer)` in `auth.py`. Tests: a spoofed header from an untrusted peer is ignored, and one client's failures can't lock out another |
 
 ## M2: Integration framework
 
@@ -116,6 +120,7 @@ M0 ──► M1 ──► M2 ──┬──► M4a ─┐
 | M3.2 | Setup and login | First-run wizard, login, logout, session handling, role-aware navigation |
 | M3.3 | Integrations UI | "Add device": pick type → form generated from schema → test connection (showing firewall hints on failure) → save; list, edit, disable, delete instances |
 | M3.4 | Audit page | Admin-only table of audit entries |
+| M3.5 | User management | Admin-only screen and API: list and create users, change a role, reset another user's password, change your own, delete. The last admin can't be deleted or demoted. All audited. Contract 3 gains the user endpoints (the maintainer approves them in the PR) |
 
 **Carried over from reviews (include in the M3.3 task):**
 - Instance responses carry `secrets_set: {field: bool}` for the "set" / "not set" display. (PR #12)
@@ -169,9 +174,9 @@ Each task: config schema, `test_connection`, scrape targets and/or `poll`, cards
 | ID | Task | Acceptance criteria |
 |---|---|---|
 | M8.1 | HTTPS | Serves HTTPS with a user-supplied cert or a generated self-signed one |
-| M8.2 | Backup/restore | Export and import DB + reminder that the master key is backed up separately |
+| M8.2 | Backup/restore | Export and import DB + reminder that the master key is backed up separately; plus a master-key rotation command that re-encrypts every stored secret with a new key (needs the old key, all-or-nothing, audited) |
 | M8.3 | Security review | A dedicated reviewer agent does a full threat-model review; findings fixed; `docs/SECURITY.md` written |
-| M8.4 | Docs and release | README quick start verified on a clean machine; versioned Docker images; changelog; license file |
+| M8.4 | Docs and release | README quick start verified on a clean machine; versioned Docker images; changelog; license file; `docs/ARCHITECTURE.md` |
 
 ---
 
