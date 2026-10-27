@@ -131,7 +131,7 @@ Each integration is a Python module with:
 - the **cards** it provides
 - the **firewall hints** it needs
 
-See `docs/INTEGRATIONS.md` (coming soon) for the full interface and a template.
+See [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) for the full interface, the rules and a checklist.
 
 ---
 
