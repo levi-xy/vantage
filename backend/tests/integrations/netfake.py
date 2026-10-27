@@ -12,15 +12,20 @@ used (the "no write endpoints called" check in AGENTS.md).
 
 Addresses: routes are keyed by the *checked* address the guard connects to. DNS names
 resolve through :data:`DNS`; anything else is unknown.
+
+ICMP works the same way: ``fake_icmp`` keeps the real guard and ping client and swaps
+only the ICMP socket opener for :class:`FakeIcmp`.
 """
 
 from __future__ import annotations
 
 import asyncio
 import ssl
+import struct
 import uuid
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from dataclasses import dataclass, field
+from ipaddress import IPv6Address
 from typing import Any
 
 import httpcore
@@ -29,7 +34,7 @@ import pytest
 from pydantic import BaseModel
 
 from app.core import net_guard
-from app.core.net_guard import NetGuard, NetPolicy
+from app.core.net_guard import IPAddress, NetGuard, NetPolicy
 from app.integrations import base
 from app.integrations.base import InstanceContext, Integration
 
@@ -37,6 +42,7 @@ from app.integrations.base import InstanceContext, Integration
 DNS: dict[str, list[str]] = {
     "web.example.internal": ["10.0.0.10"],
     "node.example.internal": ["10.0.0.20"],
+    "ping.example.internal": ["10.0.0.30"],
     "metadata.example.internal": ["169.254.169.254"],
 }
 
@@ -187,6 +193,119 @@ def fake_net(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeNetwork]:
         return real(guard, network_backend=network, total_timeout=network.total_timeout, **kwargs)
 
     monkeypatch.setattr(base, "guarded_http_client", patched)
+    yield network
+
+
+# --- ICMP ------------------------------------------------------------------------------
+#
+# ``ctx.ping_client()`` builds a real GuardedPingClient: the guard resolves and checks the
+# host, then the client opens an ICMP socket to the checked address through
+# ``net_guard.open_icmp_socket``. ``fake_icmp`` replaces only that opener.
+
+ECHO_REQUEST = {False: 8, True: 128}
+ECHO_REPLY = {False: 0, True: 129}
+_HEADER = struct.Struct("!BBHHH")
+
+# Per echo request (by sequence number): seconds until the reply, or None to drop it.
+Responder = Callable[[int], float | None]
+
+
+def always(delay: float = 0.002) -> Responder:
+    return lambda _sequence: delay
+
+
+def never(_sequence: int) -> float | None:
+    return None
+
+
+def drop(*sequences: int, delay: float = 0.002) -> Responder:
+    return lambda sequence: None if sequence in sequences else delay
+
+
+@dataclass(frozen=True)
+class SentPing:
+    address: str  # the address the socket was opened to (the checked one)
+    type: int
+    code: int
+    identifier: int
+    sequence: int
+    payload: bytes
+    raw: bytes
+
+
+def reply_for(request: SentPing, *, v6: bool, payload: bytes | None = None) -> bytes:
+    body = request.payload if payload is None else payload
+    return _HEADER.pack(ECHO_REPLY[v6], 0, 0, request.identifier, request.sequence) + body
+
+
+class FakeIcmpSocket:
+    def __init__(self, network: FakeIcmp, address: IPAddress) -> None:
+        self._network = network
+        self.address = address
+        self.v6 = isinstance(address, IPv6Address)
+        self._inbox: asyncio.Queue[bytes | BaseException] = asyncio.Queue()
+        self.closed = False
+        for item in network.preload:
+            self._inbox.put_nowait(item)
+
+    async def send(self, packet: bytes) -> None:
+        assert not self.closed
+        kind, code, _, identifier, sequence = _HEADER.unpack_from(packet)
+        sent = SentPing(
+            str(self.address), kind, code, identifier, sequence, packet[_HEADER.size :], packet
+        )
+        self._network.sent.append(sent)
+        if self._network.send_error is not None:
+            raise self._network.send_error
+        responder = self._network.hosts.get(str(self.address), never)
+        delay = responder(sequence)
+        if delay is not None and kind == ECHO_REQUEST[self.v6]:
+            message = reply_for(sent, v6=self.v6)
+            asyncio.get_running_loop().call_later(delay, self._inbox.put_nowait, message)
+
+    async def recv(self) -> bytes:
+        item = await self._inbox.get()
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+    def close(self) -> None:
+        self.closed = True
+
+
+@dataclass
+class FakeIcmp:
+    """``hosts[address]`` decides how each echo request to that checked address is answered;
+    an address not listed never answers."""
+
+    hosts: dict[str, Responder] = field(default_factory=dict)
+    opened: list[FakeIcmpSocket] = field(default_factory=list)
+    sent: list[SentPing] = field(default_factory=list)
+    open_error: BaseException | None = None
+    send_error: BaseException | None = None
+    # Messages every new socket receives first (junk, stale replies, errors).
+    preload: list[bytes | BaseException] = field(default_factory=list)
+
+    def answer(self, address: str, responder: Responder | None = None) -> None:
+        self.hosts[address] = responder or always()
+
+    def open(self, address: IPAddress) -> FakeIcmpSocket:
+        if self.open_error is not None:
+            raise self.open_error
+        sock = FakeIcmpSocket(self, address)
+        self.opened.append(sock)
+        return sock
+
+    @property
+    def addresses(self) -> list[str]:
+        return [str(s.address) for s in self.opened]
+
+
+@pytest.fixture
+def fake_icmp(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeIcmp]:
+    """Every guarded ping goes through the real guard onto a FakeIcmp socket layer."""
+    network = FakeIcmp()
+    monkeypatch.setattr(net_guard, "open_icmp_socket", network.open)
     yield network
 
 

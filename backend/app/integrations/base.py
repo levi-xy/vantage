@@ -15,6 +15,7 @@ import httpx
 from pydantic import BaseModel, Field, SecretStr
 
 from app.core.net_guard import (
+    GuardedPingClient,
     GuardedSnmpClient,
     NetGuard,
     SnmpV2c,
@@ -78,8 +79,9 @@ class InstanceContext:
     """What an integration gets for one instance: its config and guarded clients.
 
     Built by the backend (instance API, poll collector), never by an integration.
-    Integrations open connections only through :meth:`http_client` and
-    :meth:`snmp_client`, which go through ``net_guard`` (Contract 5).
+    Integrations open connections only through :meth:`http_client`,
+    :meth:`snmp_client` and :meth:`ping_client`, which go through ``net_guard``
+    (Contract 5).
     """
 
     instance_id: uuid.UUID
@@ -120,6 +122,13 @@ class InstanceContext:
     ) -> GuardedSnmpClient:
         """A guarded, read-only (GET/WALK) SNMP client."""
         return GuardedSnmpClient(self.net_guard, host, auth, port=port)
+
+    def ping_client(
+        self, host: str, *, count: int = 3, reply_timeout: float = 1.0
+    ) -> GuardedPingClient:
+        """A guarded ICMP echo client: private ranges only, never a cloud host, at most
+        ``MAX_PING_COUNT`` packets, one per second, and done within 15 s."""
+        return GuardedPingClient(self.net_guard, host, count=count, reply_timeout=reply_timeout)
 
 
 class Integration(ABC):

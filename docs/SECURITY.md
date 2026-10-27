@@ -67,6 +67,15 @@ Every outbound connection to a device or cloud API goes through the SSRF guard i
   (`2002::/16`) and `192.0.0.0/24` addresses are never treated as public, because a
   translated address can carry a private IPv4 address.
 - Redirects are not followed automatically; timeouts are connect 5 s, total 15 s.
+- ICMP ping goes through the same guard (`GuardedPingClient`): the host is resolved
+  once, every answer is checked, and only the checked address is pinged. A declared
+  cloud host is never pinged, so ping reaches allowed private ranges only. At most 10
+  echo requests per run, at least 0.2 s apart, and every run (resolution included)
+  ends within 15 s. The client uses unprivileged ICMP datagram sockets, connected to
+  the checked address and without `SO_BROADCAST`; integration code never opens
+  sockets. The compose file sets the `net.ipv4.ping_group_range` sysctl on the backend
+  container (its own network namespace only), so the backend keeps running as a
+  non-root user with every capability dropped, `NET_RAW` included.
 
 ### Known limitation: the Docker host's LAN address
 

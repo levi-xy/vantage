@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import socket
 import ssl
 from collections.abc import AsyncIterator, Sequence
 from ipaddress import IPv4Address, IPv4Network, IPv6Address, ip_address
-from typing import Any
+from typing import Any, ClassVar
 
 import httpcore
 import httpx
@@ -25,10 +26,15 @@ from app.core import net_guard
 from app.core.net_guard import (
     DEFAULT_CONNECT_TIMEOUT,
     DEFAULT_TOTAL_TIMEOUT,
+    MAX_PING_COUNT,
+    MAX_PING_TOTAL_TIMEOUT,
+    MIN_PING_INTERVAL,
+    GuardedPingClient,
     GuardedSnmpClient,
     NetGuard,
     NetGuardError,
     NetPolicy,
+    PingError,
     SnmpError,
     SnmpV2c,
     SnmpV3,
@@ -37,6 +43,7 @@ from app.core.net_guard import (
     parse_cidrs,
     parse_host,
 )
+from tests.integrations.netfake import FakeIcmp, drop
 
 FAKE_COMMUNITY = "example-community"
 
@@ -870,3 +877,405 @@ def test_snmp_is_read_only() -> None:
         assert write_op not in source
     public = {name for name in dir(GuardedSnmpClient) if not name.startswith("_")}
     assert public == {"get", "walk", "close"}
+
+
+# --- ICMP ping ---------------------------------------------------------------------------
+#
+# The guard is real; only the socket layer is fake (tests.integrations.netfake.FakeIcmp),
+# injected as the client's socket_factory.
+
+PING_OK = "10.0.0.30"
+
+
+def pinger(
+    host: str,
+    icmp: FakeIcmp,
+    *,
+    guard: NetGuard | None = None,
+    count: int = 1,
+    interval: float = MIN_PING_INTERVAL,
+    reply_timeout: float = 0.5,
+    total_timeout: float = MAX_PING_TOTAL_TIMEOUT,
+) -> GuardedPingClient:
+    return GuardedPingClient(
+        guard or NetGuard(resolver=no_resolver),
+        host,
+        count=count,
+        interval=interval,
+        reply_timeout=reply_timeout,
+        total_timeout=total_timeout,
+        socket_factory=icmp.open,
+    )
+
+
+@pytest.fixture
+def icmp() -> FakeIcmp:
+    return FakeIcmp()
+
+
+@pytest.mark.parametrize("address", DENIED)
+async def test_ping_denied_addresses_never_open_a_socket(icmp: FakeIcmp, address: str) -> None:
+    with pytest.raises(NetGuardError):
+        await pinger(address, icmp).ping()
+    assert icmp.opened == []
+    assert icmp.sent == []
+
+
+@pytest.mark.parametrize("host", AMBIGUOUS_OR_INVALID)
+async def test_ping_ambiguous_or_invalid_hosts_rejected_without_resolving(
+    icmp: FakeIcmp, host: str
+) -> None:
+    with pytest.raises(NetGuardError):
+        await pinger(host, icmp).ping()
+    assert icmp.opened == []
+
+
+async def test_ping_own_address_denied_by_default_policy(icmp: FakeIcmp) -> None:
+    # fixed_own_addresses makes 10.255.0.1 "ours".
+    icmp.answer("10.255.0.1")
+    with pytest.raises(NetGuardError):
+        await pinger("10.255.0.1", icmp).ping()
+    assert icmp.opened == []
+
+
+@pytest.mark.parametrize(("address", "expected"), ALLOWED)
+async def test_ping_private_ranges_allowed(icmp: FakeIcmp, address: str, expected: str) -> None:
+    icmp.answer(expected)
+    result = await pinger(address, icmp).ping()
+    assert (result.address, result.sent, result.received) == (expected, 1, 1)
+    # The socket was opened to the checked address, in its own family.
+    assert icmp.addresses == [expected]
+    v6 = isinstance(ip_address(expected), IPv6Address)
+    assert [p.type for p in icmp.sent] == [128 if v6 else 8]
+
+
+async def test_ping_public_address_needs_extra_cidr(icmp: FakeIcmp) -> None:
+    with pytest.raises(NetGuardError):
+        await pinger("192.0.2.30", icmp).ping()
+    icmp.answer("192.0.2.30")
+    policy = NetPolicy(extra_allowed=parse_cidrs(["192.0.2.0/24"]))
+    guard = NetGuard(policy, resolver=no_resolver)
+    assert (await pinger("192.0.2.30", icmp, guard=guard).ping()).received == 1
+
+
+@pytest.mark.parametrize("cidr", ["127.0.0.0/8", "169.254.0.0/16", "0.0.0.0/0"])
+async def test_ping_extra_cidrs_never_override_denied(icmp: FakeIcmp, cidr: str) -> None:
+    guard = NetGuard(NetPolicy(extra_allowed=parse_cidrs([cidr])), resolver=no_resolver)
+    for host in ("127.0.0.1", "169.254.169.254"):
+        with pytest.raises(NetGuardError):
+            await pinger(host, icmp, guard=guard).ping()
+    assert icmp.opened == []
+
+
+async def test_ping_dns_rebinding_cannot_change_pinged_address(icmp: FakeIcmp) -> None:
+    resolver = FakeResolver([PING_OK], ["127.0.0.1"])  # second answer would be loopback
+    icmp.answer(PING_OK)
+    guard = NetGuard(resolver=resolver)
+    result = await pinger("pinged.example.com", icmp, guard=guard, count=3).ping()
+    assert result.received == 3
+    assert resolver.calls == [("pinged.example.com", 0)]  # resolved exactly once
+    assert icmp.addresses == [PING_OK]  # one socket, connected to the checked address
+    assert {p.address for p in icmp.sent} == {PING_OK}
+
+
+@pytest.mark.parametrize(
+    "answers",
+    [
+        [PING_OK, "127.0.0.1"],
+        ["169.254.169.254", PING_OK],
+        [PING_OK, "::ffff:127.0.0.1"],
+        [PING_OK, "192.0.2.1"],
+        [PING_OK, "fe80::1%eth0"],
+    ],
+)
+async def test_ping_mixed_answers_denied(icmp: FakeIcmp, answers: list[str]) -> None:
+    guard = NetGuard(resolver=FakeResolver(answers))
+    with pytest.raises(NetGuardError):
+        await pinger("pinged.example.com", icmp, guard=guard).ping()
+    assert icmp.opened == []
+
+
+async def test_ping_never_reaches_a_cloud_host(icmp: FakeIcmp, public_test_net: None) -> None:
+    # Public answer, private answer, or literal: a declared cloud host is never pinged.
+    for answer in ("192.0.2.50", PING_OK):
+        icmp.answer(answer)
+        guard = NetGuard(cloud_hosts=["api.example.com"], resolver=FakeResolver([answer]))
+        with pytest.raises(NetGuardError, match="cloud host"):
+            await pinger("API.example.com.", icmp, guard=guard).ping()
+    # An undeclared name resolving to the "public" test net is denied too.
+    guard = NetGuard(resolver=FakeResolver(["192.0.2.50"]))
+    with pytest.raises(NetGuardError):
+        await pinger("other.example.com", icmp, guard=guard).ping()
+    assert icmp.opened == []
+
+
+async def test_ping_resolution_failure(icmp: FakeIcmp) -> None:
+    async def failing(host: str, port: int) -> Sequence[str]:
+        raise OSError("no such host")
+
+    with pytest.raises(NetGuardError, match="could not resolve"):
+        await pinger("missing.example.com", icmp, guard=NetGuard(resolver=failing)).ping()
+    assert icmp.opened == []
+
+
+async def test_ping_sends_well_formed_echo_requests(icmp: FakeIcmp) -> None:
+    icmp.answer(PING_OK)
+    result = await pinger(PING_OK, icmp, count=3).ping()
+    assert (result.sent, result.received, result.loss_ratio) == (3, 3, 0.0)
+    assert [p.sequence for p in icmp.sent] == [0, 1, 2]
+    assert {(p.type, p.code) for p in icmp.sent} == {(8, 0)}  # echo request, nothing else
+    assert len({p.identifier for p in icmp.sent}) == 1
+    [nonce] = {p.payload for p in icmp.sent}
+    assert len(nonce) == 16
+    for packet in icmp.sent:
+        assert net_guard._icmp_checksum(packet.raw) == 0  # valid internet checksum
+    assert result.rtt_min is not None and result.rtt_max is not None
+    assert result.rtt_min <= (result.rtt_avg or 0) <= result.rtt_max
+    assert icmp.opened[0].closed
+
+
+async def test_ping_ipv6_echo(icmp: FakeIcmp) -> None:
+    icmp.answer("fd00::30")
+    result = await pinger("[fd00::30]", icmp, count=2).ping()
+    assert (result.address, result.received) == ("fd00::30", 2)
+    assert {(p.type, p.code) for p in icmp.sent} == {(128, 0)}
+
+
+async def test_ping_nonce_is_fresh_per_run(icmp: FakeIcmp) -> None:
+    icmp.answer(PING_OK)
+    await pinger(PING_OK, icmp).ping()
+    await pinger(PING_OK, icmp).ping()
+    assert icmp.sent[0].payload != icmp.sent[1].payload
+
+
+async def test_ping_counts_loss(icmp: FakeIcmp) -> None:
+    icmp.answer(PING_OK, drop(1))
+    result = await pinger(PING_OK, icmp, count=3, reply_timeout=0.1).ping()
+    assert (result.sent, result.received) == (3, 2)
+    assert result.loss_ratio == pytest.approx(1 / 3)
+    assert len(result.rtts) == 2
+
+
+async def test_ping_no_reply_is_a_result_not_an_error(icmp: FakeIcmp) -> None:
+    result = await pinger(PING_OK, icmp, count=2, reply_timeout=0.05).ping()
+    assert (result.sent, result.received, result.loss_ratio) == (2, 0, 1.0)
+    assert (result.rtt_min, result.rtt_avg, result.rtt_max) == (None, None, None)
+
+
+async def test_ping_ignores_replies_that_are_not_ours(icmp: FakeIcmp) -> None:
+    template = net_guard._echo_request(v6=False, identifier=1, sequence=0, payload=b"x" * 16)
+    icmp.preload = [
+        b"\x00\x00",  # too short
+        b"\x00\x00\x00\x00\x00\x01\x00\x00" + b"x" * 16,  # right seq, wrong nonce (forged)
+        b"\x00\x00\x00\x00\x00\x01\x00\x05",  # another sequence, no payload
+        b"\x03\x01\x00\x00\x00\x00\x00\x00" + b"\x45" * 28,  # ICMP host unreachable
+        template,  # an echo *request* reflected back
+        b"\x00\x05\x00\x00\x00\x01\x00\x00",  # echo reply with a non-zero code
+    ]
+    # None of the junk counts; with no real reply, the packet is lost.
+    result = await pinger(PING_OK, icmp, reply_timeout=0.1).ping()
+    assert result.received == 0
+    # With a real reply behind the junk, only that one counts.
+    icmp.answer(PING_OK)
+    result = await pinger(PING_OK, icmp, count=2).ping()
+    assert (result.sent, result.received) == (2, 2)
+
+
+async def test_ping_late_reply_is_not_counted_for_the_next_packet(icmp: FakeIcmp) -> None:
+    # Packet 0's reply arrives while packet 1 waits: it must not count for packet 1.
+    # Packet 0 waits 0-0.15 s; packet 1 is sent at 0.2 s and waits until 0.35 s.
+    icmp.answer(PING_OK, lambda seq: 0.28 if seq == 0 else None)
+    result = await pinger(PING_OK, icmp, count=2, reply_timeout=0.15).ping()
+    assert (result.sent, result.received) == (2, 0)
+
+
+async def test_ping_send_and_receive_errors_count_as_loss(icmp: FakeIcmp) -> None:
+    icmp.send_error = OSError(113, "No route to host")
+    result = await pinger(PING_OK, icmp, count=2).ping()
+    assert (result.sent, result.received) == (2, 0)
+    icmp.send_error = None
+    icmp.preload = [OSError(113, "No route to host")]
+    icmp.answer(PING_OK)
+    result = await pinger(PING_OK, icmp).ping()
+    assert (result.sent, result.received) == (1, 0)
+    assert all(s.closed for s in icmp.opened)
+
+
+async def test_ping_permission_denied(icmp: FakeIcmp) -> None:
+    icmp.open_error = PermissionError(13, "Permission denied")
+    with pytest.raises(PingError, match="ping_group_range"):
+        await pinger(PING_OK, icmp).ping()
+    icmp.open_error = OSError(97, "Address family not supported")
+    with pytest.raises(PingError) as info:
+        await pinger(PING_OK, icmp).ping()
+    assert str(info.value) == "could not open an ICMP socket to 10.0.0.30"
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"count": 0},
+        {"count": MAX_PING_COUNT + 1},
+        {"interval": MIN_PING_INTERVAL / 2},
+        {"interval": 0},
+        {"interval": 60},
+        {"reply_timeout": 0},
+        {"reply_timeout": 30},
+        {"total_timeout": 0},
+        {"total_timeout": MAX_PING_TOTAL_TIMEOUT + 1},
+    ],
+)
+def test_ping_caps_enforced(kwargs: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        GuardedPingClient(NetGuard(resolver=no_resolver), PING_OK, **kwargs)
+
+
+def test_ping_caps_match_contract() -> None:
+    assert MAX_PING_COUNT == 10
+    assert MAX_PING_TOTAL_TIMEOUT == DEFAULT_TOTAL_TIMEOUT
+
+
+async def test_ping_total_time_cap_stops_sending(icmp: FakeIcmp) -> None:
+    # Ten packets that each wait up to 5 s would take 50 s; the total cap ends it.
+    client = pinger(PING_OK, icmp, count=10, reply_timeout=5, interval=5, total_timeout=0.3)
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    result = await asyncio.wait_for(client.ping(), 5)
+    assert loop.time() - started < 1.0
+    assert result.sent == 1 and result.received == 0  # unsent packets aren't counted
+    assert icmp.opened[0].closed
+
+
+async def test_ping_total_time_cap_covers_resolution(icmp: FakeIcmp) -> None:
+    async def slow(host: str, port: int) -> Sequence[str]:
+        await asyncio.sleep(3600)
+        return [PING_OK]
+
+    client = pinger("slow.example.com", icmp, guard=NetGuard(resolver=slow), total_timeout=0.1)
+    with pytest.raises(PingError, match="timed out resolving"):
+        await asyncio.wait_for(client.ping(), 5)
+    assert icmp.opened == []
+
+
+async def test_ping_socket_closed_on_cancel(icmp: FakeIcmp) -> None:
+    task = asyncio.create_task(pinger(PING_OK, icmp, reply_timeout=5).ping())
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert icmp.opened[0].closed
+
+
+async def test_ping_default_opener_is_looked_up_at_call_time(
+    monkeypatch: pytest.MonkeyPatch, icmp: FakeIcmp
+) -> None:
+    monkeypatch.setattr(net_guard, "open_icmp_socket", icmp.open)
+    icmp.answer(PING_OK)
+    client = GuardedPingClient(NetGuard(resolver=no_resolver), PING_OK, count=1)
+    assert (await client.ping()).received == 1
+
+
+class RecordingSocket:
+    """Stands in for socket.socket inside the real opener."""
+
+    created: ClassVar[list[RecordingSocket]] = []
+
+    def __init__(self, family: int, kind: int, proto: int) -> None:
+        self.args = (family, kind, proto)
+        self.calls: list[tuple[str, Any]] = []
+        RecordingSocket.created.append(self)
+
+    def setblocking(self, flag: bool) -> None:
+        self.calls.append(("setblocking", flag))
+
+    def connect(self, address: Any) -> None:
+        self.calls.append(("connect", address))
+
+    def setsockopt(self, *args: Any) -> None:
+        self.calls.append(("setsockopt", args))
+
+    def close(self) -> None:
+        self.calls.append(("close", None))
+
+
+@pytest.mark.parametrize(
+    ("address", "expected_args", "sockaddr"),
+    [
+        (
+            "10.0.0.30",
+            (socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_ICMP),
+            ("10.0.0.30", 0),
+        ),
+        (
+            "fd00::30",
+            (socket.AF_INET6, socket.SOCK_DGRAM, socket.IPPROTO_ICMPV6),
+            ("fd00::30", 0, 0, 0),
+        ),
+    ],
+)
+def test_real_opener_uses_unprivileged_datagram_socket_connected_to_checked_address(
+    monkeypatch: pytest.MonkeyPatch,
+    address: str,
+    expected_args: tuple[int, int, int],
+    sockaddr: tuple[Any, ...],
+) -> None:
+    RecordingSocket.created = []
+    monkeypatch.setattr(net_guard.socket, "socket", RecordingSocket)
+    opened = net_guard.open_icmp_socket(ip_address(address))
+    [sock] = RecordingSocket.created
+    assert sock.args == expected_args  # SOCK_DGRAM, never SOCK_RAW
+    assert sock.calls == [("setblocking", False), ("connect", sockaddr)]  # no SO_BROADCAST
+    opened.close()
+    assert sock.calls[-1] == ("close", None)
+
+
+def test_no_raw_sockets_or_broadcast_in_net_guard() -> None:
+    source = inspect.getsource(net_guard)
+    for forbidden in ("socket.SOCK_RAW", "socket.SO_BROADCAST", "setsockopt"):
+        assert forbidden not in source
+
+
+def test_real_socket_strips_ipv4_header() -> None:
+    if not hasattr(socket, "AF_UNIX"):
+        pytest.skip("needs AF_UNIX datagram sockets")
+    reply = b"\x00\x00\x00\x00\x00\x01\x00\x07" + b"n" * 16
+    ip_header = b"\x45" + b"\x00" * 19
+
+    async def receive(payload: bytes) -> bytes:
+        ours, theirs = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+        with ours, theirs:
+            ours.setblocking(False)
+            wrapper = object.__new__(net_guard._DatagramIcmpSocket)
+            wrapper._sock = ours
+            wrapper._v4 = True
+            theirs.send(payload)
+            return await wrapper.recv()
+
+    assert asyncio.run(receive(ip_header + reply)) == reply  # macOS-style, with IP header
+    assert asyncio.run(receive(reply)) == reply  # Linux-style, ICMP only
+
+
+def test_real_kernel_loopback_echo() -> None:
+    """The real socket layer against this machine's kernel, where unprivileged ICMP
+    sockets are allowed (macOS; Linux within ping_group_range). The guard checks a
+    private literal; the test's opener then points the socket at loopback, which the
+    guard itself would never allow. Skipped where ICMP sockets aren't permitted."""
+    loopback = ip_address("127.0.0.1")
+
+    def opener(address: Any) -> net_guard.IcmpSocket:
+        assert address == ip_address(PING_OK)  # the guard's checked address
+        return net_guard.open_icmp_socket(loopback)
+
+    client = GuardedPingClient(
+        NetGuard(resolver=no_resolver),
+        PING_OK,
+        count=2,
+        interval=MIN_PING_INTERVAL,
+        socket_factory=opener,
+    )
+    try:
+        result = asyncio.run(client.ping())
+    except PingError as exc:
+        pytest.skip(f"unprivileged ICMP sockets not available here: {exc}")
+    assert (result.sent, result.received) == (2, 2)
+    assert result.rtt_max is not None and result.rtt_max < 1

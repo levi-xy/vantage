@@ -21,6 +21,11 @@ services:
     volumes:
       - backend-data:/data
     tmpfs: [/tmp]
+    # ICMP ping (ping_check): lets the non-root backend open unprivileged ICMP datagram
+    # sockets, so it needs no NET_RAW capability (cap_drop: ALL stays). The sysctl is
+    # per network namespace: it applies to this container only, not the Docker host.
+    sysctls:
+      net.ipv4.ping_group_range: "0 2147483647"
 
   frontend:
     <<: *hardening
