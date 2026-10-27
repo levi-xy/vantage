@@ -385,6 +385,59 @@ async def test_collector_marks_silent_host_down(
     assert 'vantage_instance_up{vantage_instance="gw-1"' in text
 
 
+async def test_collector_degrades_config_made_invalid_by_upgrade(
+    fake_icmp: FakeIcmp, engine: Engine, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Upgrade note: 3 packets x 5 s was accepted before the DNS share was reserved and
+    is refused now. A stored instance with it is revalidated on every poll, so it goes
+    ``down`` with a fixed message (no crash, no ping sent), and other instances keep
+    polling."""
+    caplog.set_level(logging.DEBUG)
+    with pytest.raises(ValidationError):
+        PingCheckConfig.model_validate(config(count=3, timeout_seconds=5))
+    box = SecretBox(TEST_MASTER_KEY)
+    store = MetricsStore()
+    scheduler = PollScheduler(
+        session_factory=make_session_factory(engine),
+        registry=Registry([PingCheck]),
+        secret_box=box,
+        net_guard_factory=fake_guards,
+        store=store,
+    )
+
+    def spec(name: str, stored: dict[str, Any]) -> PollSpec:
+        made = PollSpec(
+            instance_id=uuid.uuid4(),
+            type_id="ping_check",
+            name=name,
+            site="lab",
+            updated_at=utcnow(),
+            config=stored,  # as stored in the database by the older version
+            secrets=None,
+        )
+        store.track(made.instance_id, made.labels)
+        return made
+
+    old = spec("old-gw", {"host": HOST, "count": 3, "timeout_seconds": 5})
+    good = spec("gw-2", {"host": HOST, "count": 1, "timeout_seconds": 1})
+    fake_icmp.answer(ADDRESS)
+    await scheduler.poll_once(old, PingCheck())
+    await scheduler.poll_once(good, PingCheck())
+
+    old_status = store.status(old.instance_id)
+    assert old_status is not None and old_status.state == "down"
+    assert old_status.error == "stored config is not valid for this integration"
+    good_status = store.status(good.instance_id)
+    assert good_status is not None and good_status.state == "up"
+    # Only the valid instance pinged; the invalid one never reached the network.
+    assert len(fake_icmp.opened) == 1
+    text = generate_latest(make_registry(store)).decode()
+    assert 'vantage_ping_check_packets_received{vantage_instance="gw-2"' in text
+    assert 'vantage_instance_up{vantage_instance="old-gw"' in text
+    assert 'vantage_ping_check_packets_received{vantage_instance="old-gw"' not in text
+    assert "timeout_seconds" not in caplog.text  # the validation error isn't echoed
+
+
 async def test_collector_reports_guard_refusal(fake_icmp: FakeIcmp, engine: Engine) -> None:
     store, spec = await collect(engine, config(host="metadata.example.internal"), site="lab")
     status = store.status(spec.instance_id)

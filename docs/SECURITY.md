@@ -93,5 +93,6 @@ container can't reach, or firewall the Docker bridge.
 
 The same applies to ICMP ping: a ping check can target the Docker host's LAN address
 or the bridge gateway (an address in `172.16.0.0/12`, such as `172.17.0.1`). The harm
-is low, since an echo reply only shows that the address is up and carries no data
-from the host, but it does let an admin confirm those addresses exist.
+is low, since an echo reply only shows that the address is up and how long the round
+trip took, and carries no data from the host, but it does let an admin confirm those
+addresses exist.

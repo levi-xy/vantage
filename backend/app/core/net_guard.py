@@ -811,7 +811,8 @@ MAX_PING_INTERVAL = 5.0
 MAX_PING_REPLY_TIMEOUT = 5.0
 MAX_PING_TOTAL_TIMEOUT = DEFAULT_TOTAL_TIMEOUT
 # DNS gets at most this much of the total, so the rest is left for the packets: a caller
-# whose packets fit in MAX_PING_TOTAL_TIMEOUT - PING_RESOLVE_TIMEOUT is never cut short.
+# whose packets fit in MAX_PING_TOTAL_TIMEOUT - PING_RESOLVE_TIMEOUT is not cut short
+# beyond scheduling overhead (the event loop's own delays are not budgeted).
 PING_RESOLVE_TIMEOUT = DEFAULT_CONNECT_TIMEOUT
 
 _ICMP_ECHO_REQUEST = 8
