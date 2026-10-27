@@ -19,6 +19,18 @@ How Vantage gets built by coding agents, milestone by milestone. Every agent rea
 - Merge in dependency order (see the map below). Don't start parallel tasks until their dependencies are merged.
 - After each milestone, run the app yourself and click through it before starting the next one.
 
+**Model tiers.** Each task has a tier; `/task` reads it and starts the builder and reviewer with those models. The reviewer is never weaker than the builder.
+
+| Tier | Builder | Reviewer | Tasks |
+|---|---|---|---|
+| **Critical** (secrets, auth, crypto, `net_guard`, contracts, anything reachable from outside) | Opus | Opus | M2.7, M4b, M4d, M4g, M5.1, M7.2, M8.1, M8.2, M8.3 |
+| **Standard** | Sonnet | Sonnet | Everything else: M2.6, M4a, M4c, M4e, M4f, M4h, M5.2–M5.5, M6.1–M6.2, M7.1, M7.3, M7.4, M8.4 |
+| **Light** (docs-only or mechanical, no decisions) | Haiku | Sonnet | Docs-only PRs and plan edits; none of the numbered tasks yet |
+
+- A task not listed is Standard, unless it touches secrets, auth, crypto, `net_guard` or a contract in `AGENTS.md`: then it is Critical.
+- A fix round uses the same builder; a re-review uses a fresh reviewer at the same tier.
+- Moving a task up or down is the maintainer's call: edit the table.
+
 **Prompt template for a builder agent**
 ```
 Read AGENTS.md and BUILD-PLAN.md. Do task <ID> only.
@@ -83,6 +95,7 @@ M0 ──► M1 ──► M2 ──┬──► M4a ─┐
 | M2.4 | Poll collector | Scheduler runs `poll()` per instance on its interval; results on `/metrics` with standard labels; failures marked as instance status without crashing other polls; `vantage_instance_up` metric |
 | M2.5 | Reference integrations | **HTTP/ping check** and **Linux host** (node_exporter scrape), fully tested. These are the templates for M4 |
 | M2.6 | Integration docs | `docs/INTEGRATIONS.md`: how to write one, using M2.5 as the worked example |
+| M2.7 | ICMP ping | Guarded ICMP ping client in `net_guard`, exposed on `InstanceContext`, per Contract 5; the compose file lets the backend container send ICMP (prefer the `ping_group_range` sysctl over `NET_RAW`); a `ping_check` reference integration (packet loss and RTT min/avg/max, poll-based) with `net_guard`-style tests: private ranges only, denied addresses refused, DNS rebinding, packet and time caps |
 
 **Carried over from reviews (include in the M2.6 task):**
 - Host fields: the SSRF pre-check on save finds them by name only (`host`, `*_host`, `url`, `*_url`). Document the convention, and decide on explicit marking (proposal: `Field(json_schema_extra={"vantage_host": True})`, naming as fallback). See the `TODO(maintainer)` in `backend/app/integrations/instance_config.py`. (PR #12)
@@ -91,6 +104,8 @@ M0 ──► M1 ──► M2 ──┬──► M4a ─┐
 - Author text on a secret field (`description`, `json_schema_extra`) is served in the schema as-is: never put example secret values there. (PR #10)
 - `poll()` must await its I/O: the 60 s poll timeout only interrupts code that awaits, so a blocking call stalls every instance's polling. (PR #16)
 - The collector assumes one backend process: with several uvicorn workers every worker polls and serves its own `/metrics`. Document "one worker" for deployments. (PR #16)
+- Anything in a URL, including a query-string token, is stored in plaintext config and returned by the API: credentials belong in `SecretStr` fields, and the docs must say so. (PR #19)
+- M2.6 comes after M2.7, so the ICMP ping client and `ping_check` are documented as well; the "HTTP check" is HTTP only.
 - Scrape targets: one that fails DNS or the SSRF guard is left out of `/sd/targets`, so it disappears from Prometheus instead of showing `up == 0` (AGENTS.md Contract 5). (PR #14)
 
 ## M3: Frontend shell

@@ -134,7 +134,7 @@ class Integration(ABC):
     def firewall_hints(self, ctx: "InstanceContext") -> list[FirewallHint]: ...
 ```
 
-- `InstanceContext` gives the integration its decrypted config, the instance id/name/labels, and a **guarded HTTP/SNMP client** (from `net_guard`). Integrations never construct their own clients.
+- `InstanceContext` gives the integration its decrypted config, the instance id/name/labels, and **guarded HTTP, SNMP and ICMP ping clients** (from `net_guard`). Integrations never construct their own clients or sockets.
 - `Sample` = metric name, labels, value, type (gauge/counter). The collector adds the standard labels.
 - Metric names: `vantage_<type_id>_<metric>` for polled metrics. Scraped exporter metrics keep their native names.
 - Polled-metric labels are fixed by the collector: `vantage_instance_id`, `vantage_instance`, `vantage_integration`, `vantage_site`. Integrations may add their own labels but never override these.
@@ -188,7 +188,7 @@ All routes under `/api/v1`, JSON, session auth, CSRF token on state-changing req
 | GET | `/audit` | admin | Audit log, newest first: `limit` (1–200, default 50), `before_id` (keyset paging) |
 | WS | `/ws` | any | Live pushes: instance status changes, alert events, card data refresh hints |
 
-Instance responses (list and single) carry `status`: `{state, checked_at, last_success_at, error}` with `state` one of `pending` / `up` / `down` / `unknown`. It comes from the poll collector's in-memory state, so it resets on restart. `unknown` = the collector doesn't poll this instance (disabled, or a scrape-only integration). `error` is the collector's short, secret-free description. `/ws` pushes changes to the same object.
+Instance responses (list and single) carry `status`: `{state, checked_at, last_success_at, error}` with `state` one of `pending` / `up` / `down` / `unknown`. It comes from the poll collector's in-memory state, so it resets on restart. `pending` = enabled and polled by the collector, but not polled yet (new, just enabled, or just after a restart). `unknown` = the collector doesn't poll this instance (disabled, or a scrape-only integration). `error` is the collector's short, secret-free description. `/ws` pushes changes to the same object.
 
 Outside `/api/v1`:
 - `GET /sd/targets`: Prometheus HTTP SD format, **bearer-token protected** (token from env, shared only with Prometheus)
@@ -218,6 +218,7 @@ Nothing device-specific is ever added to it.
 - **Public internet:** only an integration's declared `cloud_hosts`, over HTTPS, with certificate verification on; a declared cloud host must resolve to public addresses only (any private, CGNAT, ULA or otherwise non-global answer denies it)
 - Redirects are not followed automatically. If needed, each hop is re-checked
 - Timeouts on every request (connect 5 s, total 15 s by default)
+- **ICMP ping (maintainer-approved):** real ICMP echo is allowed, only through a guarded ping client in `net_guard`. It follows the same rules as every other outbound call: resolve once, check every address, ping only the checked address, never a cloud host; it also caps the packet count and total time. Raw sockets never appear in integration code. The backend container may send ICMP: prefer unprivileged ICMP datagram sockets (the `net.ipv4.ping_group_range` sysctl on the container); add `cap_add: NET_RAW` only if that proves unworkable. The container keeps running as a non-root user either way.
 - **Scrape targets:** Prometheus connects to targets itself, outside `net_guard`, so `/sd/targets` checks every target with the instance's guard first and leaves out any it refuses (a DNS failure also leaves the target out). Prometheus resolves hostnames again when scraping, so only IP-literal targets are fully protected against DNS rebinding.
 
 ---

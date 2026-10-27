@@ -12,10 +12,11 @@ You coordinate. You don't write the task's code yourself. Task IDs: `$ARGUMENTS`
 - `git fetch origin` and look up each ID in `BUILD-PLAN.md`. Unknown ID → stop and say so.
 - Check the dependency map: everything the task needs must already be merged into `origin/main` (`gh pr list --state merged`). If not, stop and tell the maintainer what's missing.
 - Check nothing is already open for it: `gh pr list --state open`. If a PR exists, go to step 3 with it instead of building again.
+- Look up each task's tier in the "Model tiers" table in `BUILD-PLAN.md` (not listed = Standard, unless it touches secrets, auth, crypto, `net_guard` or an `AGENTS.md` contract: then Critical). Builder and reviewer models: Critical = opus / opus, Standard = sonnet / sonnet, Light = haiku / sonnet. Say each task's tier when you start it.
 
 ## 2. Build
 
-Spawn the `builder` agent, one per ID. With more than one ID, use `isolation: "worktree"` for each and launch them in the same message so they run in parallel. One ID → no worktree needed.
+Spawn the `builder` agent, one per ID, with the `model` parameter set to the task's builder model from its tier (this overrides the agent file's default). With more than one ID, use `isolation: "worktree"` for each and launch them in the same message so they run in parallel. One ID → no worktree needed.
 
 Prompt (fill in the ID and paste the task's row from BUILD-PLAN.md, plus any "Carried over from reviews" notes for that task under its milestone):
 
@@ -32,7 +33,7 @@ If the builder stops with a contract question, relay it to the maintainer word f
 
 ## 3. Review
 
-Wait for CI on the PR (`gh pr checks <N> --watch`). Then spawn a **fresh** `reviewer` agent (never the builder):
+Wait for CI on the PR (`gh pr checks <N> --watch`). Then spawn a **fresh** `reviewer` agent (never the builder), with `model` set to the task's reviewer model from its tier (never weaker than the builder's):
 
 ```
 Review PR #<N> for task <ID> in BUILD-PLAN.md.
@@ -41,7 +42,7 @@ Acceptance criteria: <paste the row>
 
 ## 4. One fix round
 
-If the verdict is "request changes", send the blocking findings to the same builder with SendMessage, wait for its push and green CI, then spawn a new reviewer once more. After that, stop either way: anything still blocking goes to the maintainer.
+If the verdict is "request changes", send the blocking findings to the same builder with SendMessage, wait for its push and green CI, then spawn a new reviewer once more (same tier model). The fix round keeps the same builder, so it keeps the same model. After that, stop either way: anything still blocking goes to the maintainer.
 
 ## 5. Report to the maintainer
 
