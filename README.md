@@ -115,6 +115,8 @@ python scripts/check.py           # runs every CI check locally (--fast skips th
 
 `dev_setup.py` creates `backend/.venv`, installs the backend and frontend dependencies, and installs the pre-commit hooks if `pre-commit` is on your PATH.
 
+The repo uses LF line endings on every OS (`.gitattributes`). A Windows checkout made before that file existed still has CRLF files; with no local changes, refresh it once with `git rm -rq --cached . && git reset -q --hard`.
+
 Coding agents: `/task <ID>` runs one `BUILD-PLAN.md` task end to end (`builder` agent opens the PR, a fresh `reviewer` agent reviews it). See `.claude/`.
 
 ---

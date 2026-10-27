@@ -42,6 +42,11 @@ def main() -> int:
         print(f"Creating {VENV.relative_to(ROOT)}")
         venv.create(VENV, with_pip=True)
     py = str(venv_python())
+    probe = [py, "-c", "import sys; print(sys.version_info >= (3, 12))"]
+    if subprocess.run(probe, capture_output=True, text=True, check=False).stdout.strip() != "True":  # noqa: S603
+        print(f"{VENV.relative_to(ROOT)} was made with Python < 3.12.", file=sys.stderr)
+        print("Delete it and re-run this script with Python 3.12+.", file=sys.stderr)
+        return 1
     run([py, "-m", "pip", "install", "-q", "--upgrade", "pip"], ROOT / "backend")
     run([py, "-m", "pip", "install", "-q", "-e", ".[dev]"], ROOT / "backend")
 
