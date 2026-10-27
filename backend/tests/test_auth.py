@@ -13,6 +13,7 @@ from app.core.auth import LoginRateLimiter, Passwords, csrf_token, session_id
 from app.core.config import Settings, normalize_database_url
 from app.core.crypto import SecretBox
 from app.core.db import make_session_factory, utcnow
+from app.integrations.registry import Registry
 from app.main import create_app
 from app.models import Role, Setting, User, UserSession
 
@@ -24,11 +25,12 @@ SECURE_COOKIE = "__Host-vantage_session"
 FAST_HASHER = PasswordHasher(time_cost=1, memory_cost=8, parallelism=1)
 
 
-def make_client(db_url: str, **settings: object) -> TestClient:
+def make_client(db_url: str, registry: Registry | None = None, **settings: object) -> TestClient:
     app = create_app(
         Settings(database_url=normalize_database_url(db_url), **settings),  # type: ignore[arg-type]
         secret_box=SecretBox(b"vantage-test-key-not-a-secret-00"),
         passwords=Passwords(FAST_HASHER),
+        registry=registry,
     )
 
     # Stand-ins for the admin/viewer routes later milestones add.
