@@ -210,6 +210,18 @@ async def test_connection_failure_gives_firewall_hint(
     )
 
 
+async def test_connection_own_timeout_gives_firewall_hint(
+    fake_net: FakeNetwork, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The integration's asyncio.timeout fires before the guarded client's 15 s cap.
+    monkeypatch.setattr(linux_host_module, "TIMEOUT_SECONDS", 0.2)
+    fake_net.serve(*ADDRESS, hang)
+    result = await run_test()
+    assert not result.ok
+    assert result.message == "timed out waiting for node.example.internal:9100"
+    assert result.hint is not None and result.hint.port == 9100
+
+
 async def test_connection_slow_exporter_gives_firewall_hint(fake_net: FakeNetwork) -> None:
     # Connects, then never answers: the guarded client's total limit (15 s, shortened
     # here) ends the request.

@@ -18,6 +18,7 @@ credentials or TLS settings: node_exporter must answer without authentication, a
 https only with a certificate Prometheus trusts.
 """
 
+import asyncio
 from typing import ClassVar, Literal
 
 import httpx
@@ -41,6 +42,8 @@ from app.integrations.builtin.common import (
 )
 
 METRICS_PATH = "/metrics"
+# Limit on the connection test's request; below the guarded client's 15 s cap.
+TIMEOUT_SECONDS = 10
 # node_exporter's page is typically well under 1 MiB; stop reading long before memory
 # becomes a concern if something else answers on the port.
 MAX_BODY_BYTES = 8 * 1024 * 1024
@@ -131,8 +134,11 @@ class LinuxHost(Integration):
         cfg = ctx.config_as(LinuxHostConfig)
         url = f"{cfg.scheme}://{cfg.address}{METRICS_PATH}"
         try:
+            # As in http_check: asyncio.timeout bounds the whole exchange (DNS, connect,
+            # TLS, body); the guarded client's own 15 s cap sits underneath.
             # verify stays on: Prometheus will verify the certificate too.
             async with (
+                asyncio.timeout(TIMEOUT_SECONDS),
                 ctx.http_client(headers={"User-Agent": USER_AGENT}) as client,
                 client.stream("GET", url) as response,
             ):

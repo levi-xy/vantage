@@ -68,8 +68,11 @@ def connection_failure(exc: Exception, *, where: str, hint: FirewallHint) -> Tes
     reports only their type.
     """
     if isinstance(exc, NetGuardError):
-        # Policy, not network: a firewall rule won't help. The message names the host
-        # and the reason only.
+        # Policy, not network: a firewall rule won't help.
+        # Contract: NetGuardError messages are safe to display. They hold only the
+        # address, the host as configured, or a fixed reason; never a URL, header, body
+        # or credential. This line, the instance API and the poll collector all show
+        # them verbatim, so any new guard message must keep to that.
         return TestResult(ok=False, message=f"refused by the network guard: {exc}")
     if isinstance(exc, TimeoutError | httpx.TimeoutException):
         return TestResult(ok=False, message=f"timed out waiting for {where}", hint=hint)

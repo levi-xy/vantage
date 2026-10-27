@@ -161,6 +161,12 @@ def configured_hosts(config: Mapping[str, Any]) -> list[tuple[str, str, int, str
                 raise HostCheckError(
                     key, "URL must not contain a username or password; use the secret fields"
                 )
+            # Integrations parse their URL fields too (e.g. http_check's validator); the
+            # two must agree on which host a URL names, or a URL could pass one check and
+            # fail the other. TODO(maintainer): this uses url.host, which httpx decodes to
+            # Unicode for IDN hosts (even when entered as punycode); parse_host then
+            # refuses it, so IDN URLs can't be saved. The integrations use url.raw_host
+            # (the ASCII form the guard and the connection use). Switch to raw_host here?
             found.append(
                 (key, url.host, url.port or (443 if url.scheme == "https" else 80), url.scheme)
             )

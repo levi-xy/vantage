@@ -27,6 +27,7 @@ from app.integrations import instance_config as ic
 from app.integrations.base import TestResult
 from app.integrations.builtin.http_check import HttpCheck, HttpCheckConfig
 from app.integrations.registry import Registry
+from app.integrations.schema import config_json_schema
 from tests.conftest import TEST_MASTER_KEY
 from tests.integrations.netfake import (
     FakeNetwork,
@@ -124,6 +125,17 @@ def test_schema_rejects_url(url: str) -> None:
 def test_schema_rejects_fields(overrides: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):
         HttpCheckConfig.model_validate(config(**overrides))
+
+
+def test_url_description_warns_it_is_stored_in_plaintext() -> None:
+    # Query strings are allowed, so the form must tell the admin where credentials go.
+    served = config_json_schema(HttpCheckConfig)["properties"]["url"]["description"]
+    assert "plaintext" in served
+    assert "query string" in served
+    assert "bearer token" in served
+    # And query strings really are accepted.
+    url = "http://10.0.0.10/health?verbose=1"
+    assert HttpCheckConfig.model_validate({"url": url}).url == url
 
 
 def test_token_is_a_secret_and_url_is_a_host_field() -> None:

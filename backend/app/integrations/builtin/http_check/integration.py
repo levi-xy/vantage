@@ -67,9 +67,13 @@ class HttpCheckConfig(BaseModel):
 
     url: str = Field(
         title="URL",
+        # Query strings stay allowed (health endpoints use them), so the warning is the
+        # safeguard: the URL is stored in the plaintext config and returned by GET.
         description=(
-            "http:// or https:// address to request. No username or password in it: "
-            "use the bearer token field for authentication."
+            "http:// or https:// address to request. Everything in it, including the "
+            "query string, is stored in plaintext and shown to every user: never put a "
+            "token, password or API key in the URL. Use the bearer token field for "
+            "credentials."
         ),
         max_length=2048,
         examples=["http://10.0.0.10/health"],
@@ -115,6 +119,11 @@ class HttpCheckConfig(BaseModel):
         if url.userinfo:
             # The config column is plaintext and returned by the API.
             raise ValueError("must not contain a username or password")
+        # Host parsing is duplicated in instance_config.configured_hosts (the SSRF check
+        # on save); the two must agree on which host a URL names, or a URL could pass one
+        # check and fail (or skip) the other. raw_host is the ASCII/punycode form that
+        # the guard, the resolver and the connection all use; httpx's url.host decodes
+        # IDN labels to Unicode, which parse_host refuses.
         checked_host(url.raw_host.decode("ascii"))
         return value
 
