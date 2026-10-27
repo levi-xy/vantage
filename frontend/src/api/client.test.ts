@@ -80,6 +80,43 @@ describe("ApiClient requests", () => {
     expect(call(fetchMock).url).toBe(`${API_BASE}/integrations`);
   });
 
+  it("calls the instance endpoints", async () => {
+    const id = "00000000-0000-4000-8000-000000000001";
+    const { client, fetchMock } = await loggedIn(
+      json([]),
+      json({}),
+      json({}, 201),
+      json({}),
+      new Response(null, { status: 204 }),
+      json({ ok: true, message: "reachable", hint: null }),
+      json({ ok: false, message: "timed out", hint: null }),
+    );
+    await client.instances();
+    await client.instance(id);
+    await client.createInstance({ type_id: "ping", name: "nas-1", config: { host: "10.0.0.5" } });
+    await client.updateInstance(id, { enabled: false });
+    await expect(client.deleteInstance(id)).resolves.toBeUndefined();
+    await expect(client.testInstance(id)).resolves.toMatchObject({ ok: true });
+    await client.testUnsavedInstance({ type_id: "ping", config: { host: "10.0.0.5" } });
+    const calls = fetchMock.mock.calls.slice(1).map(([url, init]) => `${init?.method} ${url}`);
+    expect(calls).toEqual([
+      `GET ${API_BASE}/instances`,
+      `GET ${API_BASE}/instances/${id}`,
+      `POST ${API_BASE}/instances`,
+      `PATCH ${API_BASE}/instances/${id}`,
+      `DELETE ${API_BASE}/instances/${id}`,
+      `POST ${API_BASE}/instances/${id}/test`,
+      `POST ${API_BASE}/instances/test`,
+    ]);
+    expect(JSON.parse(String(call(fetchMock, 4).init.body))).toEqual({ enabled: false });
+  });
+
+  it("escapes instance ids in paths", async () => {
+    const { client, fetchMock } = setup(json({}));
+    await client.instance("../audit");
+    expect(call(fetchMock).url).toBe(`${API_BASE}/instances/..%2Faudit`);
+  });
+
   it("creates the first admin through setup", async () => {
     const { client, fetchMock } = setup(json(ME, 201));
     await expect(

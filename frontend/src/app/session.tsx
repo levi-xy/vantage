@@ -28,8 +28,12 @@ export type SessionState =
   | { status: "unreachable"; message: string }
   /** No admin exists yet: the first-run wizard. */
   | { status: "setup" }
-  /** Logged out. `notice` explains why, when it wasn't the user's choice. */
-  | { status: "anonymous"; notice?: string }
+  /**
+   * Logged out. `notice` explains why, when it wasn't the user's choice. `loggedOut` is
+   * set after an explicit logout: the page the user was on isn't kept as the place to
+   * return to, so whoever logs in next on this browser starts at the dashboard.
+   */
+  | { status: "anonymous"; notice?: string; loggedOut?: boolean }
   | { status: "authenticated"; user: SessionUser };
 
 export interface SessionContextValue {
@@ -38,7 +42,10 @@ export interface SessionContextValue {
   login: (credentials: Credentials) => Promise<void>;
   /** Create the first admin; the backend logs them in. Throws on failure. */
   setup: (credentials: Credentials) => Promise<void>;
-  /** Throws if the backend couldn't end the session; the user then stays logged in. */
+  /**
+   * Throws if the backend couldn't end the session; the user then stays logged in. If it
+   * then can't even be asked for the session again, the state becomes "unreachable".
+   */
   logout: () => Promise<void>;
   /** Ask the backend again (after "unreachable"). */
   reload: () => void;
@@ -151,13 +158,24 @@ export function SessionProvider({ client, children }: { client: ApiClient; child
       if (!(error instanceof ApiError && error.status === 401)) {
         // The cookie may still be valid. The client dropped the CSRF token anyway, so get
         // it back, or the user couldn't save anything (a 401 here logs them out instead).
-        await client.me().catch(() => undefined);
+        try {
+          await client.me();
+        } catch (meError) {
+          if (!(meError instanceof ApiError && meError.status === 401)) {
+            // No token and no way to get one: every write would fail with 403. Show the
+            // "can't reach the backend" screen; its retry asks GET /me again.
+            generation.current++;
+            queryClient.clear();
+            setState(unreachable(meError));
+            return;
+          }
+        }
         throw error;
       }
     }
     generation.current++;
     queryClient.clear();
-    setState({ status: "anonymous" });
+    setState({ status: "anonymous", loggedOut: true });
   }, [client, queryClient]);
 
   const reload = useCallback(() => {

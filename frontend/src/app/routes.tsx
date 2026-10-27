@@ -2,6 +2,7 @@ import type { RouteObject } from "react-router";
 import { AuditPage } from "../pages/AuditPage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { DevicesPage } from "../pages/DevicesPage";
+import { AddDevicePage, EditDevicePage } from "../pages/devices/DeviceFormPages";
 import { LoginPage } from "../pages/LoginPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
 import { SetupPage } from "../pages/SetupPage";
@@ -35,6 +36,22 @@ export const routes: RouteObject[] = [
     children: [
       { index: true, element: <DashboardPage /> },
       { path: "devices", element: <DevicesPage /> },
+      {
+        path: "devices/new",
+        element: (
+          <RequireRole role="admin">
+            <AddDevicePage />
+          </RequireRole>
+        ),
+      },
+      {
+        path: "devices/:id",
+        element: (
+          <RequireRole role="admin">
+            <EditDevicePage />
+          </RequireRole>
+        ),
+      },
       {
         path: "audit",
         element: (
