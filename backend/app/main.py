@@ -11,6 +11,9 @@ from app import __version__
 from app.api import api_router
 from app.api.auth import LOGIN_LIMITS
 from app.api.deps import SAFE_METHODS
+from app.collectors.endpoint import router as metrics_router
+from app.collectors.scheduler import PollScheduler
+from app.collectors.store import MetricsStore, make_registry
 from app.core.auth import LoginRateLimiter, Passwords
 from app.core.config import Settings, get_settings
 from app.core.crypto import SecretBox, load_master_key
@@ -42,9 +45,14 @@ def create_app(
     engine = make_engine(settings.database_url)
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        yield
-        engine.dispose()
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        poller: PollScheduler = app.state.poller
+        poller.start()
+        try:
+            yield
+        finally:
+            await poller.stop()
+            engine.dispose()
 
     # Interactive API docs are off unless VANTAGE_API_DOCS is set (development only).
     docs = settings.api_docs
@@ -67,9 +75,20 @@ def create_app(
     # Tests inject a guard with a fake resolver; production uses the default policy.
     app.state.net_guard_factory = net_guard_factory or default_net_guard_factory
     app.state.prometheus_token = prometheus_token
+    # Poll collector (M2.4): results kept in memory, served on /metrics.
+    app.state.metrics_store = MetricsStore()
+    app.state.metrics_registry = make_registry(app.state.metrics_store)
+    app.state.poller = PollScheduler(
+        session_factory=app.state.session_factory,
+        registry=app.state.registry,
+        secret_box=secret_box,
+        net_guard_factory=app.state.net_guard_factory,
+        store=app.state.metrics_store,
+    )
 
     app.include_router(api_router)
     app.include_router(sd_router)
+    app.include_router(metrics_router)
     app.add_exception_handler(RequestValidationError, _validation_error)
     app.middleware("http")(_api_guard)
 

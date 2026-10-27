@@ -17,6 +17,8 @@ dependencies = [
     "httpx>=0.28,<1",
     # Guarded, read-only SNMP for integrations (M1.5). The maintained LeXtudio line.
     "pysnmp>=7.1,<8",
+    # Prometheus exposition format for GET /metrics (M2.4, collectors/).
+    "prometheus-client>=0.21,<1",
 ]
 
 [project.optional-dependencies]

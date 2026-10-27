@@ -87,8 +87,8 @@ class InstanceContext:
     # The instance's config, validated against the integration's ``config_schema``,
     # with secrets decrypted into ``SecretStr`` fields. Kept out of repr regardless.
     config: BaseModel = field(repr=False)
-    # TODO(maintainer): which labels belong here (the four standard vantage_* labels,
-    # the instance's tags, or both) is set when M2.2/M2.4 build contexts.
+    # The four standard vantage_* labels, filled by the poll collector (M2.4). Empty in
+    # contexts built for connection tests, which don't produce metrics.
     labels: Mapping[str, str] = field(default_factory=dict)
     # Carries the SSRF policy (settings' extra CIDRs, own addresses) and the
     # integration's cloud_hosts. Built by whoever builds the context (M2.2/M2.4).
