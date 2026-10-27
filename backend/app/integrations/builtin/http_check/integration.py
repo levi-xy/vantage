@@ -18,8 +18,7 @@ Only ``GET`` is ever sent, and redirects are not followed: the response to the
 configured URL is the result. That also means the bearer token is only ever sent to the
 configured URL, never to a host a redirect points at.
 
-ICMP ping is deliberately not offered: it needs raw sockets (extra privileges in the
-container) and the SSRF guard has no ICMP path.
+This check is HTTP only; ICMP ping is the separate ``ping_check`` integration.
 """
 
 import asyncio
