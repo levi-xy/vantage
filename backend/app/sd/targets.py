@@ -71,8 +71,7 @@ def standard_labels(row: Instance) -> dict[str, str]:
         "vantage_instance_id": str(row.id),
         "vantage_instance": row.name,
         "vantage_integration": row.type_id,
-        # TODO(maintainer): an instance without a site gets "", which Prometheus treats
-        # as the label being absent. Should it be a fixed value (e.g. "default") instead?
+        # No site: "" (Prometheus treats it as absent), never a placeholder (Contract 1).
         "vantage_site": row.site or "",
     }
 

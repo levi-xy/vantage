@@ -192,7 +192,6 @@ def build_context(
     config: BaseModel,
     net_guard: NetGuard,
 ) -> InstanceContext:
-    # TODO(maintainer): InstanceContext.labels is left empty here; which labels belong in
-    # it (the four standard vantage_* labels, the instance's tags, or both) is still open
-    # and not needed by test_connection. M2.4 builds contexts for polling.
+    # Used for connection tests, which produce no metrics, so labels stay empty. The poll
+    # collector (collectors/scheduler.py) builds its own contexts with the standard labels.
     return InstanceContext(instance_id=instance_id, name=name, config=config, net_guard=net_guard)

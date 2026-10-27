@@ -146,7 +146,12 @@ class PollScheduler:
         for instance_id in list(self._jobs):
             spec = wanted.get(instance_id)
             job = self._jobs[instance_id]
-            if spec is None or spec.fingerprint != job.spec.fingerprint:
+            if job.task.done():
+                # Shouldn't happen (the loop catches everything), but a dead task must not
+                # leave its instance unpolled for good: drop it so it is started again below.
+                log.warning("poll task of instance %s had stopped; restarting", instance_id)
+                del self._jobs[instance_id]
+            elif spec is None or spec.fingerprint != job.spec.fingerprint:
                 job.task.cancel()
                 del self._jobs[instance_id]
         for instance_id in self._store.tracked() - wanted.keys():
@@ -200,7 +205,10 @@ class PollScheduler:
         loop = asyncio.get_running_loop()
         while True:
             started = loop.time()
-            await self.poll_once(spec, integration, interval=interval)
+            try:
+                await self.poll_once(spec, integration, interval=interval)
+            except Exception as exc:  # poll_once doesn't raise; keep the loop alive anyway
+                log.error("poll task of instance %s: %s", spec.instance_id, type(exc).__name__)
             await asyncio.sleep(max(0.0, interval - (loop.time() - started)))
 
     async def poll_once(
@@ -222,14 +230,18 @@ class PollScheduler:
             return
         duration = time.monotonic() - started
         was = self._store.status(spec.instance_id)
-        dropped = self._store.record_success(
-            spec.instance_id,
-            spec.type_id,
-            samples,
-            at=utcnow(),
-            duration_seconds=duration,
-            forbidden=secrets.values(),
-        )
+        try:
+            dropped = self._store.record_success(
+                spec.instance_id,
+                spec.type_id,
+                samples,
+                at=utcnow(),
+                duration_seconds=duration,
+                forbidden=secrets.values(),
+            )
+        except Exception as exc:  # e.g. a sample the checks didn't anticipate
+            self._failed(spec, f"storing poll results failed ({type(exc).__name__})", duration)
+            return
         if dropped:
             log.warning(
                 "poll of instance %s (%s) returned %d invalid samples; dropped",

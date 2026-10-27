@@ -407,3 +407,57 @@ async def test_secret_in_label_value_is_dropped(
     assert TOKEN not in text
     assert "vantage_leaky_x{" not in text
     assert "vantage_leaky_y{" in text
+
+
+async def test_failure_to_store_results_marks_down_and_keeps_polling(
+    scheduler: PollScheduler,
+    factory: sessionmaker[Session],
+    box: SecretBox,
+    store: MetricsStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance_id = add(factory, box, "poller", "nas-1")
+    real = store.record_success
+    calls = 0
+
+    def flaky(*args: Any, **kwargs: Any) -> int:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ValueError(f"bad sample with {TOKEN}")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(store, "record_success", flaky)
+    try:
+        await scheduler.sync()
+        await wait_for(lambda: calls >= 1)
+        status = store.status(instance_id)
+        assert status is not None
+        assert status.state == "down"
+        assert status.error == "storing poll results failed (ValueError)"
+        task = scheduler._jobs[instance_id].task
+        await wait_for(lambda: getattr(store.status(instance_id), "state", "") == "up")
+        assert scheduler._jobs[instance_id].task is task  # same task, still running
+        assert not task.done()
+    finally:
+        await scheduler.stop()
+
+
+async def test_sync_restarts_a_task_that_stopped(
+    scheduler: PollScheduler, factory: sessionmaker[Session], box: SecretBox, store: MetricsStore
+) -> None:
+    instance_id = add(factory, box, "poller", "nas-1")
+    try:
+        await scheduler.sync()
+        dead = scheduler._jobs[instance_id].task
+        dead.cancel()  # stands in for a task that died for any reason
+        await asyncio.gather(dead, return_exceptions=True)
+        assert dead.done()
+        await scheduler.sync()  # same fingerprint, but the task is done: restarted
+        task = scheduler._jobs[instance_id].task
+        assert task is not dead
+        assert not task.done()
+        before = len(Poller.seen)
+        await wait_for(lambda: len(Poller.seen) > before)
+    finally:
+        await scheduler.stop()
