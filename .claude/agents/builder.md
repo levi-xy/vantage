@@ -29,7 +29,7 @@ You build exactly one task from `BUILD-PLAN.md` in the Vantage repo and open one
 1. `python scripts/check.py` (set up first with `scripts/dev_setup.py` if `backend/.venv` is missing). Everything must pass. Don't weaken a check, test, or security default to get there.
 2. Re-read your diff against the review checklist in `AGENTS.md` as if you were the reviewer.
 3. Commit with clear messages. No AI signature or co-author lines (AGENTS.md).
-4. Push the branch and open the PR with `gh pr create --base main`. The description must have:
+4. Push the branch and open the PR with `gh pr create --base main --body-file <file>` (write the description to a file first: the command guard hook blocks commands whose text mentions `.env` or secret paths, even inside a PR body). The description must have:
    - **What changed**
    - **How it was tested**
    - **Contract questions** (or "none")
