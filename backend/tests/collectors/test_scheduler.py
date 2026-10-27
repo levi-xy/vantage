@@ -94,6 +94,19 @@ class Garbage(FakeIntegration):
         return "not a list"  # type: ignore[return-value]
 
 
+class Leaky(FakeIntegration):
+    """Buggy: puts its secret in a label value."""
+
+    type_id = "leaky"
+
+    async def poll(self, ctx: InstanceContext) -> list[Sample]:
+        token = ctx.config_as(FakeConfig).api_token.get_secret_value()
+        return [
+            Sample(name="vantage_leaky_x", value=1, type="gauge", labels={"t": f"tok={token}"}),
+            Sample(name="vantage_leaky_y", value=2, type="gauge"),
+        ]
+
+
 class BadInterval(Poller):
     type_id = "bad_interval"
 
@@ -114,7 +127,7 @@ class OtherConfig(BaseModel):
 
 
 REGISTRY = Registry(
-    [Poller, Raiser, Hanger, HttpTimeout, Guarded, Garbage, BadInterval, ScrapeOnly]
+    [Poller, Raiser, Hanger, HttpTimeout, Guarded, Garbage, Leaky, BadInterval, ScrapeOnly]
 )
 
 
@@ -379,3 +392,18 @@ def test_interval_clamping(scheduler: PollScheduler) -> None:
             return 10**9
 
     assert scheduler.interval_for(Slow()) == MAX_POLL_INTERVAL_SECONDS
+
+
+async def test_secret_in_label_value_is_dropped(
+    scheduler: PollScheduler, factory: sessionmaker[Session], box: SecretBox, store: MetricsStore
+) -> None:
+    instance_id = add(factory, box, "leaky", "leaky")
+    try:
+        await scheduler.sync()
+        await wait_for(lambda: getattr(store.status(instance_id), "state", "") == "up")
+    finally:
+        await scheduler.stop()
+    text = exposition(store)
+    assert TOKEN not in text
+    assert "vantage_leaky_x{" not in text
+    assert "vantage_leaky_y{" in text

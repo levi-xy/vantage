@@ -223,7 +223,12 @@ class PollScheduler:
         duration = time.monotonic() - started
         was = self._store.status(spec.instance_id)
         dropped = self._store.record_success(
-            spec.instance_id, spec.type_id, samples, at=utcnow(), duration_seconds=duration
+            spec.instance_id,
+            spec.type_id,
+            samples,
+            at=utcnow(),
+            duration_seconds=duration,
+            forbidden=secrets.values(),
         )
         if dropped:
             log.warning(

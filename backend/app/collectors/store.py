@@ -132,8 +132,15 @@ class MetricsStore:
         *,
         at: datetime,
         duration_seconds: float,
+        forbidden: Iterable[str] = (),
     ) -> int:
-        """Store a poll's samples, replacing the previous ones. Returns how many were dropped."""
+        """Store a poll's samples, replacing the previous ones. Returns how many were dropped.
+
+        A sample with any ``forbidden`` value (the instance's decrypted secrets) inside a
+        label value is dropped too: integrations must not do that, but if one does, the
+        secret never reaches /metrics.
+        """
+        secrets = [value for value in forbidden if value]
         entry = self._entries.get(instance_id)
         if entry is None:
             return 0
@@ -146,6 +153,7 @@ class MetricsStore:
                 len(kept) >= MAX_SAMPLES_PER_INSTANCE
                 or key in seen
                 or not check_sample(sample, type_id)
+                or any(secret in value for secret in secrets for value in sample.labels.values())
             ):
                 dropped += 1
                 continue
