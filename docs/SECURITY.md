@@ -70,7 +70,7 @@ simulation this takes **about 38,000 attempts from at least about 760 addresses 
 IPv6 /64s)** within 15 minutes; with a handful of addresses it never succeeds. Over
 IPv6, one /48 contains 65,536 separate /64s, so that address floor is easy to meet
 there. Lockouts themselves are never lost. The complete fix is per-user counters in
-the database, a data-model change planned as a follow-up task.
+the database, a data-model change planned as task M1.8 in `BUILD-PLAN.md`.
 
 The limiter lives in the backend process's memory. **Restarting the backend clears
 it**, including every lockout. That is also how an admin who is locked out

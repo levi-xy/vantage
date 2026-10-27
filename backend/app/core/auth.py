@@ -109,7 +109,7 @@ class LoginRateLimiter:
     a handful of addresses it never succeeds. Over IPv6 one /48 holds 65,536 separate
     /64s, so the address floor is easy to meet there. Lockouts themselves are never
     lost. The complete fix is counters that aren't capped in memory (per user, in the
-    database), which is a data-model change for a follow-up task.
+    database), a data-model change planned as task M1.8 in BUILD-PLAN.md.
     """
 
     def __init__(
