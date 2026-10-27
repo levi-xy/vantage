@@ -47,6 +47,93 @@ Further rules:
   audited flow. It then scans the raw `audit_log` rows and the `GET /api/v1/audit`
   response to prove none of the values appear.
 
+## Client address and trusted proxies
+
+The login rate limit counts failures per username (5 per 15 minutes) and per client
+address (50 per 15 minutes). An IPv6 client counts as its whole /64, since one host
+usually controls a /64 and could otherwise rotate addresses for fresh budgets.
+
+The limiter tracks at most 10,000 keys in memory. When it is full it drops expired keys,
+then keys still under their limit with the most attempts left (limit minus recent
+failures; least recently used first among equals), 5% of the table per scan. It never
+drops a key that is locked out, so spraying junk usernames from many addresses can't
+unlock an account, and a key close to its limit (a username at 4 of 5) goes last. If
+too few keys can be dropped, new login attempts are refused with 429 (fail closed) until
+the first lockout ends, at most 15 minutes. That result is cached, so refused attempts
+don't rescan the table. Already logged-in sessions are not affected.
+
+What it still doesn't prevent: an attacker can push a near-limit key out (a username at
+4 of 5), resetting its count, by filling the table with username keys that have as few
+attempts left. Unlocked client keys don't help: a client key has more attempts left
+than such a username, so it is dropped first and even shields the target. In
+simulation this takes **about 38,000 attempts from at least about 760 addresses (or
+IPv6 /64s)** within 15 minutes; with a handful of addresses it never succeeds. Over
+IPv6, one /48 contains 65,536 separate /64s, so that address floor is easy to meet
+there. Lockouts themselves are never lost. The complete fix is per-user counters in
+the database, a data-model change planned as task M1.8 in `BUILD-PLAN.md`.
+
+The limiter lives in the backend process's memory. **Restarting the backend clears
+it**, including every lockout. That is also how an admin who is locked out
+legitimately (or caught by the fail-closed state above) gets back in right away:
+`docker compose restart backend`. Anyone who can restart the backend already has shell
+access to the host, so this gives nothing to a network attacker.
+
+On a LAN reached over IPv6, every host in one /64 shares one per-client budget, the
+same way hosts behind one NAT address share one on IPv4.
+
+The client address comes from one helper,
+`backend/app/core/client_address.py` (used through `get_client_address` in
+`backend/app/api/deps.py`), so everything that needs it agrees:
+
+- **Trust is decided by the TCP peer only.** If the direct peer's address is in
+  `VANTAGE_TRUSTED_PROXIES`, the client address is read from the `X-Real-IP` header.
+  Otherwise the peer address is used and every forwarding header is ignored. Nothing a
+  client puts in a header can make the backend trust it.
+- **One header, overwritten by the proxy.** Only `X-Real-IP` is read. The bundled nginx
+  sets it with `proxy_set_header X-Real-IP $remote_addr;`, which replaces any value the
+  client sent. `X-Forwarded-For` is never used: nginx appends to it, so its first
+  entries are whatever the client wrote.
+- **Bad values fall back.** A missing header, a header sent more than once, or a value
+  that is not an IP address means the peer address is used.
+- **One spelling per client.** IPv4-mapped IPv6 (`::ffff:192.0.2.1`) is treated as
+  IPv4 and IPv6 zone suffixes are dropped, both for the trust check and the limiter key.
+- **Default: trust nobody.** Unset or empty, the client address is always the peer.
+  Invalid entries (not a CIDR, host bits set) stop the backend at startup.
+- **uvicorn's own proxy handling is off** (`--no-proxy-headers` in the backend image),
+  so the peer address the app sees is the real TCP peer.
+
+`deploy/docker-compose.yml` pins the compose network to `192.168.255.240/28`, gives the
+frontend (nginx) the fixed address `192.168.255.242`, hands out every other container's
+address from `192.168.255.248/29`, and sets `VANTAGE_TRUSTED_PROXIES=192.168.255.242/32`.
+Only nginx can therefore name the client.
+
+Why this range: a fixed subnet can clash with a network the host already uses. Docker's
+own compose examples use `172.16.238.0/24`, and the low `172.16.0.0/12` and `10.0.0.0/8`
+ranges are common on corporate LANs and VPNs. `192.168.255.240/28` is a small block at
+the very top of `192.168.0.0/16`, where home routers rarely put their LANs, and Docker
+only reaches that part of its default pools after about 30 other networks. If it still
+clashes, `docker compose up` fails with "Pool overlaps with other one on this address
+space", or the backend can't reach devices in that range. To fix it, pick another
+unused /28 and change these together in `deploy/docker-compose.yml`: the network's
+`subnet` and `ip_range` (the upper half of the subnet), the frontend's `ipv4_address`
+(an address in the lower half, not the first one, which Docker uses as the gateway),
+and the `VANTAGE_TRUSTED_PROXIES` default (that address as a /32).
+
+Limits:
+
+- If you put another reverse proxy in front of the bundled nginx, nginx's
+  `$remote_addr` is that proxy, so all clients share one per-client budget again (the
+  per-username limit still applies). Vantage does not read a client address through a
+  chain of proxies.
+- With the default `VANTAGE_BIND_ADDRESS=127.0.0.1`, everything reaching the dashboard
+  through the host's loopback (a browser on the host, an SSH tunnel, or an HTTPS reverse
+  proxy running on the host) arrives through Docker's userland proxy and appears to
+  come from the network gateway (`192.168.255.241`). All of those clients share one
+  per-client budget. The same can happen for connections over IPv6. The per-username
+  limit still applies to each account.
+- Never list a range that ordinary clients can reach the backend from: a trusted peer
+  can claim any client address.
+
 ## Network guard
 
 Every outbound connection to a device or cloud API goes through the SSRF guard in

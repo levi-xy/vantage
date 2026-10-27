@@ -9,6 +9,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 
+from app.core.client_address import IPNetwork, TrustedProxiesError, parse_trusted_proxies
+
 DEFAULT_DATABASE_URL = "sqlite:///./vantage.db"
 
 _TRUE = {"1", "true", "yes", "on"}
@@ -30,6 +32,9 @@ class Settings:
     # A session ends this long after login, or after this long without any request.
     session_max_hours: int = 12
     session_idle_minutes: int = 120
+    # Reverse proxies whose X-Real-IP header names the real client (VANTAGE_TRUSTED_PROXIES).
+    # Empty = trust nobody: the client address is always the TCP peer.
+    trusted_proxies: tuple[IPNetwork, ...] = ()
 
 
 def _parse_bool(name: str, raw: str) -> bool:
@@ -88,12 +93,17 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     session_idle_minutes = _parse_int(
         "VANTAGE_SESSION_IDLE_MINUTES", env.get("VANTAGE_SESSION_IDLE_MINUTES", ""), 120, 5, 43200
     )
+    try:
+        trusted_proxies = parse_trusted_proxies(env.get("VANTAGE_TRUSTED_PROXIES", ""))
+    except TrustedProxiesError as exc:
+        raise ConfigError(str(exc)) from None
     return Settings(
         database_url=database_url,
         api_docs=api_docs,
         cookie_secure=cookie_secure,
         session_max_hours=session_max_hours,
         session_idle_minutes=session_idle_minutes,
+        trusted_proxies=trusted_proxies,
     )
 
 

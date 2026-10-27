@@ -9,6 +9,7 @@ from fastapi import Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.auth import LoginRateLimiter, Passwords, csrf_matches, session_id
+from app.core.client_address import CLIENT_ADDRESS_HEADER, resolve_client_address
 from app.core.config import Settings
 from app.core.db import session_scope, utcnow
 from app.models import Role, User, UserSession
@@ -41,6 +42,24 @@ def get_login_limiter(request: Request) -> LoginRateLimiter:
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 DbDep = Annotated[Session, Depends(get_db)]
+
+
+def get_client_address(request: Request, settings: SettingsDep) -> str:
+    """The real client's address: the TCP peer, or X-Real-IP when the peer is a trusted proxy.
+
+    IPv6 clients come back as their /64 network (see app.core.client_address).
+
+    The one place the app derives a client address; use this (via ClientAddressDep)
+    wherever an address is needed so every consumer agrees.
+    """
+    return resolve_client_address(
+        request.client.host if request.client else None,
+        request.headers.getlist(CLIENT_ADDRESS_HEADER),
+        settings.trusted_proxies,
+    )
+
+
+ClientAddressDep = Annotated[str, Depends(get_client_address)]
 
 
 # --- session cookie ----------------------------------------------------------------
