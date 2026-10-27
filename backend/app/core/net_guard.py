@@ -799,15 +799,21 @@ def _raise_for_errors(error_indication: Any, error_status: Any) -> None:
 # (``SOCK_DGRAM`` + ``IPPROTO_ICMP``/``IPPROTO_ICMPV6``): on Linux the kernel allows
 # them for groups listed in the ``net.ipv4.ping_group_range`` sysctl, with no raw-socket
 # capability. The socket is connected to the checked address, so packets go only there.
-# A reply counts only if it echoes this run's random payload nonce and the expected
-# sequence number, whatever else the kernel delivers. ``SO_BROADCAST`` is never set, so
-# the kernel refuses to send to a (subnet) broadcast address.
+# A reply counts only if it comes from the checked address and echoes this run's random
+# payload nonce and the expected sequence number, whatever else the kernel delivers.
+# ``SO_BROADCAST`` is never set, so the kernel refuses to connect to a (subnet) broadcast
+# address it knows about (EACCES).
 
 MAX_PING_COUNT = 10
-MIN_PING_INTERVAL = 0.2  # seconds between echo requests; Linux's own floor for non-root
+PING_INTERVAL = 1.0  # default seconds between echo requests (what ctx.ping_client() uses)
+MIN_PING_INTERVAL = 0.2  # Linux's own floor for non-root
 MAX_PING_INTERVAL = 5.0
 MAX_PING_REPLY_TIMEOUT = 5.0
 MAX_PING_TOTAL_TIMEOUT = DEFAULT_TOTAL_TIMEOUT
+# DNS gets at most this much of the total, so the rest is left for the packets: a caller
+# whose packets fit in MAX_PING_TOTAL_TIMEOUT - PING_RESOLVE_TIMEOUT is not cut short
+# beyond scheduling overhead (the event loop's own delays are not budgeted).
+PING_RESOLVE_TIMEOUT = DEFAULT_CONNECT_TIMEOUT
 
 _ICMP_ECHO_REQUEST = 8
 _ICMP_ECHO_REPLY = 0
@@ -826,12 +832,18 @@ class PingError(Exception):
 
 
 class IcmpSocket(Protocol):
-    """An ICMP datagram socket connected to one checked address."""
+    """An ICMP datagram socket for one checked address."""
+
+    def connect(self) -> None:
+        """Connect to the checked address (raises ``PermissionError`` for a broadcast
+        address, since ``SO_BROADCAST`` is never set)."""
+        ...
 
     async def send(self, packet: bytes) -> None: ...
 
-    async def recv(self) -> bytes:
-        """One ICMP message, starting at the ICMP header (no IP header)."""
+    async def recv(self) -> tuple[bytes, str]:
+        """One ICMP message, starting at the ICMP header (no IP header), and the
+        address it came from."""
         ...
 
     def close(self) -> None: ...
@@ -847,41 +859,53 @@ class _DatagramIcmpSocket:
         self._v4 = isinstance(address, IPv4Address)
         if self._v4:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_ICMP)
-            sockaddr: tuple[Any, ...] = (str(address), 0)
+            self._sockaddr: tuple[Any, ...] = (str(address), 0)
         else:
             sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM, socket.IPPROTO_ICMPV6)
-            sockaddr = (str(address), 0, 0, 0)
+            self._sockaddr = (str(address), 0, 0, 0)
         try:
             sock.setblocking(False)
-            # Connected: every send goes to this checked address and nowhere else.
-            sock.connect(sockaddr)
         except BaseException:
             sock.close()
             raise
         self._sock = sock
 
+    def connect(self) -> None:
+        # Connected: every send goes to this checked address and nowhere else.
+        self._sock.connect(self._sockaddr)
+
     async def send(self, packet: bytes) -> None:
         await asyncio.get_running_loop().sock_sendall(self._sock, packet)
 
-    async def recv(self) -> bytes:
-        data = await asyncio.get_running_loop().sock_recv(self._sock, _MAX_ICMP_DATAGRAM)
+    async def recv(self) -> tuple[bytes, str]:
+        data, source = await asyncio.get_running_loop().sock_recvfrom(
+            self._sock, _MAX_ICMP_DATAGRAM
+        )
         # Linux hands a ping socket the ICMP message alone; macOS includes the IPv4
         # header. An ICMP message never starts with 0x4_, an IPv4 header always does.
         if self._v4 and len(data) >= 20 and data[0] >> 4 == 4:
             data = data[(data[0] & 0x0F) * 4 :]
-        return data
+        return data, str(source[0]) if isinstance(source, tuple) and source else ""
 
     def close(self) -> None:
         self._sock.close()
 
 
 def open_icmp_socket(address: IPAddress) -> IcmpSocket:
-    """Open the real ICMP datagram socket to an address the guard has checked.
+    """Create (not yet connect) the real ICMP datagram socket for an address the guard
+    has checked.
 
     Only :class:`GuardedPingClient` calls this, after the guard's check. Tests replace
     it to fake the socket layer, keeping the guard in the loop.
     """
     return _DatagramIcmpSocket(address)
+
+
+def _same_address(source: str, address: IPAddress) -> bool:
+    try:
+        return _unwrap(_parse_ip(source)) == address
+    except ValueError:
+        return False
 
 
 def _icmp_checksum(data: bytes) -> int:
@@ -954,7 +978,7 @@ class GuardedPingClient:
         host: str,
         *,
         count: int = 3,
-        interval: float = 1.0,
+        interval: float = PING_INTERVAL,
         reply_timeout: float = 1.0,
         total_timeout: float = MAX_PING_TOTAL_TIMEOUT,
         socket_factory: IcmpSocketFactory | None = None,
@@ -986,9 +1010,13 @@ class GuardedPingClient:
         are not sent and not counted.
         """
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + self._total_timeout
+        started = loop.time()
+        deadline = started + self._total_timeout
+        # DNS gets at most PING_RESOLVE_TIMEOUT (read at call time), so a slow lookup
+        # can't eat into the time the packets were promised.
+        resolve_by = min(deadline, started + PING_RESOLVE_TIMEOUT)
         try:
-            async with asyncio.timeout_at(deadline):
+            async with asyncio.timeout_at(resolve_by):
                 address = await self._guard.resolve_for_ping(self._host)
         except TimeoutError:
             raise PingError("timed out resolving the host") from None
@@ -1002,8 +1030,17 @@ class GuardedPingClient:
                 "sysctl)"
             ) from None
         except OSError:
-            raise PingError(f"could not open an ICMP socket to {address}") from None
+            raise PingError(f"could not open an ICMP socket for {address}") from None
         try:
+            try:
+                sock.connect()
+            except PermissionError:
+                # SO_BROADCAST is never set, so the kernel refuses a broadcast address.
+                raise PingError(
+                    f"the system refused to ping {address} (is it a broadcast address?)"
+                ) from None
+            except OSError:
+                raise PingError(f"could not reach {address} (no route?)") from None
             return await self._run(sock, address, deadline)
         finally:
             sock.close()
@@ -1029,7 +1066,7 @@ class GuardedPingClient:
                 pass
             else:
                 until = min(started + self._reply_timeout, deadline)
-                rtt = await self._reply(sock, v6, sequence, nonce, started, until)
+                rtt = await self._reply(sock, address, sequence, nonce, started, until)
                 if rtt is not None:
                     rtts.append(rtt)
             if sequence + 1 < self._count:
@@ -1040,15 +1077,23 @@ class GuardedPingClient:
 
     @staticmethod
     async def _reply(
-        sock: IcmpSocket, v6: bool, sequence: int, nonce: bytes, started: float, until: float
+        sock: IcmpSocket,
+        address: IPAddress,
+        sequence: int,
+        nonce: bytes,
+        started: float,
+        until: float,
     ) -> float | None:
         """Wait until ``until`` for this packet's reply; its round-trip time or ``None``."""
         loop = asyncio.get_running_loop()
+        v6 = isinstance(address, IPv6Address)
         try:
             async with asyncio.timeout_at(until):
                 while True:
-                    reply = _echo_reply(await sock.recv(), v6=v6)
-                    if reply == (sequence, nonce):
+                    data, source = await sock.recv()
+                    if not _same_address(source, address):
+                        continue  # not from the checked address
+                    if _echo_reply(data, v6=v6) == (sequence, nonce):
                         return loop.time() - started
                     # Anything else (a late reply, an ICMP error, junk) is ignored.
         except (OSError, TimeoutError):

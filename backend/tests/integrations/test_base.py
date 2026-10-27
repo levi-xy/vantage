@@ -66,7 +66,32 @@ def test_models_and_defaults() -> None:
     with pytest.raises(ValidationError):
         Sample(name="vantage_fake_device_up", value=1, type="histogram")  # type: ignore[arg-type]
     with pytest.raises(ValidationError):
-        FirewallHint(protocol="icmp", port=0, destination="192.0.2.10", reason="x")  # type: ignore[arg-type]
+        FirewallHint(protocol="sctp", port=1, destination="192.0.2.10", reason="x")  # type: ignore[arg-type]
+
+
+def test_firewall_hint_protocols_match_contract() -> None:
+    assert set(get_args(FirewallHint.model_fields["protocol"].annotation)) == {
+        "tcp",
+        "udp",
+        "icmp",
+    }
+
+
+def test_icmp_hint_has_no_port() -> None:
+    hint = FirewallHint(protocol="icmp", port=None, destination="10.0.0.30", reason="ping")
+    assert hint.model_dump()["port"] is None
+    for port in (0, 7, 443):
+        with pytest.raises(ValidationError, match="icmp hint has no port"):
+            FirewallHint(protocol="icmp", port=port, destination="10.0.0.30", reason="x")
+
+
+@pytest.mark.parametrize("protocol", ["tcp", "udp"])
+def test_tcp_and_udp_hints_need_a_port(protocol: Any) -> None:
+    with pytest.raises(ValidationError, match="needs a port"):
+        FirewallHint(protocol=protocol, port=None, destination="10.0.0.30", reason="x")
+    with pytest.raises(ValidationError):  # port is required, not defaulted
+        FirewallHint(protocol=protocol, destination="10.0.0.30", reason="x")  # type: ignore[call-arg]
+    assert FirewallHint(protocol=protocol, port=161, destination="10.0.0.30", reason="x").port
 
 
 async def test_integration_defaults() -> None:

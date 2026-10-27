@@ -70,10 +70,13 @@ Every outbound connection to a device or cloud API goes through the SSRF guard i
 - ICMP ping goes through the same guard (`GuardedPingClient`): the host is resolved
   once, every answer is checked, and only the checked address is pinged. A declared
   cloud host is never pinged, so ping reaches allowed private ranges only. At most 10
-  echo requests per run, at least 0.2 s apart, and every run (resolution included)
-  ends within 15 s. The client uses unprivileged ICMP datagram sockets, connected to
-  the checked address and without `SO_BROADCAST`; integration code never opens
-  sockets. The compose file sets the `net.ipv4.ping_group_range` sysctl on the backend
+  echo requests per run, at least 0.2 s apart, and every run ends within 15 s; DNS
+  gets at most 5 s of that. The client uses unprivileged ICMP datagram sockets,
+  connected to the checked address and without `SO_BROADCAST` (so the kernel refuses
+  a broadcast address it knows about). A reply counts only if it comes from the
+  checked address and echoes the run's random nonce and the expected sequence number.
+  Integration code never opens sockets. The compose file sets the
+  `net.ipv4.ping_group_range` sysctl on the backend
   container (its own network namespace only), so the backend keeps running as a
   non-root user with every capability dropped, `NET_RAW` included.
 
@@ -87,3 +90,9 @@ addresses from the container's point of view and are **not** denied automaticall
 An admin who adds a device pointing at the Docker host can therefore reach services
 listening on it. If that matters in your setup, bind host services to addresses the
 container can't reach, or firewall the Docker bridge.
+
+The same applies to ICMP ping: a ping check can target the Docker host's LAN address
+or the bridge gateway (an address in `172.16.0.0/12`, such as `172.17.0.1`). The harm
+is low, since an echo reply only shows that the address is up and how long the round
+trip took, and carries no data from the host, but it does let an admin confirm those
+addresses exist.

@@ -9,12 +9,13 @@ import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import ClassVar, Literal, TypeVar
+from typing import ClassVar, Literal, Self, TypeVar
 
 import httpx
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from app.core.net_guard import (
+    PING_INTERVAL,
     GuardedPingClient,
     GuardedSnmpClient,
     NetGuard,
@@ -37,10 +38,18 @@ class TestResult(BaseModel):
 
 
 class FirewallHint(BaseModel):
-    protocol: Literal["tcp", "udp"]
-    port: int
+    protocol: Literal["tcp", "udp", "icmp"]
+    port: int | None  # required for tcp/udp; None for icmp (ICMP echo has no port)
     destination: str  # the instance host, as configured
     reason: str
+
+    @model_validator(mode="after")
+    def _port_matches_protocol(self) -> Self:
+        if self.protocol == "icmp" and self.port is not None:
+            raise ValueError("an icmp hint has no port")
+        if self.protocol != "icmp" and self.port is None:
+            raise ValueError(f"a {self.protocol} hint needs a port")
+        return self
 
 
 TestResult.model_rebuild()
@@ -127,8 +136,11 @@ class InstanceContext:
         self, host: str, *, count: int = 3, reply_timeout: float = 1.0
     ) -> GuardedPingClient:
         """A guarded ICMP echo client: private ranges only, never a cloud host, at most
-        ``MAX_PING_COUNT`` packets, one per second, and done within 15 s."""
-        return GuardedPingClient(self.net_guard, host, count=count, reply_timeout=reply_timeout)
+        ``MAX_PING_COUNT`` packets, ``PING_INTERVAL`` seconds apart, and done within 15 s
+        (DNS included, capped at ``PING_RESOLVE_TIMEOUT``)."""
+        return GuardedPingClient(
+            self.net_guard, host, count=count, interval=PING_INTERVAL, reply_timeout=reply_timeout
+        )
 
 
 class Integration(ABC):

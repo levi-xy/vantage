@@ -154,6 +154,23 @@ describe("device list", () => {
     expect(alert).toHaveTextContent("API");
   });
 
+  it("shows an ICMP firewall hint, which has no port", async () => {
+    const failed: TestResult = {
+      ok: false,
+      message: "no reply from 10.0.0.30 (3 packets sent, ICMP may be blocked)",
+      hint: { protocol: "icmp", port: null, destination: "10.0.0.30", reason: "ping" },
+    };
+    renderApp(
+      "/devices",
+      backendWith([exampleInstance()], { [`POST ${ITEM}/test`]: () => json(failed) }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Test nas-1" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Allow ICMP echo (ping) from the Vantage server to 10.0.0.30.");
+    expect(alert).not.toHaveTextContent("port");
+    expect(alert).not.toHaveTextContent("null");
+  });
+
   it("reports a failed action", async () => {
     renderApp(
       "/devices",
