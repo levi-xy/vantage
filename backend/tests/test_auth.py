@@ -415,6 +415,23 @@ def test_rate_limiter_succeeded_clears_the_full_cache() -> None:
     assert limiter.acquire(["user:c"]) is None
 
 
+def test_rate_limiter_new_key_clears_the_full_cache() -> None:
+    """A key added below the cap is droppable, so a cached "no room" must not outlive it."""
+    now = [1000.0]
+    limiter = LoginRateLimiter(
+        {"user": 1, "client": 50}, window_seconds=60, max_keys=4, clock=lambda: now[0]
+    )
+    for i in range(3):
+        assert limiter.acquire([f"user:u{i}"]) is None  # three lockouts
+    # Needs two slots, one is free: refused, cached with nothing droppable.
+    assert limiter.acquire(["user:a", "client:198.51.100.1"]) is not None
+    # Fits in the free slot without a scan, and is itself droppable.
+    assert limiter.acquire(["client:198.51.100.2"]) is None
+    # Fits by dropping that key; the stale cache would have refused it.
+    assert limiter.acquire(["client:198.51.100.3"]) is None
+    assert len(limiter._keys) == 4
+
+
 def test_rate_limiter_evicts_most_attempts_left_first() -> None:
     """A user key at 4/5 outlives client keys with more failures but more room (10/50)."""
     limiter = LoginRateLimiter({"user": 5, "client": 50}, max_keys=3)

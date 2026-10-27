@@ -99,16 +99,17 @@ class LoginRateLimiter:
     clear the cache. That keeps a full table from turning every refused attempt into a
     scan under the lock.
 
-    What this still doesn't prevent: an attacker can fill the table with keys that have
-    at least as many failures as a near-limit key and so push that key out, resetting
-    its count. Every attempt adds a failure to one user key and one client key, so both
-    fill slots; and since one scan drops the 500 (5%) keys with the most attempts left,
-    the target only has to be among those, so ~9,500 such keys are enough. Roughly:
-    ~20,000 attempts in one window when the attacker has thousands of addresses, about
-    35,000 to 40,000 with ~800. Over IPv6 one /48 holds 65,536 separate /64 budgets, so
-    the number of addresses is no real limit there. Lockouts themselves are never lost.
-    A complete fix needs counters that aren't capped in memory (e.g. per user in the
-    database), which is a data-model change.
+    What this still doesn't prevent: an attacker can push a near-limit key out (e.g. a
+    username at 4 of 5), resetting its count, by filling the table with username keys
+    that have as few attempts left. Unlocked client keys don't help them: a client key
+    has more attempts left than such a username, so it is dropped first and even shields
+    the target by taking the batch ahead of it. In simulation that takes about
+    0.95 x max_keys x 4 attempts, about 38,000 at the default cap, spread over at least
+    about 760 addresses (or IPv6 /64s; 38,000 / 50 per client) within one window. With
+    a handful of addresses it never succeeds. Over IPv6 one /48 holds 65,536 separate
+    /64s, so the address floor is easy to meet there. Lockouts themselves are never
+    lost. The complete fix is counters that aren't capped in memory (per user, in the
+    database), which is a data-model change for a follow-up task.
     """
 
     def __init__(
@@ -128,10 +129,10 @@ class LoginRateLimiter:
             raise ValueError("max_keys must be at least 2 (one login uses two keys)")
         # Cache of the last refusing scan: until _full_until (clock value), at most
         # _spare keys can be dropped (fewer if one of them is the attempt's own key).
-        # Only a lockout ending (not before _full_until), succeeded() or reset() can
-        # raise that number. While the table is full a new key only gets in through a
-        # scan that drops keys, which clears the cache; more failures on tracked keys
-        # can only lower it. So the cache never refuses an attempt that would fit.
+        # Cleared whenever the number could have grown: a newly tracked key (it is
+        # droppable), succeeded() and reset(). Otherwise only a lockout ending can raise
+        # it, and none ends before _full_until; more failures on tracked keys only
+        # lower it. So the cache never refuses an attempt that would fit.
         self._full_until = 0.0
         self._spare = 0
 
@@ -216,7 +217,10 @@ class LoginRateLimiter:
         if wait > 0:
             return wait
         for key in keys:
-            window = self._keys.setdefault(key, _Window())
+            window = self._keys.get(key)
+            if window is None:
+                window = self._keys[key] = _Window()
+                self._full_until = 0.0  # one more droppable key: the cache may be stale
             window.failures.append(now)
             self._keys.move_to_end(key)
         return 0.0

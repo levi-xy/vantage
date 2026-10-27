@@ -62,16 +62,15 @@ too few keys can be dropped, new login attempts are refused with 429 (fail close
 the first lockout ends, at most 15 minutes. That result is cached, so refused attempts
 don't rescan the table. Already logged-in sessions are not affected.
 
-What it still doesn't prevent: an attacker can push a near-limit key out, resetting its
-count, by filling the table with keys that have at least as many failures. Each attempt
-adds a failure to one username key and one client key, so both kinds fill slots, and
-because a scan drops the 500 keys with the most attempts left at once, about 9,500 such
-keys are enough (the batch saves the attacker about 5%). That is roughly 20,000 attempts
-within 15 minutes when the attacker has thousands of addresses, and about 35,000 to
-40,000 with around 800. Over IPv6, one /48 contains 65,536 separate /64 budgets, so
-the address count is no real obstacle there. Lockouts themselves are never lost.
-Closing this fully needs per-user counters outside memory, which would be a data-model
-change.
+What it still doesn't prevent: an attacker can push a near-limit key out (a username at
+4 of 5), resetting its count, by filling the table with username keys that have as few
+attempts left. Unlocked client keys don't help: a client key has more attempts left
+than such a username, so it is dropped first and even shields the target. In
+simulation this takes **about 38,000 attempts from at least about 760 addresses (or
+IPv6 /64s)** within 15 minutes; with a handful of addresses it never succeeds. Over
+IPv6, one /48 contains 65,536 separate /64s, so that address floor is easy to meet
+there. Lockouts themselves are never lost. The complete fix is per-user counters in
+the database, a data-model change planned as a follow-up task.
 
 The limiter lives in the backend process's memory. **Restarting the backend clears
 it**, including every lockout. That is also how an admin who is locked out
