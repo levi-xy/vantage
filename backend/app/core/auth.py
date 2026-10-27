@@ -7,6 +7,7 @@ app can read it from ``/me``, but a cross-site page can't, because it can't read
 """
 
 import hashlib
+import heapq
 import hmac
 import secrets
 import threading
@@ -87,10 +88,19 @@ class LoginRateLimiter:
     can't use up memory.
 
     When the cap is reached, room is made by dropping keys whose failures have all
-    expired, then the least recently used keys that are still **under** their limit. A
-    key at its limit (a lockout) is never dropped, so flooding the limiter with junk
-    keys can't unlock it. If every tracked key is locked, there is no room and the
-    attempt is refused (fail closed) until enough lockouts expire.
+    expired, then keys still **under** their limit, fewest recent failures first (least
+    recently used first among equals). A key at its limit (a lockout) is never dropped,
+    so flooding the limiter with junk keys can't unlock it, and a key close to its limit
+    is dropped last. If every tracked key is locked, there is no room and the attempt is
+    refused (fail closed) until the first lockout can change; that answer is cached, so
+    refusing costs no table scan.
+
+    What this still doesn't prevent: an attacker who fills the whole table with keys
+    that each have at least as many failures as a near-limit key (e.g. 10,000 usernames
+    with 4 failures each, about 40,000 attempts from 800+ addresses per window) can
+    still push that key out and reset its count. Lockouts themselves are never lost. A
+    complete fix needs counters that aren't capped in memory (e.g. per user in the
+    database), which is a data-model change.
     """
 
     def __init__(
@@ -106,6 +116,9 @@ class LoginRateLimiter:
         self._clock = clock
         self._keys: OrderedDict[str, _Window] = OrderedDict()
         self._lock = threading.Lock()
+        # Set when the table was full of keys that can't be dropped: no new key fits
+        # before this time (clock value), unless succeeded() or reset() frees a slot.
+        self._full_until = 0.0
 
     def _limit(self, key: str) -> int:
         return self._limits[key.split(":", 1)[0]]
@@ -138,25 +151,40 @@ class LoginRateLimiter:
     def _make_room(self, keys: list[str], now: float) -> float:
         """Free space for ``keys``. Returns 0 if they fit, else seconds until one might.
 
-        Only expired keys and keys under their limit are dropped, oldest first.
+        Only expired keys and keys under their limit are dropped: expired first, then
+        fewest recent failures, then least recently used. One scan drops a batch (up to
+        5% of the table), so a spray of new keys doesn't rescan the table every time.
         """
         needed = len(self._keys) + sum(1 for k in set(keys) if k not in self._keys)
         needed -= self._max_keys
         if needed <= 0:
             return 0.0
-        victims: list[str] = []
-        earliest = self._window
-        for key, window in self._keys.items():
-            if len(victims) >= needed:
-                break
+        if now < self._full_until:
+            return self._full_until - now
+        candidates: list[tuple[int, int, str]] = []
+        # When the first tracked key could become droppable (its oldest counted failure
+        # leaves the window). Starts at a full window: nothing can stay locked longer.
+        next_change = now + self._window
+        protected_open = False
+        for order, (key, window) in enumerate(self._keys.items()):
             recent = [t for t in window.failures if now - t < self._window]
-            if key not in keys and len(recent) < self._limit(key):
-                victims.append(key)
-            elif recent:
-                earliest = min(earliest, recent[0] + self._window - now)
-        for key in victims:
+            limit = self._limit(key)
+            if len(recent) >= limit:
+                next_change = min(next_change, recent[-limit] + self._window)
+            elif key in keys:
+                protected_open = True  # in use by this attempt, but another may drop it
+            else:
+                candidates.append((len(recent), order, key))
+        if len(candidates) < needed:
+            if not candidates and not protected_open:
+                # Every tracked key is locked: nothing can change before next_change
+                # except succeeded()/reset(), which clear this.
+                self._full_until = next_change
+            return max(next_change - now, 1.0)
+        batch = max(needed, self._max_keys // 20)
+        for _, _, key in heapq.nsmallest(batch, candidates):
             del self._keys[key]
-        return 0.0 if len(victims) >= needed else max(earliest, 1.0)
+        return 0.0
 
     def _record(self, keys: list[str], now: float) -> float:
         """Count a failure on every key. Returns 0, or seconds to wait if there's no room."""
@@ -198,6 +226,7 @@ class LoginRateLimiter:
         """Undo ``acquire`` for a successful login: clear the user's failures, refund one
         attempt on the other keys."""
         with self._lock:
+            self._full_until = 0.0  # may have freed a slot
             self._keys.pop(user_key, None)
             for key in other_keys:
                 window = self._keys.get(key)
@@ -206,4 +235,5 @@ class LoginRateLimiter:
 
     def reset(self, key: str) -> None:
         with self._lock:
+            self._full_until = 0.0
             self._keys.pop(key, None)

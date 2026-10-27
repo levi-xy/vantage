@@ -53,12 +53,25 @@ The login rate limit counts failures per username (5 per 15 minutes) and per cli
 address (50 per 15 minutes). An IPv6 client counts as its whole /64, since one host
 usually controls a /64 and could otherwise rotate addresses for fresh budgets.
 
-The limiter tracks at most 10,000 keys in memory. When it is full it drops expired keys
-and then the least recently used keys that are still under their limit, but never a
-key that is locked out, so spraying junk usernames from many addresses can't unlock an
-account. If every tracked key is locked, new login attempts are refused with 429 (fail
-closed) until lockouts expire, at most 15 minutes. Already logged-in sessions are not
-affected.
+The limiter tracks at most 10,000 keys in memory. When it is full it drops expired keys,
+then keys still under their limit with the fewest recent failures (least recently used
+first among equals). It never drops a key that is locked out, so spraying junk
+usernames from many addresses can't unlock an account, and a key close to its limit
+goes last. An attacker who can fill the whole table with keys that each have at least
+as many failures (roughly 40,000 attempts from 800+ addresses in 15 minutes) can still
+reset a near-limit count. Closing that fully needs per-user counters outside memory,
+which would be a data-model change. If every tracked key is locked, new login attempts
+are refused with 429 (fail closed) until the first lockout ends, at most 15 minutes.
+Already logged-in sessions are not affected.
+
+The limiter lives in the backend process's memory. **Restarting the backend clears
+it**, including every lockout. That is also how an admin who is locked out
+legitimately (or caught by the fail-closed state above) gets back in right away:
+`docker compose restart backend`. Anyone who can restart the backend already has shell
+access to the host, so this gives nothing to a network attacker.
+
+On a LAN reached over IPv6, every host in one /64 shares one per-client budget, the
+same way hosts behind one NAT address share one on IPv4.
 
 The client address comes from one helper,
 `backend/app/core/client_address.py` (used through `get_client_address` in

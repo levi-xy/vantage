@@ -1,3 +1,4 @@
+from collections import OrderedDict
 from collections.abc import Iterator
 from datetime import timedelta
 
@@ -327,6 +328,57 @@ def test_rate_limiter_full_of_lockouts_fails_closed_and_recovers() -> None:
     # Once the lockouts expire, logins work again.
     now[0] += 60
     assert limiter.acquire(["user:fresh"]) is None
+
+
+def test_rate_limiter_near_limit_key_survives_a_spray() -> None:
+    """A key one failure short of its limit is evicted after keys with fewer failures."""
+    limiter = LoginRateLimiter({"user": 5, "client": 1000}, max_keys=100)
+    for i in range(4):
+        assert limiter.acquire(["user:admin", f"client:192.0.2.{i}"]) is None
+    for i in range(5000):
+        limiter.acquire([f"user:junk{i}", f"client:198.51.100.{i % 50}"])
+        assert len(limiter._keys) <= 100
+    # Still at 4 failures: the next guess is allowed and locks the account.
+    assert limiter.acquire(["user:admin", "client:203.0.113.1"]) is None
+    assert limiter.acquire(["user:admin", "client:203.0.113.1"]) is not None
+
+
+class _CountingKeys(OrderedDict[str, object]):
+    scans = 0
+
+    def items(self):  # type: ignore[no-untyped-def,override]
+        type(self).scans += 1
+        return super().items()
+
+
+def test_rate_limiter_full_of_lockouts_refuses_without_rescanning() -> None:
+    now = [1000.0]
+    limiter = LoginRateLimiter({"user": 1}, window_seconds=60, max_keys=3, clock=lambda: now[0])
+    limiter._keys = _CountingKeys()  # type: ignore[assignment]
+    for i in range(3):
+        assert limiter.acquire([f"user:u{i}"]) is None
+        now[0] += 1  # u0 unlocks at 1060, u1 at 1061, u2 at 1062
+    assert limiter.acquire(["user:x"]) == 58  # one scan finds no room until 1060
+    scans = _CountingKeys.scans
+    for i in range(100):
+        assert limiter.acquire([f"user:y{i}"]) is not None
+    assert _CountingKeys.scans == scans  # refused from the cache, no scan
+    assert len(limiter._keys) == 3
+    # Fail closed until the first lockout ends, then that slot is reused.
+    now[0] = 1059.5
+    assert limiter.acquire(["user:z"]) is not None
+    now[0] = 1060.0
+    assert limiter.acquire(["user:z"]) is None
+    assert limiter.retry_after(["user:u1"]) is not None  # other lockouts untouched
+
+
+def test_rate_limiter_reset_clears_the_full_cache() -> None:
+    limiter = LoginRateLimiter({"user": 1}, max_keys=2)
+    limiter.acquire(["user:a"])
+    limiter.acquire(["user:b"])
+    assert limiter.acquire(["user:c"]) is not None
+    limiter.reset("user:a")
+    assert limiter.acquire(["user:c"]) is None
 
 
 # --- sessions, CSRF, roles -----------------------------------------------------------
