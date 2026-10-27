@@ -15,6 +15,7 @@ from app.core.auth import LoginRateLimiter, Passwords
 from app.core.config import Settings, get_settings
 from app.core.crypto import SecretBox, load_master_key
 from app.core.db import make_engine, make_session_factory
+from app.integrations.registry import Registry, builtin_registry
 
 
 def create_app(
@@ -22,6 +23,7 @@ def create_app(
     *,
     secret_box: SecretBox | None = None,
     passwords: Passwords | None = None,
+    registry: Registry | None = None,
 ) -> FastAPI:
     """Build the app. Run with ``uvicorn --factory app.main:create_app``.
 
@@ -52,6 +54,8 @@ def create_app(
     app.state.session_factory = make_session_factory(engine)
     app.state.passwords = passwords or Passwords()
     app.state.login_limiter = LoginRateLimiter(LOGIN_LIMITS)
+    # Tests pass their own registry; production always uses the built-in list.
+    app.state.registry = registry if registry is not None else builtin_registry()
 
     app.include_router(api_router)
     app.add_exception_handler(RequestValidationError, _validation_error)
