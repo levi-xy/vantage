@@ -88,18 +88,26 @@ class LoginRateLimiter:
     can't use up memory.
 
     When the cap is reached, room is made by dropping keys whose failures have all
-    expired, then keys still **under** their limit, fewest recent failures first (least
+    expired, then keys still **under** their limit, most attempts left first (least
     recently used first among equals). A key at its limit (a lockout) is never dropped,
     so flooding the limiter with junk keys can't unlock it, and a key close to its limit
-    is dropped last. If every tracked key is locked, there is no room and the attempt is
-    refused (fail closed) until the first lockout can change; that answer is cached, so
-    refusing costs no table scan.
+    is dropped last. One scan drops a batch (up to 5% of the table).
 
-    What this still doesn't prevent: an attacker who fills the whole table with keys
-    that each have at least as many failures as a near-limit key (e.g. 10,000 usernames
-    with 4 failures each, about 40,000 attempts from 800+ addresses per window) can
-    still push that key out and reset its count. Lockouts themselves are never lost. A
-    complete fix needs counters that aren't capped in memory (e.g. per user in the
+    If too few keys can be dropped, the attempt is refused (fail closed). The scan's
+    result is cached: until the first lockout can end, attempts that need more slots
+    than were droppable are refused without scanning again. succeeded() and reset()
+    clear the cache. That keeps a full table from turning every refused attempt into a
+    scan under the lock.
+
+    What this still doesn't prevent: an attacker can fill the table with keys that have
+    at least as many failures as a near-limit key and so push that key out, resetting
+    its count. Every attempt adds a failure to one user key and one client key, so both
+    fill slots; and since one scan drops the 500 (5%) keys with the most attempts left,
+    the target only has to be among those, so ~9,500 such keys are enough. Roughly:
+    ~20,000 attempts in one window when the attacker has thousands of addresses, about
+    35,000 to 40,000 with ~800. Over IPv6 one /48 holds 65,536 separate /64 budgets, so
+    the number of addresses is no real limit there. Lockouts themselves are never lost.
+    A complete fix needs counters that aren't capped in memory (e.g. per user in the
     database), which is a data-model change.
     """
 
@@ -116,9 +124,16 @@ class LoginRateLimiter:
         self._clock = clock
         self._keys: OrderedDict[str, _Window] = OrderedDict()
         self._lock = threading.Lock()
-        # Set when the table was full of keys that can't be dropped: no new key fits
-        # before this time (clock value), unless succeeded() or reset() frees a slot.
+        if max_keys < 2:
+            raise ValueError("max_keys must be at least 2 (one login uses two keys)")
+        # Cache of the last refusing scan: until _full_until (clock value), at most
+        # _spare keys can be dropped (fewer if one of them is the attempt's own key).
+        # Only a lockout ending (not before _full_until), succeeded() or reset() can
+        # raise that number. While the table is full a new key only gets in through a
+        # scan that drops keys, which clears the cache; more failures on tracked keys
+        # can only lower it. So the cache never refuses an attempt that would fit.
         self._full_until = 0.0
+        self._spare = 0
 
     def _limit(self, key: str) -> int:
         return self._limits[key.split(":", 1)[0]]
@@ -152,37 +167,44 @@ class LoginRateLimiter:
         """Free space for ``keys``. Returns 0 if they fit, else seconds until one might.
 
         Only expired keys and keys under their limit are dropped: expired first, then
-        fewest recent failures, then least recently used. One scan drops a batch (up to
-        5% of the table), so a spray of new keys doesn't rescan the table every time.
+        most attempts left (limit minus recent failures), then least recently used. One
+        scan drops a batch (up to 5% of the table), so a spray of new keys doesn't
+        rescan the table every time. Expects ``_recent`` to have pruned ``keys`` already.
         """
-        needed = len(self._keys) + sum(1 for k in set(keys) if k not in self._keys)
-        needed -= self._max_keys
+        own = set(keys)
+        if len(own) > self._max_keys:
+            raise ValueError("more keys in one attempt than the limiter can track")
+        needed = len(self._keys) + sum(1 for k in own if k not in self._keys) - self._max_keys
         if needed <= 0:
             return 0.0
         if now < self._full_until:
-            return self._full_until - now
-        candidates: list[tuple[int, int, str]] = []
-        # When the first tracked key could become droppable (its oldest counted failure
-        # leaves the window). Starts at a full window: nothing can stay locked longer.
+            # This attempt's own tracked keys under their limit can't be dropped for it.
+            own_open = sum(
+                1 for k in own if k in self._keys and len(self._keys[k].failures) < self._limit(k)
+            )
+            if needed > self._spare - own_open:
+                return self._full_until - now
+        candidates: list[tuple[int, int, int, str]] = []
+        # When the first lockout can end (its oldest counted failure leaves the window).
+        # Starts at a full window: nothing stays locked longer.
         next_change = now + self._window
-        protected_open = False
+        spare = 0
         for order, (key, window) in enumerate(self._keys.items()):
             recent = [t for t in window.failures if now - t < self._window]
             limit = self._limit(key)
             if len(recent) >= limit:
                 next_change = min(next_change, recent[-limit] + self._window)
-            elif key in keys:
-                protected_open = True  # in use by this attempt, but another may drop it
-            else:
-                candidates.append((len(recent), order, key))
+                continue
+            spare += 1
+            if key not in own:
+                # Expired first, then most attempts left (as negative: smallest first).
+                candidates.append((1 if recent else 0, len(recent) - limit, order, key))
         if len(candidates) < needed:
-            if not candidates and not protected_open:
-                # Every tracked key is locked: nothing can change before next_change
-                # except succeeded()/reset(), which clear this.
-                self._full_until = next_change
+            self._full_until, self._spare = next_change, spare
             return max(next_change - now, 1.0)
+        self._full_until = 0.0
         batch = max(needed, self._max_keys // 20)
-        for _, _, key in heapq.nsmallest(batch, candidates):
+        for *_, key in heapq.nsmallest(batch, candidates):
             del self._keys[key]
         return 0.0
 
@@ -205,7 +227,7 @@ class LoginRateLimiter:
             return self._seconds(self._wait(keys, self._clock()))
 
     def record_failure(self, keys: Iterable[str]) -> None:
-        """Count a failure (dropped if every tracked key is locked; see the class doc)."""
+        """Count a failure (dropped if there's no room for it; see the class doc)."""
         with self._lock:
             self._record(list(keys), self._clock())
 

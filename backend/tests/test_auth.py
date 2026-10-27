@@ -381,6 +381,62 @@ def test_rate_limiter_reset_clears_the_full_cache() -> None:
     assert limiter.acquire(["user:c"]) is None
 
 
+def test_rate_limiter_cache_holds_with_some_droppable_keys() -> None:
+    """One droppable key while two slots are needed: refused once, then from the cache."""
+    now = [1000.0]
+    limiter = LoginRateLimiter(
+        {"user": 1, "client": 50}, window_seconds=60, max_keys=4, clock=lambda: now[0]
+    )
+    limiter._keys = _CountingKeys()  # type: ignore[assignment]
+    for i in range(3):
+        assert limiter.acquire([f"user:u{i}"]) is None  # locked
+    assert limiter.acquire(["client:198.51.100.1"]) is None  # 1 of 50: droppable
+    assert limiter.acquire(["user:n0", "client:198.51.100.200"]) is not None
+    scans = _CountingKeys.scans
+    for i in range(1, 50):
+        assert limiter.acquire([f"user:n{i}", f"client:198.51.100.{100 + i}"]) is not None
+    # The only droppable key is this attempt's own, so it can't make room for it.
+    assert limiter.acquire(["user:own", "client:198.51.100.1"]) is not None
+    assert _CountingKeys.scans == scans
+    # An attempt needing one slot still fits: the cache doesn't over-refuse.
+    assert limiter.acquire(["user:fits"]) is None
+    assert "client:198.51.100.1" not in limiter._keys
+    assert len(limiter._keys) == 4
+
+
+def test_rate_limiter_succeeded_clears_the_full_cache() -> None:
+    limiter = LoginRateLimiter({"user": 5, "client": 2}, max_keys=2)
+    for _ in range(2):
+        limiter.acquire(["client:198.51.100.1"])
+        limiter.acquire(["client:198.51.100.2"])
+    assert limiter.acquire(["user:c"]) is not None  # both keys locked: cached as full
+    # A successful login refunds one attempt, so client 1 is droppable again.
+    limiter.succeeded("user:someone", ["client:198.51.100.1"])
+    assert limiter.acquire(["user:c"]) is None
+
+
+def test_rate_limiter_evicts_most_attempts_left_first() -> None:
+    """A user key at 4/5 outlives client keys with more failures but more room (10/50)."""
+    limiter = LoginRateLimiter({"user": 5, "client": 50}, max_keys=3)
+    for _ in range(4):
+        limiter.acquire(["user:admin"])
+    for _ in range(10):
+        limiter.acquire(["client:198.51.100.1"])
+    for _ in range(20):
+        limiter.acquire(["client:198.51.100.2"])
+    assert limiter.acquire(["user:new"]) is None
+    assert "client:198.51.100.1" not in limiter._keys  # 40 left: dropped first
+    assert len(limiter._keys["user:admin"].failures) == 4
+
+
+def test_rate_limiter_rejects_impossible_sizes() -> None:
+    with pytest.raises(ValueError):
+        LoginRateLimiter({"user": 5}, max_keys=1)
+    limiter = LoginRateLimiter({"user": 5}, max_keys=2)
+    with pytest.raises(ValueError):
+        limiter.acquire(["user:a", "user:b", "user:c"])
+
+
 # --- sessions, CSRF, roles -----------------------------------------------------------
 
 

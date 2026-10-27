@@ -54,15 +54,24 @@ address (50 per 15 minutes). An IPv6 client counts as its whole /64, since one h
 usually controls a /64 and could otherwise rotate addresses for fresh budgets.
 
 The limiter tracks at most 10,000 keys in memory. When it is full it drops expired keys,
-then keys still under their limit with the fewest recent failures (least recently used
-first among equals). It never drops a key that is locked out, so spraying junk
-usernames from many addresses can't unlock an account, and a key close to its limit
-goes last. An attacker who can fill the whole table with keys that each have at least
-as many failures (roughly 40,000 attempts from 800+ addresses in 15 minutes) can still
-reset a near-limit count. Closing that fully needs per-user counters outside memory,
-which would be a data-model change. If every tracked key is locked, new login attempts
-are refused with 429 (fail closed) until the first lockout ends, at most 15 minutes.
-Already logged-in sessions are not affected.
+then keys still under their limit with the most attempts left (limit minus recent
+failures; least recently used first among equals), 5% of the table per scan. It never
+drops a key that is locked out, so spraying junk usernames from many addresses can't
+unlock an account, and a key close to its limit (a username at 4 of 5) goes last. If
+too few keys can be dropped, new login attempts are refused with 429 (fail closed) until
+the first lockout ends, at most 15 minutes. That result is cached, so refused attempts
+don't rescan the table. Already logged-in sessions are not affected.
+
+What it still doesn't prevent: an attacker can push a near-limit key out, resetting its
+count, by filling the table with keys that have at least as many failures. Each attempt
+adds a failure to one username key and one client key, so both kinds fill slots, and
+because a scan drops the 500 keys with the most attempts left at once, about 9,500 such
+keys are enough (the batch saves the attacker about 5%). That is roughly 20,000 attempts
+within 15 minutes when the attacker has thousands of addresses, and about 35,000 to
+40,000 with around 800. Over IPv6, one /48 contains 65,536 separate /64 budgets, so
+the address count is no real obstacle there. Lockouts themselves are never lost.
+Closing this fully needs per-user counters outside memory, which would be a data-model
+change.
 
 The limiter lives in the backend process's memory. **Restarting the backend clears
 it**, including every lockout. That is also how an admin who is locked out
