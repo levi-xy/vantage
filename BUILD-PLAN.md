@@ -89,6 +89,9 @@ M0 ──► M1 ──► M2 ──┬──► M4a ─┐
 - URL fields must not carry credentials; they're refused at save time. Credentials go in `SecretStr` fields. (PR #12)
 - Secret fields are top-level `SecretStr` (or `SecretStr | None`) only; nested and list secrets are rejected by the conformance suite. (PR #10)
 - Author text on a secret field (`description`, `json_schema_extra`) is served in the schema as-is: never put example secret values there. (PR #10)
+- `poll()` must await its I/O: the 60 s poll timeout only interrupts code that awaits, so a blocking call stalls every instance's polling. (PR #16)
+- The collector assumes one backend process: with several uvicorn workers every worker polls and serves its own `/metrics`. Document "one worker" for deployments. (PR #16)
+- Scrape targets: one that fails DNS or the SSRF guard is left out of `/sd/targets`, so it disappears from Prometheus instead of showing `up == 0` (AGENTS.md Contract 5). (PR #14)
 
 ## M3: Frontend shell
 
@@ -99,11 +102,11 @@ M0 ──► M1 ──► M2 ──┬──► M4a ─┐
 | M3.3 | Integrations UI | "Add device": pick type → form generated from schema → test connection (showing firewall hints on failure) → save; list, edit, disable, delete instances |
 | M3.4 | Audit page | Admin-only table of audit entries |
 
-**Carried over from reviews (include in the M3.2 task):**
-- Call `api.me()` at app start, before any POST/PATCH/PUT/DELETE: the CSRF token lives only in memory, so after a reload writes are rejected until `me()` has run. (PR #11)
-- The API client clears the CSRF token on every 401, including a failed `POST /auth/login`. `onUnauthorized` must not redirect-loop when the 401 comes from the login call itself. (PR #11)
-- Navigation isn't role-aware yet (everyone sees "Audit log"); M3.2 hides admin-only links from viewers. (PR #11)
-- Instance responses carry `secrets_set: {field: bool}` for the "set" / "not set" display (M3.3). (PR #12)
+**Carried over from reviews (include in the M3.3 task):**
+- Instance responses carry `secrets_set: {field: bool}` for the "set" / "not set" display. (PR #12)
+- Add `status` to instance responses per AGENTS.md Contract 3 (backend: read it from the poll collector's in-memory store; `unknown` for instances it doesn't poll) and show it in the instance list. Show "No site" for instances without a site. (maintainer decision, PRs #14/#16)
+- Logout: when logout fails and the follow-up `me()` also fails with a network error, the CSRF token stays null and every write gets 403 until reload. Move the session to the `unreachable` state instead, with a test. (PR #15)
+- After an explicit logout, don't keep the current path as the post-login return path: the next person to log in on that browser shouldn't land on the previous user's page. (PR #15)
 
 ## M4: Built-in integrations (parallel, one agent each)
 
