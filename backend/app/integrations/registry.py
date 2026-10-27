@@ -11,10 +11,15 @@ from collections.abc import Iterable, Iterator
 from typing import Any, TypedDict
 
 from app.integrations.base import Category, Integration
+from app.integrations.builtin.http_check import HttpCheck
+from app.integrations.builtin.linux_host import LinuxHost
 from app.integrations.schema import config_json_schema
 
-# Built-in integrations, one per line. M2.5 adds the first ones.
-BUILTIN_INTEGRATIONS: tuple[type[Integration], ...] = ()
+# Built-in integrations, one per line, sorted by type_id.
+BUILTIN_INTEGRATIONS: tuple[type[Integration], ...] = (
+    HttpCheck,  # http_check
+    LinuxHost,  # linux_host
+)
 
 # Lowercase slug that can sit inside a Prometheus metric name: vantage_<type_id>_<metric>.
 TYPE_ID_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,31}")

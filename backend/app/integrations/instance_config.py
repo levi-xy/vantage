@@ -153,7 +153,7 @@ def configured_hosts(config: Mapping[str, Any]) -> list[tuple[str, str, int, str
                 url = httpx.URL(value)
             except httpx.InvalidURL:
                 raise HostCheckError(key, "invalid URL") from None
-            if url.scheme not in ("http", "https") or not url.host:
+            if url.scheme not in ("http", "https") or not url.raw_host:
                 raise HostCheckError(key, "URL must be http:// or https:// with a host")
             if url.userinfo:
                 # The config column is plaintext and served by GET: credentials belong
@@ -161,8 +161,14 @@ def configured_hosts(config: Mapping[str, Any]) -> list[tuple[str, str, int, str
                 raise HostCheckError(
                     key, "URL must not contain a username or password; use the secret fields"
                 )
+            # Integrations parse their URL fields too (e.g. http_check's validator); the
+            # two must agree on which host a URL names, or a URL could pass one check and
+            # fail the other. raw_host is the ASCII (punycode) form that the guarded
+            # transport resolves and connects to; url.host would decode IDN labels to
+            # Unicode, which parse_host refuses.
+            host = url.raw_host.decode("ascii")
             found.append(
-                (key, url.host, url.port or (443 if url.scheme == "https" else 80), url.scheme)
+                (key, host, url.port or (443 if url.scheme == "https" else 80), url.scheme)
             )
     return found
 

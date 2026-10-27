@@ -43,6 +43,9 @@ DNS: dict[str, list[str]] = {
     "rebind.example.internal": ["10.0.0.21", "127.0.0.1"],
     "metadata.example.internal": ["169.254.169.254"],
     "api.example.com": ["10.0.0.30"],  # a cloud host pointed at the LAN
+    # IDN hosts, by the ASCII (punycode) form the resolver is asked for.
+    "xn--e1afmkfd.example": ["10.0.0.25"],  # пример.example
+    "xn--e1aybc.example": ["169.254.169.254"],  # тест.example
 }
 
 
@@ -833,6 +836,42 @@ def test_configured_hosts() -> None:
 def test_configured_hosts_rejects_bad_urls(url: str) -> None:
     with pytest.raises(ic.HostCheckError):
         ic.configured_hosts({"url": url})
+
+
+@pytest.mark.parametrize(
+    ("url", "host"),
+    [
+        ("http://xn--e1afmkfd.example/", "xn--e1afmkfd.example"),
+        ("http://пример.example/", "xn--e1afmkfd.example"),
+    ],
+)
+def test_configured_hosts_uses_the_ascii_idn_form(url: str, host: str) -> None:
+    # The same form the guarded transport resolves and connects to.
+    assert ic.configured_hosts({"url": url}) == [("url", host, 80, "http")]
+
+
+def test_idn_url_is_accepted_on_save(admin: TestClient) -> None:
+    # Used to be refused: the check got the Unicode form, which parse_host rejects.
+    config = {"api_url": "http://xn--e1afmkfd.example/", "api_token": TOKEN}
+    r = admin.post(f"{API}/instances", json=body(type_id="url_device", config=config))
+    assert r.status_code == 201, r.text
+    assert r.json()["config"]["api_url"] == "http://xn--e1afmkfd.example/"
+
+
+@pytest.mark.parametrize(
+    ("url", "status"),
+    [
+        # A Unicode host is checked as its punycode form, exactly like the connection.
+        ("http://пример.example/", 201),  # -> 10.0.0.25
+        ("http://тест.example/", 422),  # -> 169.254.169.254
+        ("http://нет.example/", 422),  # doesn't resolve
+    ],
+)
+def test_unicode_url_host_is_checked_by_the_guard(admin: TestClient, url: str, status: int) -> None:
+    config = {"api_url": url, "api_token": TOKEN}
+    r = admin.post(f"{API}/instances", json=body(type_id="url_device", config=config))
+    assert r.status_code == status, r.text
+    assert_no_secrets(r.text)
 
 
 async def test_check_hosts_refuses_cloud_host_over_http() -> None:
