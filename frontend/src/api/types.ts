@@ -59,3 +59,73 @@ export interface IntegrationInfo {
   /** JSON schema of the config; secret fields are flagged `writeOnly`. */
   schema: Record<string, unknown>;
 }
+
+/** The poll collector's view of an instance (in memory: it resets on a backend restart). */
+export interface InstanceStatus {
+  /** `unknown`: the collector doesn't poll this instance (disabled, or scrape-only). */
+  state: "pending" | "up" | "down" | "unknown";
+  checked_at: string | null;
+  last_success_at: string | null;
+  /** Short and secret-free. */
+  error: string | null;
+}
+
+/** `GET /instances` and `GET /instances/{id}`. Never carries a secret value. */
+export interface Instance {
+  id: string;
+  type_id: string;
+  name: string;
+  site: string | null;
+  tags: string[];
+  enabled: boolean;
+  /** Non-secret config fields only. */
+  config: Record<string, unknown>;
+  /** For each secret field: whether a value is stored. */
+  secrets_set: Record<string, boolean>;
+  status: InstanceStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Body of `POST /instances`. `config` holds every field, secrets included. */
+export interface InstanceCreate {
+  type_id: string;
+  name: string;
+  site?: string | null;
+  tags?: string[];
+  enabled?: boolean;
+  config: Record<string, unknown>;
+}
+
+/**
+ * Body of `PATCH /instances/{id}`. `config` is merged into the stored one: an omitted
+ * field (a secret left blank) keeps its value; `null` clears an optional field.
+ */
+export interface InstanceUpdate {
+  name?: string;
+  site?: string | null;
+  tags?: string[];
+  enabled?: boolean;
+  config?: Record<string, unknown>;
+}
+
+/** Body of `POST /instances/test`: an unsaved config. */
+export interface InstanceTest {
+  type_id: string;
+  name?: string;
+  config: Record<string, unknown>;
+}
+
+export interface FirewallHint {
+  protocol: "tcp" | "udp";
+  port: number;
+  destination: string;
+  reason: string;
+}
+
+/** `POST /instances/test` and `POST /instances/{id}/test`. Never contains a secret. */
+export interface TestResult {
+  ok: boolean;
+  message: string;
+  hint: FirewallHint | null;
+}

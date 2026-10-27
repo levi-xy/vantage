@@ -5,9 +5,14 @@ import type {
   AuditEntry,
   AuditQuery,
   Credentials,
+  Instance,
+  InstanceCreate,
+  InstanceTest,
+  InstanceUpdate,
   IntegrationInfo,
   Me,
   SetupStatus,
+  TestResult,
 } from "./types";
 
 export const API_BASE = "/api/v1";
@@ -166,5 +171,38 @@ export class ApiClient {
 
   integrations(): Promise<IntegrationInfo[]> {
     return this.request("GET", "/integrations");
+  }
+
+  instances(): Promise<Instance[]> {
+    return this.request("GET", "/instances");
+  }
+
+  instance(id: string): Promise<Instance> {
+    return this.request("GET", `/instances/${encodeURIComponent(id)}`);
+  }
+
+  /** Admin only. */
+  createInstance(body: InstanceCreate): Promise<Instance> {
+    return this.request("POST", "/instances", body);
+  }
+
+  /** Admin only. Omitted config fields (secrets included) keep their stored values. */
+  updateInstance(id: string, body: InstanceUpdate): Promise<Instance> {
+    return this.request("PATCH", `/instances/${encodeURIComponent(id)}`, body);
+  }
+
+  /** Admin only. */
+  deleteInstance(id: string): Promise<void> {
+    return this.request("DELETE", `/instances/${encodeURIComponent(id)}`);
+  }
+
+  /** Admin only. Tests the saved config. */
+  testInstance(id: string): Promise<TestResult> {
+    return this.request("POST", `/instances/${encodeURIComponent(id)}/test`);
+  }
+
+  /** Admin only. Tests a config that hasn't been saved. */
+  testUnsavedInstance(body: InstanceTest): Promise<TestResult> {
+    return this.request("POST", "/instances/test", body);
   }
 }
