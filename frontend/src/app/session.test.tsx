@@ -293,6 +293,16 @@ describe("logout", () => {
     expect(router.state.location.search).toBe("");
   });
 
+  it("doesn't let cached audit entries survive into the next user's session", async () => {
+    const { queryClient } = renderApp("/");
+    await mainNav();
+    queryClient.setQueryData(["audit"], [{ id: 1, action: "login", target_type: "user" }]);
+    fireEvent.click(screen.getByRole("button", { name: "Log out" }));
+    await logIn("viewer");
+    await mainNav();
+    expect(queryClient.getQueryData(["audit"])).toBeUndefined();
+  });
+
   it("treats a 401 on logout as already logged out", async () => {
     const backend = fakeBackend({ session: exampleMe() });
     const { router } = renderApp("/", backend);

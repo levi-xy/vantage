@@ -83,6 +83,13 @@ describe("initialValues", () => {
       client_secret: "",
     });
   });
+
+  it("uses the schema default for a field the stored config lacks", () => {
+    expect(initialValues(fields, { host: "10.0.0.10" })).toMatchObject({
+      port: "443",
+      verify_tls: true,
+    });
+  });
 });
 
 describe("buildConfig", () => {
@@ -194,5 +201,18 @@ describe("configChanged", () => {
   it("is true for a changed value or an entered secret", () => {
     expect(configChanged(fields, { ...stored, port: 9443 }, stored)).toBe(true);
     expect(configChanged(fields, { ...stored, api_token: "example-token" }, stored)).toBe(true);
+  });
+
+  it("treats a field missing from the stored config as its default", () => {
+    // Stored before verify_tls (default true) existed: the round trip through the form
+    // must not count as a change, or testing an untouched device asks for secrets.
+    const old = { host: "10.0.0.10", port: 8443 };
+    const { config } = buildConfig(fields, initialValues(fields, old), {
+      editing: true,
+      secretsSet: { api_token: true },
+    });
+    expect(config.verify_tls).toBe(true);
+    expect(configChanged(fields, config, old)).toBe(false);
+    expect(configChanged(fields, { ...config, verify_tls: false }, old)).toBe(true);
   });
 });

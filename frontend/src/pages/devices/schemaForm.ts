@@ -156,7 +156,7 @@ export function initialValues(fields: ConfigField[], stored?: Record<string, unk
   for (const field of fields) {
     if (field.secret) {
       values[field.key] = "";
-    } else if (stored) {
+    } else if (stored && field.key in stored) {
       values[field.key] = toInput(field, stored[field.key]);
     } else {
       values[field.key] = toInput(field, field.default);
@@ -296,6 +296,9 @@ export function configChanged(
   return fields.some((field) => {
     if (!(field.key in config)) return false;
     if (field.secret) return true;
-    return JSON.stringify(config[field.key] ?? null) !== JSON.stringify(stored[field.key] ?? null);
+    // A field missing from the stored config (added to the schema later, say) has its
+    // default value on the backend.
+    const before = field.key in stored ? stored[field.key] : field.default;
+    return JSON.stringify(config[field.key] ?? null) !== JSON.stringify(before ?? null);
   });
 }
