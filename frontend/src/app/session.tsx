@@ -42,6 +42,8 @@ export interface SessionContextValue {
   logout: () => Promise<void>;
   /** Ask the backend again (after "unreachable"). */
   reload: () => void;
+  /** The API client this session belongs to (tests pass one with a fake fetch). */
+  client: ApiClient;
 }
 
 export const SESSION_ENDED = "Your session has ended. Log in again.";
@@ -164,8 +166,8 @@ export function SessionProvider({ client, children }: { client: ApiClient; child
   }, [load]);
 
   const value = useMemo(
-    () => ({ state, login, setup, logout, reload }),
-    [state, login, setup, logout, reload],
+    () => ({ state, login, setup, logout, reload, client }),
+    [state, login, setup, logout, reload, client],
   );
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }
@@ -183,4 +185,10 @@ export function useUser(): SessionUser {
   const { state } = useSession();
   if (state.status !== "authenticated") throw new Error("useUser needs a logged-in user");
   return state.user;
+}
+
+/** The API client pages fetch through, so their requests share the session's CSRF token. */
+// eslint-disable-next-line react-refresh/only-export-components
+export function useApiClient(): ApiClient {
+  return useSession().client;
 }
