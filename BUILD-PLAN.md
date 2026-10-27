@@ -23,7 +23,7 @@ How Vantage gets built by coding agents, milestone by milestone. Every agent rea
 
 | Tier | Builder | Reviewer | Tasks |
 |---|---|---|---|
-| **Critical** (secrets, auth, crypto, `net_guard`, contracts, anything reachable from outside) | Opus | Opus | M1.6, M1.7, M2.7, M3.5, M4b, M4d, M4g, M5.1, M7.2, M8.1, M8.2, M8.3 |
+| **Critical** (secrets, auth, crypto, `net_guard`, contracts, anything reachable from outside) | Opus | Opus | M1.6, M1.7, M1.8, M2.7, M3.5, M4b, M4d, M4g, M5.1, M7.2, M8.1, M8.2, M8.3 |
 | **Standard** | Sonnet | Sonnet | Everything else: M2.6, M4a, M4c, M4e, M4f, M4h, M5.2–M5.5, M6.1–M6.2, M7.1, M7.3, M7.4, M8.4 |
 | **Light** (docs-only or mechanical, no decisions) | Haiku | Sonnet | Docs-only PRs and plan edits; none of the numbered tasks yet |
 
@@ -88,6 +88,7 @@ M0 ──► M1 ──► M2 ──┬──► M4a ─┐
 | M1.5 | SSRF guard | `net_guard` per Contract 5 with guarded httpx and SNMP clients; full test suite including DNS rebinding |
 | M1.6 | Admin CLI | `python -m app.cli`, run on the server (`docker compose exec backend python -m app.cli ...`): `reset-password <username>` (prompts for the new password, never takes it as an argument, never prints it; audited; ends that user's sessions), `create-user <username> --role admin\|viewer`, `list-users`. Needs no login: shell access to the host is the trust boundary. Tests prove the reset is audited, old sessions stop working, and no password reaches logs or the audit table |
 | M1.7 | Trusted proxy and login rate limit | `VANTAGE_TRUSTED_PROXIES` (CIDR list; the compose file sets it to the frontend container). Only when the direct peer is a trusted proxy does the backend take the client address from a header that nginx **overwrites** from `$remote_addr` (not appends, unlike today's `X-Forwarded-For`); otherwise it uses the peer address. The login limiter keys on that real client address; remove the `TODO(maintainer)` in `auth.py`. Tests: a spoofed header from an untrusted peer is ignored, and one client's failures can't lock out another |
+| M1.8 | Persistent per-user login counters | Failed-login counts per username live in the database (a data-model change, so Contract 2 is updated in the PR), not in the in-memory limiter. A spray of junk usernames can then never push a near-locked account out of the table, and lockouts survive a restart. The in-memory per-client limiter stays. Admin CLI (M1.6) gets `unlock <username>` so a legitimately locked admin can recover at once. Tests: the spray scenario from the PR #23 reviews (4 guesses on `admin`, then thousands of junk-username attempts from many addresses) leaves `admin` locked after the 5th guess; counters expire; nothing secret is stored |
 
 ## M2: Integration framework
 

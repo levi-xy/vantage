@@ -9,12 +9,14 @@ import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import ClassVar, Literal, TypeVar
+from typing import ClassVar, Literal, Self, TypeVar
 
 import httpx
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from app.core.net_guard import (
+    PING_INTERVAL,
+    GuardedPingClient,
     GuardedSnmpClient,
     NetGuard,
     SnmpV2c,
@@ -36,10 +38,18 @@ class TestResult(BaseModel):
 
 
 class FirewallHint(BaseModel):
-    protocol: Literal["tcp", "udp"]
-    port: int
+    protocol: Literal["tcp", "udp", "icmp"]
+    port: int | None  # required for tcp/udp; None for icmp (ICMP echo has no port)
     destination: str  # the instance host, as configured
     reason: str
+
+    @model_validator(mode="after")
+    def _port_matches_protocol(self) -> Self:
+        if self.protocol == "icmp" and self.port is not None:
+            raise ValueError("an icmp hint has no port")
+        if self.protocol != "icmp" and self.port is None:
+            raise ValueError(f"a {self.protocol} hint needs a port")
+        return self
 
 
 TestResult.model_rebuild()
@@ -78,8 +88,9 @@ class InstanceContext:
     """What an integration gets for one instance: its config and guarded clients.
 
     Built by the backend (instance API, poll collector), never by an integration.
-    Integrations open connections only through :meth:`http_client` and
-    :meth:`snmp_client`, which go through ``net_guard`` (Contract 5).
+    Integrations open connections only through :meth:`http_client`,
+    :meth:`snmp_client` and :meth:`ping_client`, which go through ``net_guard``
+    (Contract 5).
     """
 
     instance_id: uuid.UUID
@@ -120,6 +131,16 @@ class InstanceContext:
     ) -> GuardedSnmpClient:
         """A guarded, read-only (GET/WALK) SNMP client."""
         return GuardedSnmpClient(self.net_guard, host, auth, port=port)
+
+    def ping_client(
+        self, host: str, *, count: int = 3, reply_timeout: float = 1.0
+    ) -> GuardedPingClient:
+        """A guarded ICMP echo client: private ranges only, never a cloud host, at most
+        ``MAX_PING_COUNT`` packets, ``PING_INTERVAL`` seconds apart, and done within 15 s
+        (DNS included, capped at ``PING_RESOLVE_TIMEOUT``)."""
+        return GuardedPingClient(
+            self.net_guard, host, count=count, interval=PING_INTERVAL, reply_timeout=reply_timeout
+        )
 
 
 class Integration(ABC):
