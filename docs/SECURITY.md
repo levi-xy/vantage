@@ -47,6 +47,49 @@ Further rules:
   audited flow. It then scans the raw `audit_log` rows and the `GET /api/v1/audit`
   response to prove none of the values appear.
 
+## Client address and trusted proxies
+
+The login rate limit counts failures per username (5 per 15 minutes) and per client
+address (50 per 15 minutes). The client address comes from one helper,
+`backend/app/core/client_address.py` (used through `get_client_address` in
+`backend/app/api/deps.py`), so everything that needs it agrees:
+
+- **Trust is decided by the TCP peer only.** If the direct peer's address is in
+  `VANTAGE_TRUSTED_PROXIES`, the client address is read from the `X-Real-IP` header.
+  Otherwise the peer address is used and every forwarding header is ignored. Nothing a
+  client puts in a header can make the backend trust it.
+- **One header, overwritten by the proxy.** Only `X-Real-IP` is read. The bundled nginx
+  sets it with `proxy_set_header X-Real-IP $remote_addr;`, which replaces any value the
+  client sent. `X-Forwarded-For` is never used: nginx appends to it, so its first
+  entries are whatever the client wrote.
+- **Bad values fall back.** A missing header, a header sent more than once, or a value
+  that is not an IP address means the peer address is used.
+- **One spelling per client.** IPv4-mapped IPv6 (`::ffff:192.0.2.1`) is treated as
+  IPv4 and IPv6 zone suffixes are dropped, both for the trust check and the limiter key.
+- **Default: trust nobody.** Unset or empty, the client address is always the peer.
+  Invalid entries (not a CIDR, host bits set) stop the backend at startup.
+- **uvicorn's own proxy handling is off** (`--no-proxy-headers` in the backend image),
+  so the peer address the app sees is the real TCP peer.
+
+`deploy/docker-compose.yml` pins the compose network to `172.16.238.0/28`, gives the
+frontend (nginx) the fixed address `172.16.238.2`, hands out every other container's
+address from `172.16.238.8/29`, and sets `VANTAGE_TRUSTED_PROXIES=172.16.238.2/32`.
+Only nginx can therefore name the client. If that range clashes with your network,
+change the subnet, `ip_range`, the frontend's `ipv4_address` and
+`VANTAGE_TRUSTED_PROXIES` together.
+
+Limits:
+
+- If you put another reverse proxy in front of the bundled nginx, nginx's
+  `$remote_addr` is that proxy, so all clients share one per-client budget again (the
+  per-username limit still applies). Vantage does not read a client address through a
+  chain of proxies.
+- Docker's userland proxy can make connections to a published port on the host's
+  loopback (or over IPv6) appear to come from the network gateway; those clients then
+  share one address.
+- Never list a range that ordinary clients can reach the backend from: a trusted peer
+  can claim any client address.
+
 ## Network guard
 
 Every outbound connection to a device or cloud API goes through the SSRF guard in

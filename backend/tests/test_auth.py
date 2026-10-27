@@ -30,6 +30,7 @@ def make_client(
     db_url: str,
     registry: Registry | None = None,
     net_guard_factory: NetGuardFactory | None = None,
+    peer: str = "testclient",
     **settings: object,
 ) -> TestClient:
     app = create_app(
@@ -50,7 +51,8 @@ def make_client(
         return {"user": auth.user.username}
 
     # https so the client sends Secure cookies back, like a browser would.
-    return TestClient(app, base_url="https://testserver")
+    # `peer` is the TCP peer address the app sees (request.client.host).
+    return TestClient(app, base_url="https://testserver", client=(peer, 50000))
 
 
 @pytest.fixture

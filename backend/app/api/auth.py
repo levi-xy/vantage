@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import (
     AuthDep,
+    ClientAddressDep,
     DbDep,
     SettingsDep,
     clear_session_cookie,
@@ -170,11 +171,12 @@ def login(
     settings: SettingsDep,
     passwords: PasswordsDep,
     limiter: LimiterDep,
+    client: ClientAddressDep,
 ) -> Me:
-    # TODO(maintainer): behind the bundled nginx every request comes from the frontend
-    # container, so the per-client limit is effectively global. Trusting X-Forwarded-For
-    # needs a "trusted proxy" setting; left out until that's decided.
-    client = request.client.host if request.client else "unknown"
+    # `client` is the real client behind a trusted proxy (VANTAGE_TRUSTED_PROXIES), else
+    # the TCP peer. TODO(maintainer): an IPv6 client can rotate through the addresses of
+    # its /64 to get fresh per-client budgets (the per-username limit still applies).
+    # Key IPv6 clients by /64 instead?
     user_key, client_key = f"user:{body.username.lower()}", f"client:{client}"
     # Counted as a failure up front, so parallel requests can't all slip past the limit.
     retry_after = limiter.acquire([user_key, client_key])

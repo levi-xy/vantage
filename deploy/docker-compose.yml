@@ -17,6 +17,8 @@ services:
       VANTAGE_COOKIE_SECURE: ${VANTAGE_COOKIE_SECURE:-true}
       VANTAGE_SESSION_MAX_HOURS: ${VANTAGE_SESSION_MAX_HOURS:-12}
       VANTAGE_SESSION_IDLE_MINUTES: ${VANTAGE_SESSION_IDLE_MINUTES:-120}
+      # Only the bundled nginx (frontend, fixed address below) may name the client.
+      VANTAGE_TRUSTED_PROXIES: ${VANTAGE_TRUSTED_PROXIES:-172.16.238.2/32}
     secrets: [master_key, prometheus_token]
     volumes:
       - backend-data:/data
@@ -29,6 +31,10 @@ services:
     ports:
       - "${VANTAGE_BIND_ADDRESS:-127.0.0.1}:${VANTAGE_HTTP_PORT:-8080}:8080"
     tmpfs: [/tmp]
+    networks:
+      default:
+        # Fixed so the backend can trust exactly this container (VANTAGE_TRUSTED_PROXIES).
+        ipv4_address: 172.16.238.2
 
   prometheus:
     <<: *hardening
@@ -48,6 +54,17 @@ secrets:
     file: ./secrets/master.key
   prometheus_token:
     file: ./secrets/prometheus_token
+
+# A fixed subnet so the frontend's address is known in advance. Other containers get
+# addresses from ip_range only, so none of them can take the frontend's address.
+# If this range clashes with your LAN, change subnet, ip_range, the frontend's
+# ipv4_address and VANTAGE_TRUSTED_PROXIES together.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.16.238.0/28
+          ip_range: 172.16.238.8/29
 
 volumes:
   backend-data:
