@@ -4,6 +4,8 @@ import { exampleMe, fakeBackend, json, mockSystemTheme, renderApp } from "../tes
 import type { FakeBackendOptions } from "../test-utils";
 
 const NEW_PASSWORD = "example-new-password-456";
+// Shorter than the 12-character minimum.
+const TOO_SHORT = "example-pw";
 const LAST_ADMIN = "this is the last admin: make another user an admin first";
 
 beforeEach(() => {
@@ -131,8 +133,8 @@ describe("users page", () => {
     expect(await within(form).findByRole("alert")).toHaveTextContent("Invalid username");
 
     fill("Username", "ops.user", form);
-    fill("New password", "too-short", form);
-    fill("Repeat the new password", "too-short", form);
+    fill("New password", TOO_SHORT, form);
+    fill("Repeat the new password", TOO_SHORT, form);
     submit();
     expect(await within(form).findByRole("alert")).toHaveTextContent("12 to 1024 characters");
 

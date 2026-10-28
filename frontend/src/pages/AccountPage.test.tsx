@@ -10,6 +10,8 @@ import {
 import type { FakeBackendOptions } from "../test-utils";
 
 const NEW_PASSWORD = "example-new-password-456";
+// Shorter than the 12-character minimum.
+const TOO_SHORT = "example-pw";
 
 beforeEach(() => {
   mockSystemTheme(false);
@@ -104,7 +106,7 @@ describe("my account", () => {
     renderApp("/account", backend);
     let form = await submitChange("", NEW_PASSWORD);
     expect(await within(form).findByRole("alert")).toHaveTextContent("current password");
-    form = await submitChange(EXAMPLE_PASSWORD, "too-short");
+    form = await submitChange(EXAMPLE_PASSWORD, TOO_SHORT);
     expect(await within(form).findByRole("alert")).toHaveTextContent("12 to 1024 characters");
     form = await submitChange(EXAMPLE_PASSWORD, NEW_PASSWORD, `${NEW_PASSWORD}x`);
     expect(await within(form).findByRole("alert")).toHaveTextContent("don't match");
