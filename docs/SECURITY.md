@@ -134,6 +134,58 @@ Limits:
 - Never list a range that ordinary clients can reach the backend from: a trusted peer
   can claim any client address.
 
+## Recovering a lost admin password
+
+Setup only works while no users exist, so a lost password is recovered with the admin
+CLI, run on the server from the `deploy/` directory:
+
+```bash
+docker compose exec backend python -m app.cli reset-password <username>
+```
+
+It asks for the new password twice, at a hidden prompt, sets it, and ends **all** of
+that user's sessions, so every browser still logged in as them is logged out on its
+next request. The same CLI has:
+
+```bash
+docker compose exec backend python -m app.cli create-user <username> --role admin
+docker compose exec backend python -m app.cli list-users
+```
+
+`list-users` shows id, username, role, created and last-login times, never hashes.
+
+- **No login needed.** Shell access to the host is the trust boundary: anyone who can
+  run `docker compose exec` can already read the database and the master key.
+- **Passwords never on the command line.** There is no password argument or
+  environment variable, since both end up in shell history or process listings. For
+  scripts, `--password-stdin` reads one line from stdin instead (use
+  `docker compose exec -T` so stdin is piped). The CLI refuses rather than read a
+  password with echo on: `--password-stdin` on a terminal, or a prompt without one.
+- **A reset beats a racing login.** Login only writes its session if the user's hash
+  is still the one it just verified (a conditional update of the user row). A login
+  that checked the old password while a reset was committing gets 401, and a password
+  rehash on login can never overwrite the new hash. A login that committed first has
+  its session deleted by the reset.
+- **Same rules as setup and login.** Usernames match the setup wizard's pattern and are
+  stored as typed; login compares them exactly, so `reset-password` does too.
+  `create-user` refuses a name that differs from an existing one only in case, since
+  the login rate limit treats them as one. It warns when no admin exists afterwards,
+  since browser setup is then closed. Passwords are 12 to 1024 characters and are
+  hashed with the same Argon2 parameters as login.
+- **Audited.** A reset is an `update` on the user, a new user a `create`. The actor
+  (`user_id`) is empty and `changes.source` is `"cli"`. The password is recorded only
+  as `"<changed>"`; neither it nor its hash reaches the table, the output or any log.
+  Error messages don't repeat what was typed (an unknown username, an unknown
+  argument), because a mistyped command may hold a password.
+- **What it loads.** The app's settings, database and audit writer. Not the master key:
+  the CLI touches no encrypted data, and a broken key file shouldn't block recovery.
+  It never starts the web server, the poll scheduler or the collector, and never
+  creates or migrates a database: it stops if the SQLite file or the tables are
+  missing (the backend applies migrations when it starts).
+- **Login lockouts.** A reset doesn't clear the login rate limit, which lives in the
+  backend's memory. If the user is locked out, `docker compose restart backend` clears
+  it (see above).
+
 ## Network guard
 
 Every outbound connection to a device or cloud API goes through the SSRF guard in
