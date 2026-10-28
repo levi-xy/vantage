@@ -190,8 +190,7 @@ def delete_user(user_id: int, auth: AdminDep, db: DbDep) -> Response:
     """Delete a user. Their sessions and failed logins go with them (cascade); audit
     entries stay, with an empty ``user_id``."""
     if user_id == auth.user.id:
-        # TODO(maintainer): self-delete is refused so the actor of the audit entry still
-        # exists when it is written; confirm, or allow it when another admin remains.
+        # Approved rule (AGENTS.md Contract 3): another admin has to do it.
         raise HTTPException(
             status.HTTP_409_CONFLICT, "you can't delete your own account: ask another admin"
         )

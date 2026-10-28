@@ -222,21 +222,28 @@ password (`POST /api/v1/me/password`). The CLI above and the API share the same 
 - **Passwords are write-only.** No response carries a password or its hash, and audit
   entries record only `"password": "<changed>"`.
 - **Duplicate usernames are refused ignoring case**, by the same check as
-  `create-user`. Only a real duplicate is reported as "already exists"; any other
-  database error is reported as an error.
+  `create-user`. Usernames are stored as typed and compared exactly at login; the
+  case-insensitive check is application code shared by the CLI and the API (there is
+  no case-insensitive index). Only a real duplicate is reported as "already exists";
+  any other database error is reported as an error.
 - **A reset ends sessions.** An admin resetting a user's password ends all of that
   user's sessions and clears their failed logins. It writes the user row before it
   deletes sessions, like the CLI, so a racing login either fails or loses its session.
+  Changing your own password follows the same order.
 - **Changing your own password** needs the current one and ends your other sessions
   (this one stays). A wrong current password counts as a failed login on your
-  account, so a stolen session can't guess it faster than the login form allows.
+  account, so a stolen session can't guess it faster than the login form allows. The
+  flip side: someone holding a stolen session can lock the account's password login
+  this way. That's no new exposure, since anyone can already lock it with failed logins.
 - **There is always an admin.** The last admin can't be demoted or deleted (409). The
   check runs after the change, in the same transaction, with the admin rows locked
   (Postgres), so two admins demoting each other at once can't leave none. An admin
   can't delete their own account; another admin has to.
 - **A role change takes effect on the user's next request**; their sessions stay.
 - **Audited.** Create, role change, reset, own password change and delete are each an
-  entry with `actor_type` `user` and the acting admin (or user) as `user_id`.
+  entry with `actor_type` `user` and the acting admin (or user) as `user_id`. A failed
+  login is a `user` entry with an empty `user_id` (nobody is logged in), and entries
+  keep their place with an empty `user_id` once the acting user is deleted.
 
 ## Network guard
 
