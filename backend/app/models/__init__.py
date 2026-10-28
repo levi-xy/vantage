@@ -9,6 +9,7 @@ from app.models.channel import Channel, ChannelType
 from app.models.dashboard import Dashboard
 from app.models.instance import Instance
 from app.models.link import Link
+from app.models.login_failure import LoginFailure
 from app.models.session import UserSession
 from app.models.setting import Setting
 from app.models.user import Role, User
@@ -23,6 +24,7 @@ __all__ = [
     "Dashboard",
     "Instance",
     "Link",
+    "LoginFailure",
     "Role",
     "Setting",
     "User",

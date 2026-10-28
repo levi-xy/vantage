@@ -99,17 +99,15 @@ class LoginRateLimiter:
     clear the cache. That keeps a full table from turning every refused attempt into a
     scan under the lock.
 
-    What this still doesn't prevent: an attacker can push a near-limit key out (e.g. a
-    username at 4 of 5), resetting its count, by filling the table with username keys
-    that have as few attempts left. Unlocked client keys don't help them: a client key
-    has more attempts left than such a username, so it is dropped first and even shields
-    the target by taking the batch ahead of it. In simulation that takes about
-    0.95 x max_keys x 4 attempts, about 38,000 at the default cap, spread over at least
-    about 760 addresses (or IPv6 /64s; 38,000 / 50 per client) within one window. With
-    a handful of addresses it never succeeds. Over IPv6 one /48 holds 65,536 separate
-    /64s, so the address floor is easy to meet there. Lockouts themselves are never
-    lost. The complete fix is counters that aren't capped in memory (per user, in the
-    database), a data-model change planned as task M1.8 in BUILD-PLAN.md.
+    What this alone doesn't prevent: an attacker can push a near-limit key out (e.g. a
+    username at 4 of 5), resetting its count, by filling the table with keys that have
+    as few attempts left (in simulation about 38,000 attempts from about 760 addresses
+    within one window). That's why counters for **existing users** don't live here
+    since M1.8: they are rows in the database (``app.core.login_failures``), which has
+    no key cap, so nothing can evict them and they survive a restart. This limiter
+    still holds the per-client keys and the keys of usernames that match no user. Those
+    can still be evicted that way, which only resets a junk username's or a client's
+    count; the per-user lock on a real account is unaffected.
     """
 
     def __init__(
@@ -252,12 +250,22 @@ class LoginRateLimiter:
         """Undo ``acquire`` for a successful login: clear the user's failures, refund one
         attempt on the other keys."""
         with self._lock:
-            self._full_until = 0.0  # may have freed a slot
             self._keys.pop(user_key, None)
-            for key in other_keys:
-                window = self._keys.get(key)
-                if window is not None and window.failures:
-                    window.failures.pop()
+            self._refund(other_keys)
+
+    def refund(self, keys: Iterable[str]) -> None:
+        """Undo ``acquire`` on ``keys``: remove one counted attempt from each."""
+        with self._lock:
+            self._refund(keys)
+
+    def _refund(self, keys: Iterable[str]) -> None:
+        # One attempt fewer can unlock a key, which makes it droppable: the cache may be
+        # stale (and succeeded() may have freed a slot).
+        self._full_until = 0.0
+        for key in keys:
+            window = self._keys.get(key)
+            if window is not None and window.failures:
+                window.failures.pop()
 
     def reset(self, key: str) -> None:
         with self._lock:

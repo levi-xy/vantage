@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from datetime import timedelta
 
 from fastapi import FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
@@ -9,7 +10,7 @@ from fastapi.responses import JSONResponse
 
 from app import __version__
 from app.api import api_router
-from app.api.auth import LOGIN_LIMITS
+from app.api.auth import LOGIN_LIMITS, LOGIN_WINDOW_SECONDS
 from app.api.deps import SAFE_METHODS
 from app.collectors.endpoint import router as metrics_router
 from app.collectors.scheduler import PollScheduler
@@ -18,6 +19,7 @@ from app.core.auth import LoginRateLimiter, Passwords
 from app.core.config import Settings, get_settings
 from app.core.crypto import SecretBox, load_master_key
 from app.core.db import make_engine, make_session_factory
+from app.core.login_failures import UserLoginFailures
 from app.core.prometheus_auth import PrometheusToken, load_prometheus_token
 from app.integrations.instance_config import NetGuardFactory, default_net_guard_factory
 from app.integrations.registry import Registry, builtin_registry
@@ -69,7 +71,11 @@ def create_app(
     app.state.engine = engine
     app.state.session_factory = make_session_factory(engine)
     app.state.passwords = passwords or Passwords()
-    app.state.login_limiter = LoginRateLimiter(LOGIN_LIMITS)
+    app.state.login_limiter = LoginRateLimiter(LOGIN_LIMITS, window_seconds=LOGIN_WINDOW_SECONDS)
+    # Failed logins for existing users: in the database, so they survive a restart (M1.8).
+    app.state.login_failures = UserLoginFailures(
+        LOGIN_LIMITS["user"], window=timedelta(seconds=LOGIN_WINDOW_SECONDS)
+    )
     # Tests pass their own registry; production always uses the built-in list.
     app.state.registry = registry if registry is not None else builtin_registry()
     # Tests inject a guard with a fake resolver; production uses the default policy.
