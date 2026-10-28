@@ -122,7 +122,7 @@ M0 ──► M1 ──► M2 ──┬──► M4a ─┐
 - Prometheus logs one "connection refused" on its first `/sd/targets` fetch, because the backend isn't listening yet. Harmless; it recovers on the next refresh.
 - Re-run on `main` after PRs #30–#34: the uvloop ping bug and the gateway drift are fixed. Still open:
   - A `ping_check` host that doesn't answer shows `poll failed (NoReply)` in its status. PR #33 gave `PingError` a readable message, but `NoReply` is `ping_check`'s own exception, so it still falls through to the generic branch in `collectors/scheduler.py`. Show the same text `test_connection` gives ("no reply from …"). Test the poll status for this case.
-  - Login attempts refused with 429 while an account is locked aren't audited, so an admin can't see that someone kept trying. Record them (as `login_failed` with a `locked` flag, or similar), without letting the audit table grow without bound under a spray.
+  - Login attempts refused with 429 while an account is locked aren't audited, so an admin can't see that someone kept trying. Record them (as `login_failed` with a `locked` flag, or similar), without letting the audit table grow without bound under a spray. Needs a maintainer decision first: the new flag changes what audit entries contain (Contract 2).
 - From the PR #33 review: the scheduler's `PingError` branch puts the exception text in the instance status, trusting every `PingError` message to be secret-free by convention only. Add a test that the poll status never contains config values.
 - CI never sends real ICMP (both event-loop variants of the socket test skip there), so `ping_check` changes still need a run on the real Docker stack.
 - Docs nits from the PR #26 review, for the next edit of `docs/INTEGRATIONS.md`:
@@ -182,7 +182,7 @@ Each task: config schema, `test_connection`, scrape targets and/or `poll`, cards
 | M5.2 | Card framework | Card registry, grid via react-grid-layout, layout saved per dashboard, new instances' cards added automatically |
 | M5.3 | Live updates | WebSocket pushes instance status and refresh hints; UI reconnects automatically |
 | M5.4 | Overview row | Devices healthy, active alerts, WAN status, total throughput |
-| M5.5 | Integration cards | One card per M4 integration (split into sub-tasks per card if parallelizing), including switch faceplate and NAS drive bays. Card types already declared by merged integrations, so they need a frontend card: `smart-disks` (PR #30), `cloudflared` (PR #31), `pfsense-overview` and `pfsense-gateways` (PR #32), plus those of the M2.5/M2.7 reference integrations |
+| M5.5 | Integration cards | One card per M4 integration (split into sub-tasks per card if parallelizing), including switch faceplate and NAS drive bays. Card types already declared by merged integrations, so they need a frontend card: `smart-disks` (PR #30), `cloudflared` (PR #31), `pfsense-overview` and `pfsense-gateways` (PR #32), plus the reference integrations' `http-check`, `linux-host` and `ping-check` |
 
 ## M6: Network map
 
