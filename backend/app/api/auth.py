@@ -15,6 +15,7 @@ from app.api.deps import (
     DbDep,
     SettingsDep,
     clear_session_cookie,
+    get_login_failures,
     get_login_limiter,
     get_passwords,
     require_json,
@@ -25,6 +26,7 @@ from app.core import audit
 from app.core.auth import LoginRateLimiter, Passwords, csrf_token, new_session_token, session_id
 from app.core.config import Settings
 from app.core.db import utcnow
+from app.core.login_failures import UserLoginFailures
 from app.models import Role, Setting, User, UserSession
 
 router = APIRouter()
@@ -39,11 +41,15 @@ MIN_PASSWORD_LENGTH = 12
 # Argon2 cost doesn't depend on password length, but there's no reason to accept megabytes.
 MAX_PASSWORD_LENGTH = 1024
 
-# Failed logins allowed per 15 minutes, per username and per client address.
+# Failed logins allowed per 15 minutes, per username and per client address. The "user"
+# limit applies to accounts in the database (app.core.login_failures) and to usernames
+# that match no account in the in-memory limiter.
 LOGIN_LIMITS = {"user": 5, "client": 50}
+LOGIN_WINDOW_SECONDS = 900
 
 PasswordsDep = Annotated[Passwords, Depends(get_passwords)]
 LimiterDep = Annotated[LoginRateLimiter, Depends(get_login_limiter)]
+CounterDep = Annotated[UserLoginFailures, Depends(get_login_failures)]
 
 
 class SetupStatus(BaseModel):
@@ -162,6 +168,20 @@ def _record_failed_login(db: Session, user: User | None) -> None:
     db.commit()
 
 
+def _case_variant_id(db: Session, username: str) -> int | None:
+    """The account a username matches only case-insensitively, if any (lowest id)."""
+    return db.scalar(
+        select(User.id)
+        .where(func.lower(User.username) == username.lower())
+        .order_by(User.id)
+        .limit(1)
+    )
+
+
+def _memory_user_key(body: LoginRequest) -> str:
+    return f"user:{body.username.lower()}"
+
+
 @router.post("/auth/login", dependencies=[Depends(require_json)])
 def login(
     body: LoginRequest,
@@ -171,13 +191,30 @@ def login(
     settings: SettingsDep,
     passwords: PasswordsDep,
     limiter: LimiterDep,
+    counter: CounterDep,
     client: ClientAddressDep,
 ) -> Me:
     # `client` is the real client behind a trusted proxy (VANTAGE_TRUSTED_PROXIES), else
     # the TCP peer; an IPv6 client is its /64.
-    user_key, client_key = f"user:{body.username.lower()}", f"client:{client}"
-    # Counted as a failure up front, so parallel requests can't all slip past the limit.
-    retry_after = limiter.acquire([user_key, client_key])
+    client_key = f"client:{client}"
+    user = db.scalar(select(User).where(User.username == body.username))
+    # Whose failure counter this attempt counts on. Login compares usernames exactly, but
+    # a name that differs only in case counts on that account too, as the old lowercased
+    # in-memory key did: otherwise "ADMIN" would answer 401 while "admin" is locked, and
+    # how case variants behave would tell existing usernames from unknown ones.
+    counted_id = user.id if user is not None else _case_variant_id(db, body.username)
+    # In memory: the client, and a username that matches no account. An account's
+    # counter is in the database (app.core.login_failures), so junk usernames can't
+    # evict it and it survives a restart.
+    memory_keys = [client_key] if counted_id is not None else [_memory_user_key(body), client_key]
+    # Each counter counts the attempt as a failure up front, so parallel requests can't
+    # all slip past the limit. The in-memory one goes first: a flood from one client is
+    # refused without writing to the database.
+    retry_after = limiter.acquire(memory_keys)
+    if retry_after is None and counted_id is not None:
+        retry_after = counter.acquire(db, counted_id)
+        if retry_after is not None:
+            limiter.refund(memory_keys)  # a refused attempt counts nothing anywhere
     if retry_after is not None:
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
@@ -185,7 +222,6 @@ def login(
             headers={"Retry-After": str(retry_after)},
         )
 
-    user = db.scalar(select(User).where(User.username == body.username))
     password = body.password.get_secret_value()
     if not passwords.verify(user.password_hash if user else None, password) or user is None:
         _record_failed_login(db, user)
@@ -216,7 +252,9 @@ def login(
         _record_failed_login(db, db.get(User, user.id))
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid username or password")
     db.refresh(user)
-    limiter.succeeded(user_key, [client_key])
+    # Committed with the session below: the failures before this login no longer count.
+    counter.clear(db, user.id)
+    limiter.refund(memory_keys)
     audit.record(
         db,
         action=audit.Action.LOGIN,

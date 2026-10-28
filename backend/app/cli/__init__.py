@@ -5,6 +5,7 @@ Run it where the backend runs::
     docker compose exec backend python -m app.cli reset-password <username>
     docker compose exec backend python -m app.cli create-user <username> --role admin
     docker compose exec backend python -m app.cli list-users
+    docker compose exec backend python -m app.cli unlock <username>
 
 Shell access to the host is the trust boundary, so no login is needed.
 
@@ -12,11 +13,12 @@ What it loads, and what it doesn't:
 
 * The app's own settings (``load_settings``), database engine and session factory,
   Argon2 hasher (``Passwords``, the same parameters as login) and audit writer.
-* **Not the master key.** The CLI only touches ``users``, ``sessions``, ``settings``
-  (the setup marker) and ``audit_log``, none of which hold encrypted data, so it has
-  nothing to encrypt or decrypt. The master key check exists so the app never stores
-  secrets without encryption; the CLI stores no secrets, so it skips nothing by not
-  loading it. Not needing the key also means a broken key file doesn't block recovery.
+* **Not the master key.** The CLI only touches ``users``, ``sessions``,
+  ``login_failures``, ``settings`` (the setup marker) and ``audit_log``, none of which
+  hold encrypted data, so it has nothing to encrypt or decrypt. The master key check
+  exists so the app never stores secrets without encryption; the CLI stores no
+  secrets, so it skips nothing by not loading it. Not needing the key also means a
+  broken key file doesn't block recovery.
 * Not the web app, the poll scheduler or the collector: ``app.main`` is never imported.
 * It never creates or migrates a database. A SQLite file that doesn't exist, or a
   database without the tables, is an error (the backend applies migrations on start).
@@ -47,16 +49,21 @@ from app.core import audit
 from app.core.auth import Passwords
 from app.core.config import ConfigError, Settings, load_settings
 from app.core.db import make_engine, make_session_factory
+from app.core.login_failures import UserLoginFailures
 from app.models import Role, Setting, User, UserSession
 
 # Recorded in the audit entry's ``changes`` so CLI actions can be told apart from API
 # ones. ``user_id`` (the actor) is empty: the operator is whoever has a shell on the host.
 AUDIT_SOURCE = "cli"
-_REQUIRED_TABLES = ("users", "sessions", "settings", "audit_log")
+_REQUIRED_TABLES = ("users", "sessions", "login_failures", "settings", "audit_log")
 
+# Printed after reset-password and unlock, which clear the user's failed-login count
+# (kept in the database). The per-client limit (failures from one address) is in the
+# backend's memory, so only a restart clears that.
 LIMITER_HINT = (
-    "If this user is locked out by the login rate limit, restart the backend to clear "
-    "it: docker compose restart backend"
+    "The user's failed-login count was cleared. If logins from one address are still "
+    "refused (too many failures from that address), restart the backend to clear the "
+    "per-address limit: docker compose restart backend"
 )
 
 
@@ -239,6 +246,10 @@ def reset_password(ctx: Context, username: str, from_stdin: bool) -> None:
             "CursorResult[Any]",
             db.execute(delete(UserSession).where(UserSession.user_id == user.id)),
         ).rowcount
+        # The failures counted so far were guesses at the old password: they say nothing
+        # about the new one, and keeping them would leave the user locked out after the
+        # reset that was meant to let them back in.
+        cleared = UserLoginFailures.clear(db, user.id)
         audit.record(
             db,
             action=audit.Action.UPDATE,
@@ -246,10 +257,38 @@ def reset_password(ctx: Context, username: str, from_stdin: bool) -> None:
             target_id=user.id,
             user_id=None,
             # The password itself is never passed in; the key is redacted regardless.
-            changes={"password": audit.REDACTED, "sessions_ended": ended, "source": AUDIT_SOURCE},
+            changes={
+                "password": audit.REDACTED,
+                "sessions_ended": ended,
+                "failed_logins_cleared": cleared,
+                "source": AUDIT_SOURCE,
+            },
         )
         db.commit()
-        ctx.console.out(f"Password reset for {user.username!r}; ended {ended} session(s).")
+        ctx.console.out(
+            f"Password reset for {user.username!r}; ended {ended} session(s), "
+            f"cleared {cleared} failed login(s)."
+        )
+    ctx.console.out(LIMITER_HINT)
+
+
+def unlock(ctx: Context, username: str) -> None:
+    """Clear the user's failed-login count, so a locked-out user can log in at once."""
+    with ctx.session_factory() as db:
+        user = _find_user(db, username)
+        if user is None:
+            raise _no_such_user()
+        cleared = UserLoginFailures.clear(db, user.id)
+        audit.record(
+            db,
+            action=audit.Action.UPDATE,
+            target_type="user",
+            target_id=user.id,
+            user_id=None,
+            changes={"failed_logins_cleared": cleared, "source": AUDIT_SOURCE},
+        )
+        db.commit()
+        ctx.console.out(f"Unlocked {user.username!r}; cleared {cleared} failed login(s).")
     ctx.console.out(LIMITER_HINT)
 
 
@@ -257,8 +296,8 @@ def create_user(ctx: Context, username: str, role: Role, from_stdin: bool) -> No
     username = _validate_username(username)
 
     def exists(db: Session) -> bool:
-        # Case-insensitive: login rate limiting keys on the lowercased name, so "Admin"
-        # and "admin" would share a lockout, and look alike to people.
+        # Case-insensitive: "Admin" and "admin" look alike to people, and a failed login
+        # for a name that differs only in case counts on the existing account.
         found = db.scalar(select(User.id).where(func.lower(User.username) == username.lower()))
         return found is not None
 
@@ -396,6 +435,17 @@ def build_parser() -> argparse.ArgumentParser:
         description="List users.",
         allow_abbrev=False,
     )
+
+    unlock_cmd = commands.add_parser(
+        "unlock",
+        help="clear a user's failed logins so they can log in again now",
+        description=(
+            "Clear a user's failed-login count (the per-user login lockout). The "
+            "per-address limit lives in the backend's memory: a restart clears it."
+        ),
+        allow_abbrev=False,
+    )
+    unlock_cmd.add_argument("username")
     return parser
 
 
@@ -425,6 +475,8 @@ def main(
             reset_password(ctx, args.username, args.password_stdin)
         elif args.command == "create-user":
             create_user(ctx, args.username, Role(args.role), args.password_stdin)
+        elif args.command == "unlock":
+            unlock(ctx, args.username)
         else:
             list_users(ctx)
     except (CliError, ConfigError) as exc:  # ConfigError names the variable, never its value

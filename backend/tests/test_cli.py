@@ -1,4 +1,4 @@
-"""Admin CLI (M1.6): reset-password, create-user, list-users."""
+"""Admin CLI (M1.6): reset-password, create-user, list-users; unlock (M1.8)."""
 
 import io
 import json
@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from app.api.auth import SETUP_MARKER
+from app.api.auth import LOGIN_LIMITS, SETUP_MARKER
 from app.cli import AUDIT_SOURCE, LIMITER_HINT, Console, build_parser, main
 from app.collectors.scheduler import PollScheduler
 from app.core.auth import Passwords
@@ -22,7 +22,7 @@ from app.core.config import Settings, normalize_database_url
 from app.core.crypto import SecretBox
 from app.core.db import make_session_factory
 from app.main import create_app
-from app.models import AuditLog, Role, Setting, User, UserSession
+from app.models import AuditLog, LoginFailure, Role, Setting, User, UserSession
 from tests.conftest import BACKEND_DIR, TEST_MASTER_KEY
 from tests.test_auth import ADMIN, FAST_HASHER, PASSWORD, add_user, do_setup, login, make_client
 
@@ -134,7 +134,12 @@ def test_reset_ends_sessions_and_swaps_password(
     assert entry.target_type == "user"
     assert entry.target_id == str(get_user(db, ADMIN).id)
     assert entry.user_id is None
-    assert entry.changes == {"password": "<changed>", "sessions_ended": 2, "source": AUDIT_SOURCE}
+    assert entry.changes == {
+        "password": "<changed>",
+        "sessions_ended": 2,
+        "failed_logins_cleared": 0,
+        "source": AUDIT_SOURCE,
+    }
 
     # No password or hash anywhere: audit table, CLI output, logs.
     everything = raw_audit_text(db) + run.out + run.err + caplog.text
@@ -556,3 +561,81 @@ def test_viewer_without_admin_warns(cli: CliRunner) -> None:
     assert run.code == 0 and run.err == ""
     run = cli("create-user", "viewer2", "--role", "viewer", "--password-stdin", stdin=PASSWORD)
     assert run.code == 0 and run.err == ""
+
+
+# --- unlock ----------------------------------------------------------------------------
+
+
+def _lock_out(db_url: str, username: str) -> None:
+    with make_client(db_url) as browser:
+        for _ in range(LOGIN_LIMITS["user"]):
+            r = browser.post("/api/v1/auth/login", json={"username": username, "password": "wrong"})
+            assert r.status_code == 401
+        r = browser.post("/api/v1/auth/login", json={"username": username, "password": PASSWORD})
+        assert r.status_code == 429
+
+
+def test_unlock_lets_a_locked_user_log_in_at_once(
+    cli: CliRunner, db: Session, db_url: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    add_user(db, ADMIN, Role.ADMIN)
+    _lock_out(db_url, ADMIN)
+
+    run = cli("unlock", ADMIN)
+    assert run.code == 0, run.err
+    assert f"cleared {LOGIN_LIMITS['user']} failed login(s)" in run.out
+    assert LIMITER_HINT in run.out
+    db.expire_all()
+    assert db.scalars(select(LoginFailure)).all() == []
+
+    # A fresh app on the same database: the lockout came from the database, not memory.
+    with make_client(db_url) as browser:
+        login(browser, ADMIN)
+
+    entry = next(r for r in audit_rows(db) if r.action == "update")
+    assert entry.target_type == "user"
+    assert entry.target_id == str(get_user(db, ADMIN).id)
+    assert entry.user_id is None
+    assert entry.changes == {"failed_logins_cleared": LOGIN_LIMITS["user"], "source": AUDIT_SOURCE}
+    everything = raw_audit_text(db) + run.out + run.err + caplog.text
+    for secret in (PASSWORD, get_user(db, ADMIN).password_hash, "$argon2"):
+        assert secret not in everything
+
+
+def test_unlock_only_touches_that_user(cli: CliRunner, db: Session, db_url: str) -> None:
+    add_user(db, ADMIN, Role.ADMIN)
+    add_user(db, "viewer1", Role.VIEWER)
+    _lock_out(db_url, ADMIN)
+    _lock_out(db_url, "viewer1")
+    assert cli("unlock", "viewer1").code == 0
+    with make_client(db_url) as browser:
+        login(browser, "viewer1")
+        r = browser.post("/api/v1/auth/login", json={"username": ADMIN, "password": PASSWORD})
+        assert r.status_code == 429
+
+
+def test_unlock_user_that_is_not_locked(cli: CliRunner, db: Session) -> None:
+    add_user(db, ADMIN, Role.ADMIN)
+    run = cli("unlock", ADMIN)
+    assert run.code == 0, run.err
+    assert "cleared 0 failed login(s)" in run.out
+
+
+def test_unlock_unknown_user(cli: CliRunner, db: Session) -> None:
+    add_user(db, ADMIN, Role.ADMIN)
+    run = cli("unlock", "Admin")
+    assert run.code == 1
+    assert "no user with that username" in run.err
+    assert "Admin" not in run.err
+    assert audit_rows(db) == []
+
+
+def test_reset_password_clears_the_lockout(cli: CliRunner, db: Session, db_url: str) -> None:
+    add_user(db, ADMIN, Role.ADMIN)
+    _lock_out(db_url, ADMIN)
+    run = cli("reset-password", ADMIN, "--password-stdin", stdin=NEW_PASSWORD + "\n")
+    assert run.code == 0, run.err
+    assert f"cleared {LOGIN_LIMITS['user']} failed login(s)" in run.out
+    with make_client(db_url) as browser:
+        login(browser, ADMIN, NEW_PASSWORD)

@@ -53,30 +53,34 @@ The login rate limit counts failures per username (5 per 15 minutes) and per cli
 address (50 per 15 minutes). An IPv6 client counts as its whole /64, since one host
 usually controls a /64 and could otherwise rotate addresses for fresh budgets.
 
-The limiter tracks at most 10,000 keys in memory. When it is full it drops expired keys,
+**Per-user counts for existing accounts are in the database** (`login_failures`, one
+row per failed attempt: a user id and a time, nothing else). The limit is a sliding
+15-minute window over those rows. There is no cap on how many accounts are tracked, so
+no spray of other usernames can push an account's count out, and lockouts survive a
+restart. Each attempt's row is committed before the password check, so parallel
+guesses can't get past the limit; a refused attempt (429) deletes its own row, and rows
+that left the window are pruned on the user's next attempt. A username that differs
+from an account's only in case counts on that account (login still compares names
+exactly), so case variants behave the same for existing and unknown names. A successful
+login clears the user's rows.
+
+Usernames that match no account, and client addresses, are counted in memory. The
+in-memory limiter tracks at most 10,000 keys. When it is full it drops expired keys,
 then keys still under their limit with the most attempts left (limit minus recent
 failures; least recently used first among equals), 5% of the table per scan. It never
-drops a key that is locked out, so spraying junk usernames from many addresses can't
-unlock an account, and a key close to its limit (a username at 4 of 5) goes last. If
-too few keys can be dropped, new login attempts are refused with 429 (fail closed) until
-the first lockout ends, at most 15 minutes. That result is cached, so refused attempts
-don't rescan the table. Already logged-in sessions are not affected.
+drops a key that is locked out. If too few keys can be dropped, new login attempts are
+refused with 429 (fail closed) until the first lockout ends, at most 15 minutes. That
+result is cached, so refused attempts don't rescan the table. Already logged-in sessions
+are not affected. A large enough spray (about 38,000 attempts from about 760 addresses
+in simulation) can still push out a near-limit key here, but those are only junk
+usernames and client addresses: a real account's count is not in this table.
 
-What it still doesn't prevent: an attacker can push a near-limit key out (a username at
-4 of 5), resetting its count, by filling the table with username keys that have as few
-attempts left. Unlocked client keys don't help: a client key has more attempts left
-than such a username, so it is dropped first and even shields the target. In
-simulation this takes **about 38,000 attempts from at least about 760 addresses (or
-IPv6 /64s)** within 15 minutes; with a handful of addresses it never succeeds. Over
-IPv6, one /48 contains 65,536 separate /64s, so that address floor is easy to meet
-there. Lockouts themselves are never lost. The complete fix is per-user counters in
-the database, a data-model change planned as task M1.8 in `BUILD-PLAN.md`.
-
-The limiter lives in the backend process's memory. **Restarting the backend clears
-it**, including every lockout. That is also how an admin who is locked out
-legitimately (or caught by the fail-closed state above) gets back in right away:
-`docker compose restart backend`. Anyone who can restart the backend already has shell
-access to the host, so this gives nothing to a network attacker.
+The in-memory limiter is cleared by **restarting the backend**; database lockouts are
+not. A legitimately locked-out user gets back in right away with
+`docker compose exec backend python -m app.cli unlock <username>` (see the admin CLI
+below). Being caught by the per-address limit or the fail-closed state needs
+`docker compose restart backend`. Anyone who can do either already has shell access to
+the host, so this gives nothing to a network attacker.
 
 On a LAN reached over IPv6, every host in one /64 shares one per-client budget, the
 same way hosts behind one NAT address share one on IPv4.
@@ -160,6 +164,7 @@ next request. The same CLI has:
 ```bash
 docker compose exec backend python -m app.cli create-user <username> --role admin
 docker compose exec backend python -m app.cli list-users
+docker compose exec backend python -m app.cli unlock <username>
 ```
 
 `list-users` shows id, username, role, created and last-login times, never hashes.
@@ -179,10 +184,11 @@ docker compose exec backend python -m app.cli list-users
 - **Same rules as setup and login.** Usernames match the setup wizard's pattern and are
   stored as typed; login compares them exactly, so `reset-password` does too.
   `create-user` refuses a name that differs from an existing one only in case, since
-  the login rate limit treats them as one. It warns when no admin exists afterwards,
+  a failed login with either counts on the existing account. It warns when no admin exists afterwards,
   since browser setup is then closed. Passwords are 12 to 1024 characters and are
   hashed with the same Argon2 parameters as login.
-- **Audited.** A reset is an `update` on the user, a new user a `create`. The actor
+- **Audited.** A reset or an unlock is an `update` on the user (with
+  `changes.failed_logins_cleared`, a count), a new user a `create`. The actor
   (`user_id`) is empty and `changes.source` is `"cli"`. The password is recorded only
   as `"<changed>"`; neither it nor its hash reaches the table, the output or any log.
   Error messages don't repeat what was typed (an unknown username, an unknown
@@ -192,9 +198,11 @@ docker compose exec backend python -m app.cli list-users
   It never starts the web server, the poll scheduler or the collector, and never
   creates or migrates a database: it stops if the SQLite file or the tables are
   missing (the backend applies migrations when it starts).
-- **Login lockouts.** A reset doesn't clear the login rate limit, which lives in the
-  backend's memory. If the user is locked out, `docker compose restart backend` clears
-  it (see above).
+- **Login lockouts.** `unlock <username>` clears the user's failed-login count, and so
+  does `reset-password` (failures counted against the old password say nothing about
+  the new one). Neither can clear the per-address limit, which is in the backend's
+  memory: if logins from one address are still refused, `docker compose restart
+  backend` clears it (see above).
 
 ## Network guard
 

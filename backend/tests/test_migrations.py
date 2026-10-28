@@ -20,6 +20,8 @@ EXPECTED_TABLES = {
     "settings",
     # Added in M1.3 with maintainer approval (not in the original Contract 2).
     "sessions",
+    # Added in M1.8 with maintainer approval.
+    "login_failures",
 }
 
 

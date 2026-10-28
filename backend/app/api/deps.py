@@ -12,6 +12,7 @@ from app.core.auth import LoginRateLimiter, Passwords, csrf_matches, session_id
 from app.core.client_address import CLIENT_ADDRESS_HEADER, resolve_client_address
 from app.core.config import Settings
 from app.core.db import session_scope, utcnow
+from app.core.login_failures import UserLoginFailures
 from app.models import Role, User, UserSession
 
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
@@ -38,6 +39,11 @@ def get_passwords(request: Request) -> Passwords:
 def get_login_limiter(request: Request) -> LoginRateLimiter:
     limiter: LoginRateLimiter = request.app.state.login_limiter
     return limiter
+
+
+def get_login_failures(request: Request) -> UserLoginFailures:
+    counter: UserLoginFailures = request.app.state.login_failures
+    return counter
 
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
