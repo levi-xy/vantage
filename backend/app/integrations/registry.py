@@ -14,6 +14,7 @@ from app.integrations.base import Category, Integration
 from app.integrations.builtin.http_check import HttpCheck
 from app.integrations.builtin.linux_host import LinuxHost
 from app.integrations.builtin.ping_check import PingCheck
+from app.integrations.builtin.smart_exporter import SmartExporter
 from app.integrations.schema import config_json_schema
 
 # Built-in integrations, one per line, sorted by type_id.
@@ -21,6 +22,7 @@ BUILTIN_INTEGRATIONS: tuple[type[Integration], ...] = (
     HttpCheck,  # http_check
     LinuxHost,  # linux_host
     PingCheck,  # ping_check
+    SmartExporter,  # smart_exporter
 )
 
 # Lowercase slug that can sit inside a Prometheus metric name: vantage_<type_id>_<metric>.
