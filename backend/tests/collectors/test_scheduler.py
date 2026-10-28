@@ -16,7 +16,7 @@ from app.collectors.scheduler import MAX_POLL_INTERVAL_SECONDS, PollScheduler, p
 from app.collectors.store import MetricsStore, make_registry
 from app.core.crypto import SecretBox
 from app.core.db import make_session_factory, utcnow
-from app.core.net_guard import NetGuard, NetPolicy
+from app.core.net_guard import NetGuard, NetPolicy, PingError
 from app.integrations import instance_config as ic
 from app.integrations.base import InstanceContext, Integration, Sample
 from app.integrations.registry import Registry
@@ -87,6 +87,14 @@ class Guarded(FakeIntegration):
         return []
 
 
+class PingFails(FakeIntegration):
+    type_id = "ping_fails"
+
+    async def poll(self, ctx: InstanceContext) -> list[Sample]:
+        # What the guarded ping client raises for a broadcast address.
+        raise PingError("the system refused to ping 10.0.0.255 (is it a broadcast address?)")
+
+
 class Garbage(FakeIntegration):
     type_id = "garbage"
 
@@ -127,7 +135,18 @@ class OtherConfig(BaseModel):
 
 
 REGISTRY = Registry(
-    [Poller, Raiser, Hanger, HttpTimeout, Guarded, Garbage, Leaky, BadInterval, ScrapeOnly]
+    [
+        Poller,
+        Raiser,
+        Hanger,
+        HttpTimeout,
+        Guarded,
+        PingFails,
+        Garbage,
+        Leaky,
+        BadInterval,
+        ScrapeOnly,
+    ]
 )
 
 
@@ -256,6 +275,10 @@ async def test_successful_poll_gets_context_and_standard_labels(
         ("hanger", "poll timed out"),
         ("http_timeout", "poll timed out"),
         ("guarded", "refused by the network guard"),
+        (
+            "ping_fails",
+            "ping failed: the system refused to ping 10.0.0.255 (is it a broadcast address?)",
+        ),
         ("garbage", "poll returned something other than a list of samples"),
     ],
 )

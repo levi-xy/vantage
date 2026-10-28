@@ -887,6 +887,9 @@ def test_snmp_is_read_only() -> None:
 # injected as the client's socket_factory.
 
 PING_OK = "10.0.0.30"
+# The ping client's tests run on the default asyncio loop and on uvloop (what uvicorn
+# runs in the container); see pytest_asyncio_loop_factories in tests/conftest.py.
+BOTH_LOOPS = pytest.mark.asyncio(loop_factories=["asyncio", "uvloop"])
 
 
 def pinger(
@@ -916,6 +919,7 @@ def icmp() -> FakeIcmp:
 
 
 @pytest.mark.parametrize("address", DENIED)
+@BOTH_LOOPS
 async def test_ping_denied_addresses_never_open_a_socket(icmp: FakeIcmp, address: str) -> None:
     with pytest.raises(NetGuardError):
         await pinger(address, icmp).ping()
@@ -924,6 +928,7 @@ async def test_ping_denied_addresses_never_open_a_socket(icmp: FakeIcmp, address
 
 
 @pytest.mark.parametrize("host", AMBIGUOUS_OR_INVALID)
+@BOTH_LOOPS
 async def test_ping_ambiguous_or_invalid_hosts_rejected_without_resolving(
     icmp: FakeIcmp, host: str
 ) -> None:
@@ -932,6 +937,7 @@ async def test_ping_ambiguous_or_invalid_hosts_rejected_without_resolving(
     assert icmp.opened == []
 
 
+@BOTH_LOOPS
 async def test_ping_own_address_denied_by_default_policy(icmp: FakeIcmp) -> None:
     # fixed_own_addresses makes 10.255.0.1 "ours".
     icmp.answer("10.255.0.1")
@@ -941,6 +947,7 @@ async def test_ping_own_address_denied_by_default_policy(icmp: FakeIcmp) -> None
 
 
 @pytest.mark.parametrize(("address", "expected"), ALLOWED)
+@BOTH_LOOPS
 async def test_ping_private_ranges_allowed(icmp: FakeIcmp, address: str, expected: str) -> None:
     icmp.answer(expected)
     result = await pinger(address, icmp).ping()
@@ -951,6 +958,7 @@ async def test_ping_private_ranges_allowed(icmp: FakeIcmp, address: str, expecte
     assert [p.type for p in icmp.sent] == [128 if v6 else 8]
 
 
+@BOTH_LOOPS
 async def test_ping_public_address_needs_extra_cidr(icmp: FakeIcmp) -> None:
     with pytest.raises(NetGuardError):
         await pinger("192.0.2.30", icmp).ping()
@@ -961,6 +969,7 @@ async def test_ping_public_address_needs_extra_cidr(icmp: FakeIcmp) -> None:
 
 
 @pytest.mark.parametrize("cidr", ["127.0.0.0/8", "169.254.0.0/16", "0.0.0.0/0"])
+@BOTH_LOOPS
 async def test_ping_extra_cidrs_never_override_denied(icmp: FakeIcmp, cidr: str) -> None:
     guard = NetGuard(NetPolicy(extra_allowed=parse_cidrs([cidr])), resolver=no_resolver)
     for host in ("127.0.0.1", "169.254.169.254"):
@@ -969,6 +978,7 @@ async def test_ping_extra_cidrs_never_override_denied(icmp: FakeIcmp, cidr: str)
     assert icmp.opened == []
 
 
+@BOTH_LOOPS
 async def test_ping_dns_rebinding_cannot_change_pinged_address(icmp: FakeIcmp) -> None:
     resolver = FakeResolver([PING_OK], ["127.0.0.1"])  # second answer would be loopback
     icmp.answer(PING_OK)
@@ -990,6 +1000,7 @@ async def test_ping_dns_rebinding_cannot_change_pinged_address(icmp: FakeIcmp) -
         [PING_OK, "fe80::1%eth0"],
     ],
 )
+@BOTH_LOOPS
 async def test_ping_mixed_answers_denied(icmp: FakeIcmp, answers: list[str]) -> None:
     guard = NetGuard(resolver=FakeResolver(answers))
     with pytest.raises(NetGuardError):
@@ -997,6 +1008,7 @@ async def test_ping_mixed_answers_denied(icmp: FakeIcmp, answers: list[str]) -> 
     assert icmp.opened == []
 
 
+@BOTH_LOOPS
 async def test_ping_never_reaches_a_cloud_host(icmp: FakeIcmp, public_test_net: None) -> None:
     # Public answer, private answer, or literal: a declared cloud host is never pinged.
     for answer in ("192.0.2.50", PING_OK):
@@ -1011,6 +1023,7 @@ async def test_ping_never_reaches_a_cloud_host(icmp: FakeIcmp, public_test_net: 
     assert icmp.opened == []
 
 
+@BOTH_LOOPS
 async def test_ping_resolution_failure(icmp: FakeIcmp) -> None:
     async def failing(host: str, port: int) -> Sequence[str]:
         raise OSError("no such host")
@@ -1020,6 +1033,7 @@ async def test_ping_resolution_failure(icmp: FakeIcmp) -> None:
     assert icmp.opened == []
 
 
+@BOTH_LOOPS
 async def test_ping_sends_well_formed_echo_requests(icmp: FakeIcmp) -> None:
     icmp.answer(PING_OK)
     result = await pinger(PING_OK, icmp, count=3).ping()
@@ -1036,6 +1050,7 @@ async def test_ping_sends_well_formed_echo_requests(icmp: FakeIcmp) -> None:
     assert icmp.opened[0].closed
 
 
+@BOTH_LOOPS
 async def test_ping_ipv6_echo(icmp: FakeIcmp) -> None:
     icmp.answer("fd00::30")
     result = await pinger("[fd00::30]", icmp, count=2).ping()
@@ -1043,6 +1058,7 @@ async def test_ping_ipv6_echo(icmp: FakeIcmp) -> None:
     assert {(p.type, p.code) for p in icmp.sent} == {(128, 0)}
 
 
+@BOTH_LOOPS
 async def test_ping_nonce_is_fresh_per_run(icmp: FakeIcmp) -> None:
     icmp.answer(PING_OK)
     await pinger(PING_OK, icmp).ping()
@@ -1050,6 +1066,7 @@ async def test_ping_nonce_is_fresh_per_run(icmp: FakeIcmp) -> None:
     assert icmp.sent[0].payload != icmp.sent[1].payload
 
 
+@BOTH_LOOPS
 async def test_ping_counts_loss(icmp: FakeIcmp) -> None:
     icmp.answer(PING_OK, drop(1))
     result = await pinger(PING_OK, icmp, count=3, reply_timeout=0.1).ping()
@@ -1058,12 +1075,14 @@ async def test_ping_counts_loss(icmp: FakeIcmp) -> None:
     assert len(result.rtts) == 2
 
 
+@BOTH_LOOPS
 async def test_ping_no_reply_is_a_result_not_an_error(icmp: FakeIcmp) -> None:
     result = await pinger(PING_OK, icmp, count=2, reply_timeout=0.05).ping()
     assert (result.sent, result.received, result.loss_ratio) == (2, 0, 1.0)
     assert (result.rtt_min, result.rtt_avg, result.rtt_max) == (None, None, None)
 
 
+@BOTH_LOOPS
 async def test_ping_ignores_replies_that_are_not_ours(icmp: FakeIcmp) -> None:
     template = net_guard._echo_request(v6=False, identifier=1, sequence=0, payload=b"x" * 16)
     icmp.preload = [
@@ -1083,6 +1102,7 @@ async def test_ping_ignores_replies_that_are_not_ours(icmp: FakeIcmp) -> None:
     assert (result.sent, result.received) == (2, 2)
 
 
+@BOTH_LOOPS
 async def test_ping_late_reply_is_not_counted_for_the_next_packet(icmp: FakeIcmp) -> None:
     # Packet 0's reply arrives while packet 1 waits: it must not count for packet 1.
     # Packet 0 waits 0-0.15 s; packet 1 is sent at 0.2 s and waits until 0.35 s.
@@ -1091,6 +1111,7 @@ async def test_ping_late_reply_is_not_counted_for_the_next_packet(icmp: FakeIcmp
     assert (result.sent, result.received) == (2, 0)
 
 
+@BOTH_LOOPS
 async def test_ping_send_and_receive_errors_count_as_loss(icmp: FakeIcmp) -> None:
     icmp.send_error = OSError(113, "No route to host")
     result = await pinger(PING_OK, icmp, count=2).ping()
@@ -1103,6 +1124,7 @@ async def test_ping_send_and_receive_errors_count_as_loss(icmp: FakeIcmp) -> Non
     assert all(s.closed for s in icmp.opened)
 
 
+@BOTH_LOOPS
 async def test_ping_permission_denied(icmp: FakeIcmp) -> None:
     icmp.open_error = PermissionError(13, "Permission denied")
     with pytest.raises(PingError, match="ping_group_range"):
@@ -1114,6 +1136,7 @@ async def test_ping_permission_denied(icmp: FakeIcmp) -> None:
     assert icmp.opened == []
 
 
+@BOTH_LOOPS
 async def test_ping_broadcast_connect_refused_has_its_own_message(icmp: FakeIcmp) -> None:
     # Without SO_BROADCAST the kernel refuses connect() to a broadcast address (EACCES).
     icmp.answer("10.0.0.255")
@@ -1127,6 +1150,7 @@ async def test_ping_broadcast_connect_refused_has_its_own_message(icmp: FakeIcmp
     assert icmp.opened[0].closed
 
 
+@BOTH_LOOPS
 async def test_ping_connect_failure(icmp: FakeIcmp) -> None:
     icmp.connect_error = OSError(101, "Network is unreachable")
     with pytest.raises(PingError) as info:
@@ -1136,6 +1160,7 @@ async def test_ping_connect_failure(icmp: FakeIcmp) -> None:
     assert icmp.opened[0].closed
 
 
+@BOTH_LOOPS
 async def test_ping_reply_from_another_source_is_ignored(icmp: FakeIcmp) -> None:
     # Right sequence and nonce, but from a different host: not counted.
     icmp.answer(PING_OK)
@@ -1147,12 +1172,14 @@ async def test_ping_reply_from_another_source_is_ignored(icmp: FakeIcmp) -> None
         assert (await pinger(PING_OK, icmp, reply_timeout=0.1).ping()).received == 0
 
 
+@BOTH_LOOPS
 async def test_ping_reply_source_compared_as_ipv4(icmp: FakeIcmp) -> None:
     icmp.answer(PING_OK)
     icmp.reply_source = f"::ffff:{PING_OK}"  # mapped form of the checked address
     assert (await pinger(PING_OK, icmp).ping()).received == 1
 
 
+@BOTH_LOOPS
 async def test_ping_slow_dns_does_not_shorten_reply_windows(
     monkeypatch: pytest.MonkeyPatch, icmp: FakeIcmp
 ) -> None:
@@ -1176,6 +1203,7 @@ async def test_ping_slow_dns_does_not_shorten_reply_windows(
     assert (result.sent, result.received) == (2, 2)
 
 
+@BOTH_LOOPS
 async def test_ping_resolve_limit_is_separate_from_total(
     monkeypatch: pytest.MonkeyPatch, icmp: FakeIcmp
 ) -> None:
@@ -1223,6 +1251,7 @@ def test_ping_caps_match_contract() -> None:
     assert MAX_PING_TOTAL_TIMEOUT == DEFAULT_TOTAL_TIMEOUT
 
 
+@BOTH_LOOPS
 async def test_ping_total_time_cap_stops_sending(icmp: FakeIcmp) -> None:
     # Ten packets that each wait up to 5 s would take 50 s; the total cap ends it.
     client = pinger(PING_OK, icmp, count=10, reply_timeout=5, interval=5, total_timeout=0.3)
@@ -1234,6 +1263,7 @@ async def test_ping_total_time_cap_stops_sending(icmp: FakeIcmp) -> None:
     assert icmp.opened[0].closed
 
 
+@BOTH_LOOPS
 async def test_ping_total_time_cap_covers_resolution(icmp: FakeIcmp) -> None:
     async def slow(host: str, port: int) -> Sequence[str]:
         await asyncio.sleep(3600)
@@ -1245,6 +1275,7 @@ async def test_ping_total_time_cap_covers_resolution(icmp: FakeIcmp) -> None:
     assert icmp.opened == []
 
 
+@BOTH_LOOPS
 async def test_ping_socket_closed_on_cancel(icmp: FakeIcmp) -> None:
     task = asyncio.create_task(pinger(PING_OK, icmp, reply_timeout=5).ping())
     await asyncio.sleep(0.05)
@@ -1254,6 +1285,7 @@ async def test_ping_socket_closed_on_cancel(icmp: FakeIcmp) -> None:
     assert icmp.opened[0].closed
 
 
+@BOTH_LOOPS
 async def test_ping_default_opener_is_looked_up_at_call_time(
     monkeypatch: pytest.MonkeyPatch, icmp: FakeIcmp
 ) -> None:
@@ -1325,7 +1357,259 @@ def test_no_raw_sockets_or_broadcast_in_net_guard() -> None:
         assert forbidden not in source
 
 
-def test_real_socket_strips_ipv4_header() -> None:
+# --- the real socket layer, on both event loops ---------------------------------------
+#
+# _DatagramIcmpSocket does its own I/O on the running loop. The container runs uvicorn on
+# uvloop, which has no loop.sock_recvfrom/sock_sendto (NotImplementedError), so these
+# tests run on the default asyncio loop and on uvloop.
+#
+# Without ICMP permission (most CI), a UDP socket on loopback stands in for the ICMP one:
+# same datagram semantics, same non-blocking calls, and a local responder answers echo
+# requests. The guard still checks PING_OK; only the test's opener points the socket at
+# the stand-in, which the guard itself would never allow. Nothing here changes a default.
+
+
+def wrap_datagram_socket(sock: socket.socket) -> Any:
+    """The real _DatagramIcmpSocket I/O around an already-created datagram socket."""
+    sock.setblocking(False)
+    wrapper = object.__new__(net_guard._DatagramIcmpSocket)
+    wrapper._sock = sock
+    wrapper._v4 = True
+    return wrapper
+
+
+class Redirected:
+    """Wraps a real socket layer pointed at loopback; reports replies as coming from the
+    checked address after recording their real source."""
+
+    def __init__(self, inner: Any, *, connect: bool = True, source: str = PING_OK) -> None:
+        self._inner = inner
+        self._connect = connect
+        self._source = source
+        self.sources: list[str] = []
+        self.closed = False
+
+    def connect(self) -> None:
+        if self._connect:  # a UDP stand-in is already connected to its responder
+            self._inner.connect()
+
+    async def send(self, packet: bytes) -> None:
+        await self._inner.send(packet)
+
+    async def recv(self) -> tuple[bytes, str]:
+        data, source = await self._inner.recv()
+        self.sources.append(source)
+        return data, self._source
+
+    def close(self) -> None:
+        self.closed = True
+        self._inner.close()
+
+
+class EchoResponder(asyncio.DatagramProtocol):
+    """Answers ICMP echo requests sent over UDP, like a host would over ICMP."""
+
+    def __init__(
+        self, *, drop: Sequence[int] = (), silent: bool = False, forge: bool = False
+    ) -> None:
+        self.drop = set(drop)
+        self.silent = silent
+        self.forge = forge  # right sequence, wrong payload (nonce)
+        self.requests: list[bytes] = []
+        self.transport: Any = None
+
+    def connection_made(self, transport: asyncio.BaseTransport) -> None:
+        self.transport = transport  # uvloop's UDPTransport isn't a DatagramTransport subclass
+
+    def datagram_received(self, data: bytes, addr: Any) -> None:
+        self.requests.append(data)
+        kind, code, _, identifier, sequence = net_guard._ICMP_HEADER.unpack_from(data)
+        if self.silent or kind != 8 or code != 0 or sequence in self.drop:
+            return
+        payload = b"x" * 16 if self.forge else data[8:]
+        reply = net_guard._ICMP_HEADER.pack(0, 0, 0, identifier, sequence) + payload
+        assert self.transport is not None
+        self.transport.sendto(reply, addr)
+
+
+@pytest.fixture
+async def stand_in() -> AsyncIterator[Any]:
+    """Starts loopback echo responders; returns (responder, opened, opener)."""
+    transports: list[asyncio.DatagramTransport] = []
+
+    async def start(
+        source: str = PING_OK, **kwargs: Any
+    ) -> tuple[EchoResponder, list[Redirected], Any]:
+        loop = asyncio.get_running_loop()
+        responder = EchoResponder(**kwargs)
+        transport, _ = await loop.create_datagram_endpoint(
+            lambda: responder, local_addr=("127.0.0.1", 0)
+        )
+        transports.append(transport)
+        port = transport.get_extra_info("sockname")[1]
+        opened: list[Redirected] = []
+
+        def opener(address: Any) -> Redirected:
+            assert address == ip_address(PING_OK)  # the guard's checked address
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.connect(("127.0.0.1", port))
+            wrapped = Redirected(wrap_datagram_socket(sock), connect=False, source=source)
+            opened.append(wrapped)
+            return wrapped
+
+        return responder, opened, opener
+
+    yield start
+    for transport in transports:
+        transport.close()
+
+
+def stand_in_client(opener: Any, **kwargs: Any) -> GuardedPingClient:
+    options: dict[str, Any] = {"count": 1, "interval": MIN_PING_INTERVAL, "reply_timeout": 0.15}
+    options.update(kwargs)
+    return GuardedPingClient(
+        NetGuard(resolver=no_resolver), PING_OK, socket_factory=opener, **options
+    )
+
+
+@BOTH_LOOPS
+async def test_real_socket_layer_counts_replies_loss_and_rtt(stand_in: Any) -> None:
+    """Regression: on uvloop the client used loop.sock_recvfrom and crashed with
+    NotImplementedError after the first echo request."""
+    responder, opened, opener = await stand_in(drop=[1])
+    result = await stand_in_client(opener, count=3).ping()
+    assert (result.address, result.sent, result.received) == (PING_OK, 3, 2)
+    assert result.loss_ratio == pytest.approx(1 / 3)
+    assert len(result.rtts) == 2
+    assert result.rtt_min is not None and result.rtt_avg is not None
+    assert result.rtt_max is not None
+    assert 0 < result.rtt_min <= result.rtt_avg <= result.rtt_max < 0.15
+    # Three well-formed echo requests carrying one nonce; replies read through recvfrom.
+    assert [net_guard._ICMP_HEADER.unpack_from(r)[4] for r in responder.requests] == [0, 1, 2]
+    assert len({r[8:] for r in responder.requests}) == 1
+    [sock] = opened
+    assert set(sock.sources) == {"127.0.0.1"}
+    assert sock.closed
+
+
+@BOTH_LOOPS
+async def test_real_socket_layer_checks_the_nonce(stand_in: Any) -> None:
+    responder, _, opener = await stand_in(forge=True)
+    result = await stand_in_client(opener, count=2).ping()
+    assert (result.sent, result.received) == (2, 0)
+    assert len(responder.requests) == 2  # the forged replies were sent, and ignored
+
+
+@BOTH_LOOPS
+async def test_real_socket_layer_checks_the_reply_source(stand_in: Any) -> None:
+    # Real replies with the right nonce, but reported from another address.
+    responder, opened, opener = await stand_in(source="10.0.0.31")
+    result = await stand_in_client(opener, count=2).ping()
+    assert (result.sent, result.received) == (2, 0)
+    assert len(responder.requests) == 2
+    assert len(opened[0].sources) == 2  # both replies arrived and were refused
+
+
+@BOTH_LOOPS
+async def test_real_socket_layer_timeout_counts_as_lost(stand_in: Any) -> None:
+    _, opened, opener = await stand_in(silent=True)
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    result = await stand_in_client(opener, count=2, reply_timeout=0.1).ping()
+    assert (result.sent, result.received, result.loss_ratio) == (2, 0, 1.0)
+    assert (result.rtt_min, result.rtt_avg, result.rtt_max) == (None, None, None)
+    assert loop.time() - started < 1.0
+    assert opened[0].closed
+
+
+def closed_udp_port() -> int:
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    probe.bind(("127.0.0.1", 0))
+    port: int = probe.getsockname()[1]
+    probe.close()
+    return port
+
+
+@BOTH_LOOPS
+async def test_real_socket_layer_unreachable_counts_as_lost(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Nothing listens: the kernel answers with ICMP port unreachable, which the connected
+    # socket reports as an error on the next recvfrom (or send).
+    port = closed_udp_port()
+    opened: list[Redirected] = []
+
+    def opener(address: Any) -> Redirected:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.connect(("127.0.0.1", port))
+        wrapped = Redirected(wrap_datagram_socket(sock), connect=False)
+        opened.append(wrapped)
+        return wrapped
+
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    with caplog.at_level("DEBUG"):
+        result = await stand_in_client(opener, count=3, reply_timeout=2).ping()
+    assert (result.sent, result.received) == (3, 0)
+    # The error ends each wait at once instead of after the 2 s reply timeout.
+    assert loop.time() - started < 2.0
+    assert "Traceback" not in caplog.text
+    assert opened[0].closed
+
+
+@BOTH_LOOPS
+async def test_real_socket_layer_unregisters_reader_on_cancel() -> None:
+    if not hasattr(socket, "AF_UNIX"):
+        pytest.skip("needs AF_UNIX datagram sockets")
+    loop = asyncio.get_running_loop()
+    ours, theirs = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+    with ours, theirs:
+        wrapper = wrap_datagram_socket(ours)
+        task = asyncio.create_task(wrapper.recv())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        # Nothing left registered (asyncio returns False; uvloop always returns None).
+        assert loop.remove_reader(ours.fileno()) is not True
+        # The socket still works for the next read.
+        theirs.send(b"\x00" * 8)
+        data, _ = await asyncio.wait_for(wrapper.recv(), 1)
+        assert data == b"\x00" * 8
+
+
+class SendsBusyOnce(socket.socket):
+    """A UDP socket whose first send() reports a full buffer (EAGAIN)."""
+
+    busy = True
+
+    def send(self, data: Any, flags: int = 0) -> int:
+        if self.busy:
+            self.busy = False
+            raise BlockingIOError(11, "Resource temporarily unavailable")
+        return super().send(data, flags)
+
+
+@BOTH_LOOPS
+async def test_real_socket_layer_waits_until_writable() -> None:
+    loop = asyncio.get_running_loop()
+    packet = b"\x08" + b"\x00" * 7
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as receiver:
+        receiver.bind(("127.0.0.1", 0))
+        sender = SendsBusyOnce(socket.AF_INET, socket.SOCK_DGRAM)
+        sender.connect(receiver.getsockname())
+        wrapper = wrap_datagram_socket(sender)
+        try:
+            await asyncio.wait_for(wrapper.send(packet), 1)
+            assert not sender.busy
+            assert loop.remove_writer(sender.fileno()) is not True  # unregistered (asyncio)
+            assert receiver.recv(64) == packet
+        finally:
+            wrapper.close()
+
+
+@BOTH_LOOPS
+async def test_real_socket_strips_ipv4_header() -> None:
     if not hasattr(socket, "AF_UNIX"):
         pytest.skip("needs AF_UNIX datagram sockets")
     reply = b"\x00\x00\x00\x00\x00\x01\x00\x07" + b"n" * 16
@@ -1334,61 +1618,40 @@ def test_real_socket_strips_ipv4_header() -> None:
     async def receive(payload: bytes) -> bytes:
         ours, theirs = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
         with ours, theirs:
-            ours.setblocking(False)
-            wrapper = object.__new__(net_guard._DatagramIcmpSocket)
-            wrapper._sock = ours
-            wrapper._v4 = True
+            wrapper = wrap_datagram_socket(ours)
             theirs.send(payload)
             data, _source = await wrapper.recv()  # an unnamed AF_UNIX peer: no address
-            return data
+            return bytes(data)
 
-    assert asyncio.run(receive(ip_header + reply)) == reply  # macOS-style, with IP header
-    assert asyncio.run(receive(reply)) == reply  # Linux-style, ICMP only
+    assert await receive(ip_header + reply) == reply  # macOS-style, with IP header
+    assert await receive(reply) == reply  # Linux-style, ICMP only
 
 
-def test_real_kernel_loopback_echo() -> None:
+@BOTH_LOOPS
+async def test_real_kernel_loopback_echo() -> None:
     """The real socket layer against this machine's kernel, where unprivileged ICMP
     sockets are allowed (macOS; Linux within ping_group_range). The guard checks a
     private literal; the test's opener then points the socket at loopback, which the
     guard itself would never allow. Replies really come from 127.0.0.1, so the wrapper
-    reports them as from the checked address (after asserting the real source).
+    reports them as from the checked address (after recording the real source).
     Skipped where ICMP sockets aren't permitted."""
     loopback = ip_address("127.0.0.1")
-    sources: list[str] = []
-
-    class Redirected:
-        def __init__(self, inner: net_guard.IcmpSocket) -> None:
-            self._inner = inner
-
-        def connect(self) -> None:
-            self._inner.connect()
-
-        async def send(self, packet: bytes) -> None:
-            await self._inner.send(packet)
-
-        async def recv(self) -> tuple[bytes, str]:
-            data, source = await self._inner.recv()
-            sources.append(source)
-            return data, PING_OK
-
-        def close(self) -> None:
-            self._inner.close()
+    opened: list[Redirected] = []
 
     def opener(address: Any) -> net_guard.IcmpSocket:
         assert address == ip_address(PING_OK)  # the guard's checked address
-        return Redirected(net_guard.open_icmp_socket(loopback))
+        wrapped = Redirected(net_guard.open_icmp_socket(loopback))
+        opened.append(wrapped)
+        return wrapped
 
-    client = GuardedPingClient(
-        NetGuard(resolver=no_resolver),
-        PING_OK,
-        count=2,
-        interval=MIN_PING_INTERVAL,
-        socket_factory=opener,
-    )
     try:
-        result = asyncio.run(client.ping())
+        result = await stand_in_client(opener, count=3, reply_timeout=1).ping()
     except PingError as exc:
         pytest.skip(f"unprivileged ICMP sockets not available here: {exc}")
-    assert (result.sent, result.received) == (2, 2)
-    assert result.rtt_max is not None and result.rtt_max < 1
-    assert sources and set(sources) == {"127.0.0.1"}  # recvfrom reports the real source
+    assert (result.sent, result.received, result.loss_ratio) == (3, 3, 0.0)
+    assert result.rtt_min is not None and result.rtt_avg is not None
+    assert result.rtt_max is not None
+    assert 0 < result.rtt_min <= result.rtt_avg <= result.rtt_max < 1
+    [sock] = opened
+    assert set(sock.sources) == {"127.0.0.1"}  # what recvfrom reported
+    assert sock.closed
