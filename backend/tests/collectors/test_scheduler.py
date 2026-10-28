@@ -12,13 +12,19 @@ from pydantic import BaseModel, SecretStr
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.collectors.scheduler import MAX_POLL_INTERVAL_SECONDS, PollScheduler, polls
+from app.collectors.scheduler import (
+    MAX_FAILURE_TEXT,
+    MAX_POLL_INTERVAL_SECONDS,
+    PollScheduler,
+    polls,
+)
 from app.collectors.store import MetricsStore, make_registry
 from app.core.crypto import SecretBox
 from app.core.db import make_session_factory, utcnow
-from app.core.net_guard import NetGuard, NetPolicy, PingError
+from app.core.net_guard import NetGuard, NetGuardError, NetPolicy, PingError
 from app.integrations import instance_config as ic
 from app.integrations.base import InstanceContext, Integration, Sample
+from app.integrations.errors import PollFailure
 from app.integrations.registry import Registry
 from app.models import Instance
 from tests.conftest import TEST_MASTER_KEY
@@ -95,6 +101,50 @@ class PingFails(FakeIntegration):
         raise PingError("the system refused to ping 10.0.0.255 (is it a broadcast address?)")
 
 
+class Unanswered(PollFailure):
+    pass
+
+
+class PollFails(FakeIntegration):
+    """Raises a PollFailure: its message, written to be shown, becomes the status."""
+
+    type_id = "poll_fails"
+
+    async def poll(self, ctx: InstanceContext) -> list[Sample]:
+        message = {"long": "x" * 1000, "empty": ""}.get(ctx.name, "no answer from 10.0.0.10")
+        raise Unanswered(message)
+
+
+# Every way a poll can fail, each with every config and secret value in its text (or its
+# return value), to check that none of them reaches the status, the log or /metrics.
+SECRETS = {
+    "api_token": TOKEN,
+    "snmp_community": "example-community-6b1f0e",
+    "client_secret": "example-client-secret-0c4e9a",
+}
+CONFIG = {"host": "nas-7f3c2d.example.internal", "port": 8443, "verify_tls": False}
+EVERYTHING = " ".join([*SECRETS.values(), *(str(v) for v in CONFIG.values())])
+BRANCHES: dict[str, Any] = {
+    "other_exception": RuntimeError(EVERYTHING),
+    "timeout": TimeoutError(EVERYTHING),
+    "http_timeout": httpx.ReadTimeout(EVERYTHING),
+    "guard": NetGuardError(f"address 127.0.0.1 is not allowed {' '.join(SECRETS.values())}"),
+    "ping": PingError(f"the system refused to ping {' '.join(SECRETS.values())}"),
+    "poll_failure": Unanswered(f"no answer {' '.join(SECRETS.values())}"),
+}
+
+
+class Blabber(FakeIntegration):
+    """Fails in the branch named by the instance; garbage returns its config as text."""
+
+    type_id = "blabber"
+
+    async def poll(self, ctx: InstanceContext) -> list[Sample]:
+        if ctx.name == "garbage":
+            return EVERYTHING  # type: ignore[return-value]
+        raise BRANCHES[ctx.name]
+
+
 class Garbage(FakeIntegration):
     type_id = "garbage"
 
@@ -142,6 +192,8 @@ REGISTRY = Registry(
         HttpTimeout,
         Guarded,
         PingFails,
+        PollFails,
+        Blabber,
         Garbage,
         Leaky,
         BadInterval,
@@ -279,6 +331,7 @@ async def test_successful_poll_gets_context_and_standard_labels(
             "ping_fails",
             "ping failed: the system refused to ping 10.0.0.255 (is it a broadcast address?)",
         ),
+        ("poll_fails", "no answer from 10.0.0.10"),
         ("garbage", "poll returned something other than a list of samples"),
     ],
 )
@@ -306,6 +359,58 @@ async def test_failures_mark_instance_down_without_secrets(
     assert TOKEN not in caplog.text
     assert TOKEN not in exposition(store)
     assert "} 0.0" in exposition(store)
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [("long", "x" * MAX_FAILURE_TEXT), ("empty", "poll failed (Unanswered)")],
+)
+async def test_poll_failure_text_is_capped_or_falls_back_to_type(
+    scheduler: PollScheduler,
+    factory: sessionmaker[Session],
+    box: SecretBox,
+    store: MetricsStore,
+    name: str,
+    expected: str,
+) -> None:
+    instance_id = add(factory, box, "poll_fails", name)
+    try:
+        await scheduler.sync()
+        await wait_for(lambda: getattr(store.status(instance_id), "state", "") == "down")
+    finally:
+        await scheduler.stop()
+    assert getattr(store.status(instance_id), "error", None) == expected
+
+
+@pytest.mark.parametrize("branch", [*BRANCHES, "garbage", "invalid_config"])
+async def test_poll_status_never_contains_config_or_secret_values(
+    scheduler: PollScheduler,
+    factory: sessionmaker[Session],
+    box: SecretBox,
+    store: MetricsStore,
+    caplog: pytest.LogCaptureFixture,
+    branch: str,
+) -> None:
+    # The status shows exception text only for NetGuardError, PingError and PollFailure,
+    # trusting their messages to be secret-free; check that decrypted secrets are scrubbed
+    # from those and that every other branch shows no config or secret value at all.
+    config: dict[str, Any] = (
+        {**CONFIG, "port": "not-a-port"} if branch == "invalid_config" else CONFIG
+    )
+    instance_id = add(factory, box, "blabber", branch, config=config, secrets=SECRETS)
+    with caplog.at_level(logging.DEBUG):
+        try:
+            await scheduler.sync()
+            await wait_for(lambda: getattr(store.status(instance_id), "state", "") == "down")
+        finally:
+            await scheduler.stop()
+    status = store.status(instance_id)
+    assert status is not None and status.error
+    shown = [status.error, caplog.text, exposition(store)]
+    for value in SECRETS.values():
+        assert all(value not in text for text in shown), branch
+    for value in [*(str(v) for v in config.values()), "not-a-port"]:
+        assert value not in status.error, branch
 
 
 async def test_one_failing_instance_does_not_affect_others(

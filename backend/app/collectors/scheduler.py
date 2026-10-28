@@ -8,8 +8,9 @@ Prometheus' job (service discovery, M2.3).
 Isolation: a poll that raises, hangs or returns garbage marks only its own instance
 ``down``; every other task keeps running. Error descriptions stored in the status and
 written to the log never include exception messages, which can carry URLs, headers or
-response bodies (and so secrets). Only the exception type, or the SSRF guard's own
-message (host and reason), is kept, and decrypted secret values are scrubbed from it.
+response bodies (and so secrets). Only the exception type, the SSRF guard's or ping
+client's own message (host and reason), or the message of a ``PollFailure`` (written by
+the integration to be shown) is kept, and decrypted secret values are scrubbed from it.
 """
 
 import asyncio
@@ -32,6 +33,7 @@ from app.core.db import utcnow
 from app.core.net_guard import NetGuardError, PingError
 from app.integrations import instance_config as ic
 from app.integrations.base import InstanceContext, Integration, Sample
+from app.integrations.errors import PollFailure
 from app.integrations.registry import Registry
 from app.models import Instance
 
@@ -75,6 +77,10 @@ class PollSpec:
     def fingerprint(self) -> tuple[str, str, str | None, datetime]:
         """Changes when the instance is edited, so its task restarts with the new config."""
         return (self.type_id, self.name, self.site, self.updated_at)
+
+
+# Longest PollFailure message kept in the status; the rest is cut off.
+MAX_FAILURE_TEXT = 200
 
 
 class _PollError(Exception):
@@ -300,6 +306,9 @@ class PollScheduler:
             raise _PollError(f"refused by the network guard: {exc}") from None
         except PingError as exc:  # fixed text plus, at most, the checked address
             raise _PollError(f"ping failed: {exc}") from None
+        except PollFailure as exc:  # a message the integration wrote to be shown
+            text = str(exc)[:MAX_FAILURE_TEXT] or f"poll failed ({type(exc).__name__})"
+            raise _PollError(text) from None
         except Exception as exc:
             raise _PollError(f"poll failed ({type(exc).__name__})") from None
         if not isinstance(result, list) or not all(isinstance(s, Sample) for s in result):
