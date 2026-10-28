@@ -380,6 +380,7 @@ async def create_instance(
     _flush(db)
     audit.record(
         db,
+        actor_type=audit.ActorType.USER,
         action=audit.Action.CREATE,
         target_type="instance",
         target_id=row.id,
@@ -479,6 +480,7 @@ async def update_instance(
     _flush(db)
     audit.record(
         db,
+        actor_type=audit.ActorType.USER,
         action=audit.Action.UPDATE,
         target_type="instance",
         target_id=row.id,
@@ -498,6 +500,7 @@ def delete_instance(
     cls = registry.get(row.type_id)
     audit.record(
         db,
+        actor_type=audit.ActorType.USER,
         action=audit.Action.DELETE,
         target_type="instance",
         target_id=row.id,

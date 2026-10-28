@@ -27,14 +27,11 @@ from app.core.auth import LoginRateLimiter, Passwords, csrf_token, new_session_t
 from app.core.config import Settings
 from app.core.db import utcnow
 from app.core.login_failures import UserLoginFailures
+from app.core.users import SETUP_MARKER
 from app.models import AuditLog, Role, Setting, User, UserSession
 
 router = APIRouter()
 
-# Written in the same transaction as the first admin. Its primary key makes a second,
-# concurrent setup request fail, and it keeps setup closed even if every user is later
-# deleted (an admin has to recreate users; setup can't be reopened from the network).
-SETUP_MARKER = "setup.completed"
 
 USERNAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
 MIN_PASSWORD_LENGTH = 12
@@ -140,6 +137,7 @@ def setup(
         raise _setup_closed() from None
     audit.record(
         db,
+        actor_type=audit.ActorType.USER,
         action=audit.Action.CREATE,
         target_type="user",
         target_id=user.id,
@@ -153,16 +151,18 @@ def setup(
 
 
 def _record_failed_login(db: Session, user: User | None) -> None:
-    """Audit a login that reached the password check and failed.
+    """Audit a login that reached the password check and failed (the 401 path).
 
     Committed right away: the 401 that follows rolls back the request's transaction.
     Only a known user's stored username is kept; anything else becomes "<unknown>".
-    The submitted password is never passed in. Rate-limited (429) attempts never get
-    here, so they can't be used to flood the table; refusals because the account is
-    locked are audited separately, at most once a minute (:func:`_record_locked_login`).
+    The submitted password is never passed in. Attempts refused with 429 never reach
+    the password check, so they never come through here: a flood of them can't fill
+    the table. Of those, only refusals because the account is locked are audited, by
+    :func:`_record_locked_login`, at most once a minute per account.
     """
     audit.record(
         db,
+        actor_type=audit.ActorType.USER,
         action=audit.Action.LOGIN_FAILED,
         target_type="user",
         target_id=user.id if user else None,
@@ -201,6 +201,7 @@ def _record_locked_login(db: Session, user_id: int) -> None:
         return
     audit.record(
         db,
+        actor_type=audit.ActorType.USER,
         action=audit.Action.LOGIN_FAILED,
         target_type="user",
         target_id=user.id,
@@ -279,10 +280,11 @@ def login(
     if passwords.needs_rehash(verified_hash):
         new_hash = passwords.hash(password)
         changes["password_hash"] = new_hash  # stored as "<changed>"
-    # Only if the hash is still the one just verified: a password reset (admin CLI)
+    # Only if the hash is still the one just verified: a password reset (CLI or API)
     # committed during the slow check must win, so no session is created with the old
     # password and a rehash never overwrites the new hash. The row lock this takes also
-    # orders the login against a concurrent reset, which then ends the new session.
+    # orders the login against a concurrent reset, which then ends the new session
+    # (app.core.users.set_password writes the row before deleting sessions).
     claimed = cast(
         "CursorResult[Any]",
         db.execute(
@@ -293,8 +295,11 @@ def login(
         ),
     )
     if claimed.rowcount != 1:
+        # Read before the rollback, which expires `user`: reloading it would fail (500)
+        # if the user was deleted during the password check.
+        user_id = user.id
         db.rollback()
-        _record_failed_login(db, db.get(User, user.id))
+        _record_failed_login(db, db.get(User, user_id))
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid username or password")
     db.refresh(user)
     # Committed with the session below: the failures before this login no longer count.
@@ -302,6 +307,7 @@ def login(
     limiter.refund(memory_keys)
     audit.record(
         db,
+        actor_type=audit.ActorType.USER,
         action=audit.Action.LOGIN,
         target_type="user",
         target_id=user.id,
@@ -324,6 +330,7 @@ def logout(auth: AuthDep, db: DbDep, settings: SettingsDep) -> Response:
     db.delete(auth.session)
     audit.record(
         db,
+        actor_type=audit.ActorType.USER,
         action=audit.Action.LOGOUT,
         target_type="user",
         target_id=auth.user.id,

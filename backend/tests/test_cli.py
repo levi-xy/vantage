@@ -8,10 +8,12 @@ import subprocess
 import sys
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.auth import LOGIN_LIMITS, SETUP_MARKER
@@ -22,7 +24,7 @@ from app.core.config import Settings, normalize_database_url
 from app.core.crypto import SecretBox
 from app.core.db import make_session_factory
 from app.main import create_app
-from app.models import AuditLog, LoginFailure, Role, Setting, User, UserSession
+from app.models import ActorType, AuditLog, LoginFailure, Role, Setting, User, UserSession
 from tests.conftest import BACKEND_DIR, TEST_MASTER_KEY
 from tests.test_auth import ADMIN, FAST_HASHER, PASSWORD, add_user, do_setup, login, make_client
 
@@ -95,6 +97,11 @@ def get_user(db: Session, username: str) -> User:
     return db.scalars(select(User).where(User.username == username)).one()
 
 
+def get_user_or_none(db: Session, username: str) -> User | None:
+    db.expire_all()
+    return db.scalar(select(User).where(func.lower(User.username) == username.lower()))
+
+
 # --- reset-password --------------------------------------------------------------------
 
 
@@ -134,6 +141,7 @@ def test_reset_ends_sessions_and_swaps_password(
     assert entry.target_type == "user"
     assert entry.target_id == str(get_user(db, ADMIN).id)
     assert entry.user_id is None
+    assert entry.actor_type == ActorType.CLI
     assert entry.changes == {
         "password": "<changed>",
         "sessions_ended": 2,
@@ -280,6 +288,44 @@ def test_create_user_refuses_duplicates(cli: CliRunner, db: Session, name: str) 
     db.expire_all()
     assert len(db.scalars(select(User)).all()) == 1
     assert audit_rows(db) == []
+
+
+def test_create_user_taken_while_typing_the_password(cli: CliRunner, db: Session) -> None:
+    """Created by someone else after the first check: still reported as a duplicate."""
+
+    class CreatesItFirst(Prompt):
+        def __call__(self, prompt: str) -> str:
+            if get_user_or_none(db, "ops.user") is None:
+                add_user(db, "OPS.user", Role.VIEWER)
+            return super().__call__(prompt)
+
+    run = cli(
+        "create-user", "ops.user", "--role", "viewer", prompt=CreatesItFirst(*[NEW_PASSWORD] * 2)
+    )
+    assert run.code == 1
+    assert "already exists" in run.err
+    assert [u.username for u in db.scalars(select(User))] == ["OPS.user"]
+
+
+def test_create_user_reports_other_integrity_errors_as_such(
+    cli: CliRunner, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only a real duplicate is "already exists" (PR #27)."""
+    real_flush = Session.flush
+
+    def broken(self: Session, *args: Any, **kwargs: Any) -> None:
+        # Fails only the insert of the new user, with something that isn't a duplicate.
+        if any(isinstance(obj, User) for obj in self.new):
+            raise IntegrityError("INSERT", {}, Exception("some other constraint"))
+        real_flush(self, *args, **kwargs)
+
+    monkeypatch.setattr(Session, "flush", broken)
+    run = cli("create-user", "ops.user", "--role", "viewer", "--password-stdin", stdin=NEW_PASSWORD)
+    assert run.code == 1
+    assert "already exists" not in run.err
+    assert "the database refused the change" in run.err
+    monkeypatch.undo()
+    assert get_user_or_none(db, "ops.user") is None
 
 
 @pytest.mark.parametrize(
@@ -515,6 +561,39 @@ def test_login_racing_a_reset_gets_no_session(
     assert [r.action for r in audit_rows(db)] == ["update", "login_failed"]
     with make_client(db_url) as browser:
         login(browser, ADMIN, NEW_PASSWORD)
+
+
+class LoginDuringHash(Passwords):
+    """Logs the user in through the API while the CLI hashes the new password: the login
+    takes the row lock and commits its session before the reset writes the row."""
+
+    def __init__(self, db_url: str) -> None:
+        super().__init__(FAST_HASHER)
+        self.db_url = db_url
+        self.browser: TestClient | None = None
+
+    def hash(self, password: str) -> str:
+        if self.browser is None:
+            self.browser = make_client(self.db_url)
+            login(self.browser, ADMIN)
+            assert self.browser.get("/api/v1/me").status_code == 200
+        return super().hash(password)
+
+
+def test_login_holding_the_row_first_loses_its_session_to_a_reset(
+    cli: CliRunner, db: Session, db_url: str
+) -> None:
+    add_user(db, ADMIN, Role.ADMIN)
+    racing = LoginDuringHash(db_url)
+    cli.passwords = racing
+    run = cli("reset-password", ADMIN, "--password-stdin", stdin=NEW_PASSWORD)
+    assert run.code == 0, run.err
+    assert "ended 1 session(s)" in run.out
+    assert racing.browser is not None
+    assert racing.browser.get("/api/v1/me").status_code == 401
+    db.expire_all()
+    assert db.scalars(select(UserSession)).all() == []
+    assert FAST_HASHER.verify(get_user(db, ADMIN).password_hash, NEW_PASSWORD)
 
 
 def test_password_stdin_refused_on_a_terminal(cli: CliRunner, db: Session) -> None:

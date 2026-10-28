@@ -155,7 +155,7 @@ class Integration(ABC):
 | `alert_rules` | id, name, expr (PromQL), for_seconds, severity, instance_id (nullable), channel_ids, enabled |
 | `alert_events` | id, rule_id, state (`firing` / `resolved`), started_at, ended_at, summary |
 | `channels` | id, type (`telegram`), name, config (json), secrets (encrypted blob) |
-| `audit_log` | id, user_id, action (`create` / `update` / `delete` / `login` / `logout` / `login_failed`), target_type, target_id, at, changes (json, **secret fields replaced with `"<changed>"`**) |
+| `audit_log` | id, user_id, actor_type (`user` / `cli` / `system`), action (`create` / `update` / `delete` / `login` / `logout` / `login_failed`), target_type, target_id, at, changes (json, **secret fields replaced with `"<changed>"`**) |
 | `settings` | key, value (json) |
 | `login_failures` | id, user_id (FK `users`, cascade delete), at |
 | `sessions` | id (SHA-256 of the session token), user_id (FK `users`, cascade delete), created_at, expires_at, last_seen_at |
@@ -163,6 +163,8 @@ class Integration(ABC):
 - `instances.config` and `instances.secrets` are split by the integration's schema: `SecretStr` fields go to `secrets`, everything else to `config`.
 - `login_failures` holds one row per failed login for an **existing** user: who and when, nothing else (no submitted username, password or client address). The per-user limit counts rows in a sliding 15-minute window, so lockouts survive a restart and can't be evicted. Usernames that match no user, and the per-client limit, stay in the in-memory limiter. A successful login, `app.cli unlock <username>` and `app.cli reset-password` clear the user's rows.
 - A login refused (429) because the account is locked writes an `audit_log` entry: `action=login_failed`, the user as target, `changes` = `{"username": <stored username>, "locked": true}` (never the submitted username or password). At most one per account per minute, best effort; refusals by the per-client limit or for unknown usernames aren't audited.
+- `audit_log.actor_type` says who acted, and every audit write sets it: `user` = a request through the API (`user_id` is the logged-in user; empty for a failed login, or once that user is deleted), `cli` = the admin CLI on the server, `system` = the backend itself. `cli` and `system` entries never have a `user_id`.
+- Usernames are unique as stored and compared exactly at login. A name that differs from an existing one only in case is refused when a user is created (CLI or API), by one check in application code shared by both; there is no case-insensitive index.
 - `sessions` holds one row per login session. The cookie carries a random token; the database stores only its SHA-256 hash, so a copy of the database can't be used to log in. Deleting a row ends that session: logout, a new login on the same browser, password reset, expiry or idle timeout, and user deletion (cascade).
 - The master key is read from `VANTAGE_MASTER_KEY_FILE` (preferred) or `VANTAGE_MASTER_KEY`. The app refuses to start without it.
 
@@ -178,6 +180,10 @@ All routes under `/api/v1`, JSON, session auth, CSRF token on state-changing req
 | POST | `/setup` | none, only when no users exist | Create the first admin |
 | POST | `/auth/login`, `/auth/logout` | none / any | Session |
 | GET | `/me` | any | Current user |
+| POST | `/me/password` | any | Change your own password: `{current_password, new_password}`; ends your other sessions |
+| GET/POST | `/users` | admin | List users / create one: `{username, password, role}` (no response carries a password or hash) |
+| PATCH/DELETE | `/users/{id}` | admin | Change the role (`{role}`) / delete |
+| POST | `/users/{id}/password` | admin | Reset a user's password: `{password}`; ends all of that user's sessions |
 | GET | `/integrations` | any | List types: type_id, name, category, JSON schema (secret fields flagged `writeOnly`) |
 | GET | `/instances` | any | List instances (no secrets), each with `status` (see below) |
 | POST | `/instances` | admin | Create (validates against schema + SSRF guard) |
@@ -192,6 +198,8 @@ All routes under `/api/v1`, JSON, session auth, CSRF token on state-changing req
 | GET | `/alerts/events` | any | Alert history |
 | GET | `/audit` | admin | Audit log, newest first: `limit` (1–200, default 50), `before_id` (keyset paging) |
 | WS | `/ws` | any | Live pushes: instance status changes, alert events, card data refresh hints |
+
+User management: the last admin can't be demoted or deleted (409). Every user change (create, role, password reset or change, delete) is audited, the password only as `"<changed>"`. A password reset or change writes the user row before ending sessions, so a racing login can't keep a session.
 
 Instance responses (list and single) carry `status`: `{state, checked_at, last_success_at, error}` with `state` one of `pending` / `up` / `down` / `unknown`. It comes from the poll collector's in-memory state, so it resets on restart. `pending` = enabled and polled by the collector, but not polled yet (new, just enabled, or just after a restart). `unknown` = the collector doesn't poll this instance (disabled, or a scrape-only integration). `error` is the collector's short, secret-free description. `/ws` pushes changes to the same object.
 

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.db import make_session_factory, session_scope
 from app.models import (
+    ActorType,
     AlertEvent,
     AlertRule,
     AlertState,
@@ -212,6 +213,7 @@ def test_audit_entries_survive_user_deletion(session: Session) -> None:
     session.flush()
     entry = AuditLog(
         user_id=user.id,
+        actor_type=ActorType.USER,
         action="update",
         target_type="instance",
         target_id=str(uuid.uuid4()),
