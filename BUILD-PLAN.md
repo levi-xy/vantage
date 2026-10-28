@@ -113,6 +113,13 @@ M0 ──► M1 ──► M2 ──┬──► M4a ─┐
 - M2.6 comes after M2.7, so the ICMP ping client and `ping_check` are documented as well; the "HTTP check" is HTTP only.
 - Scrape targets: one that fails DNS or the SSRF guard is left out of `/sd/targets`, so it disappears from Prometheus instead of showing `up == 0` (AGENTS.md Contract 5). (PR #14)
 
+**Found in the real-stack Docker test (2026-10-28), not yet scheduled:**
+- The poll collector keeps each instance's config in memory. It rereads the config on an API change or a restart, not on every poll. So a config that becomes invalid without going through the API (a direct database edit) shows "stored config is not valid for this integration" only after a restart. Upgrades always restart the backend, so this is low priority; decide whether to recheck on every poll.
+- Prometheus logs one "connection refused" on its first `/sd/targets` fetch, because the backend isn't listening yet. Harmless; it recovers on the next refresh.
+- Docs nits from the PR #26 review, for the next edit of `docs/INTEGRATIONS.md`:
+  - §11: "the API attaches only the first hint" holds only for the API's own timeout path.
+  - §3 and `docs/integrations/ping_check.md`: point to the validator in `PingCheckConfig` instead of calling the bound a plain product.
+
 ## M3: Frontend shell
 
 | ID | Task | Acceptance criteria |
@@ -128,6 +135,13 @@ M0 ──► M1 ──► M2 ──┬──► M4a ─┐
 - Add `status` to instance responses per AGENTS.md Contract 3 (backend: read it from the poll collector's in-memory store; `unknown` for instances it doesn't poll) and show it in the instance list. Show "No site" for instances without a site. (maintainer decision, PRs #14/#16)
 - Logout: when logout fails and the follow-up `me()` also fails with a network error, the CSRF token stays null and every write gets 403 until reload. Move the session to the `unreachable` state instead, with a test. (PR #15)
 - After an explicit logout, don't keep the current path as the post-login return path: the next person to log in on that browser shouldn't land on the previous user's page. (PR #15)
+
+**Carried over from reviews (include in the M3.5 task):**
+- `api/auth.py` login, lost-race path: it reads `user.id` after `db.rollback()`, which expires `user`. Once users can be deleted, a delete that lands during a login makes that reload fail, so the request returns 500 instead of 401. Keep the id in a local before the rollback. (PR #27)
+- Refuse duplicate usernames case-insensitively in the user API, as `create-user` does: the login limiter keys on the lowercased name. (PR #27)
+- Resetting another user's password from the API races logins the same way the CLI reset does. Reuse the CLI's order (write the user row, then delete sessions). Add a deterministic test for the order where the login holds the row lock first; today only the "reset commits first" order is tested. (PR #27)
+- `create-user` reports any `IntegrityError` as "already exists", even when it isn't a duplicate. Share a narrower check with the API. (PR #27)
+- Needs a maintainer decision (Contract 2), raised in PR #27: an `actor_type` column on `audit_log`, so CLI and system actions aren't told apart only by `user_id = NULL` plus `changes.source`; and a unique index on `lower(username)`.
 
 ## M4: Built-in integrations (parallel, one agent each)
 
