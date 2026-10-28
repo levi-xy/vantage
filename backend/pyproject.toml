@@ -28,7 +28,7 @@ postgres = [
 ]
 dev = [
     "pytest>=9.0.3,<10",
-    "pytest-asyncio>=1.2,<2",
+    "pytest-asyncio>=1.4,<2",  # 1.4: loop_factories (tests run on asyncio and uvloop)
     "ruff>=0.7,<1",
     "mypy>=1.13,<2",
     "bandit>=1.7,<2",

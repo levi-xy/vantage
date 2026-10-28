@@ -10,7 +10,7 @@
 
 **Metrics** (gauges, constants `METRIC_*` in the source): `vantage_ping_check_packet_loss_ratio`, `..._packets_sent`, `..._packets_received`, `..._rtt_min_seconds`, `..._rtt_avg_seconds`, `..._rtt_max_seconds`.
 
-**Status and failures:** no reply at all raises `NoReply` (`poll failed (NoReply)`). Missing ICMP permission raises `PingError` (`poll failed (PingError)`); a guard refusal shows `refused by the network guard: ...`. Partial loss is a result and the instance stays `up`.
+**Status and failures:** no reply at all raises `NoReply` (`poll failed (NoReply)`). A `PingError` shows its own message: missing ICMP permission is `ping failed: ICMP is not permitted for this process (check the net.ipv4.ping_group_range sysctl)`, and a broadcast address is `ping failed: the system refused to ping <address> (is it a broadcast address?)`. A guard refusal shows `refused by the network guard: ...`. Partial loss is a result and the instance stays `up`.
 
 **Firewall:** `icmp`, port `None`: allow echo requests from the backend to the host and the replies back. The backend container needs the `net.ipv4.ping_group_range` sysctl, which `deploy/docker-compose.yml` sets.
 

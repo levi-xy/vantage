@@ -38,6 +38,7 @@ import secrets
 import socket
 import ssl
 import struct
+import time
 from collections.abc import (
     AsyncIterable,
     AsyncIterator,
@@ -822,6 +823,12 @@ _ICMPV6_ECHO_REPLY = 129
 _ICMP_HEADER = struct.Struct("!BBHHH")  # type, code, checksum, identifier, sequence
 _PING_NONCE_BYTES = 16
 _MAX_ICMP_DATAGRAM = 2048
+# Less time than this before the total deadline leaves no room for another packet.
+# uvloop's clock and timers work in whole milliseconds, so near the deadline
+# ``deadline - loop.time()`` can stay at a float residue (~1e-10 s) that a sleep never
+# consumes; without this floor the loop would keep sending into a window too short for
+# any reply.
+_PING_MIN_WINDOW = 0.001
 
 
 class PingError(Exception):
@@ -874,13 +881,49 @@ class _DatagramIcmpSocket:
         # Connected: every send goes to this checked address and nowhere else.
         self._sock.connect(self._sockaddr)
 
+    # The I/O uses only add_reader/add_writer and the socket's own non-blocking calls,
+    # which every event loop implements. uvloop (what uvicorn[standard] runs) has no
+    # loop.sock_recvfrom/sock_sendto: they raise NotImplementedError there.
+
+    async def _ready(self, *, write: bool) -> None:
+        """Wait until the socket is readable (or writable). An error pending on the
+        socket (e.g. an ICMP unreachable) also wakes it: the next call raises it."""
+        loop = asyncio.get_running_loop()
+        fd = self._sock.fileno()
+        waiter: asyncio.Future[None] = loop.create_future()
+
+        def wake() -> None:
+            if not waiter.done():
+                waiter.set_result(None)
+
+        if write:
+            loop.add_writer(fd, wake)
+        else:
+            loop.add_reader(fd, wake)
+        try:
+            await waiter
+        finally:
+            # Always unregistered, also on timeout or cancellation, before close().
+            if write:
+                loop.remove_writer(fd)
+            else:
+                loop.remove_reader(fd)
+
     async def send(self, packet: bytes) -> None:
-        await asyncio.get_running_loop().sock_sendall(self._sock, packet)
+        while True:
+            try:
+                self._sock.send(packet)  # connected: only to the checked address
+                return
+            except (BlockingIOError, InterruptedError):
+                await self._ready(write=True)
 
     async def recv(self) -> tuple[bytes, str]:
-        data, source = await asyncio.get_running_loop().sock_recvfrom(
-            self._sock, _MAX_ICMP_DATAGRAM
-        )
+        while True:
+            try:
+                data, source = self._sock.recvfrom(_MAX_ICMP_DATAGRAM)
+                break
+            except (BlockingIOError, InterruptedError):
+                await self._ready(write=False)
         # Linux hands a ping socket the ICMP message alone; macOS includes the IPv4
         # header. An ICMP message never starts with 0x4_, an IPv4 header always does.
         if self._v4 and len(data) >= 20 and data[0] >> 4 == 4:
@@ -1055,10 +1098,14 @@ class GuardedPingClient:
         rtts: list[float] = []
         for sequence in range(self._count):
             started = loop.time()
-            if started >= deadline:
+            if deadline - started < _PING_MIN_WINDOW:
                 break
             packet = _echo_request(v6=v6, identifier=identifier, sequence=sequence, payload=nonce)
             sent += 1  # an attempt that fails to send (e.g. unreachable) counts as lost
+            # Round-trip times use a high-resolution clock: loop.time() is only good for
+            # deadlines (uvloop's is in whole milliseconds and cached per loop iteration,
+            # so sub-millisecond LAN round trips would read as 0).
+            sent_at = time.perf_counter()
             try:
                 async with asyncio.timeout_at(deadline):
                     await sock.send(packet)
@@ -1066,7 +1113,7 @@ class GuardedPingClient:
                 pass
             else:
                 until = min(started + self._reply_timeout, deadline)
-                rtt = await self._reply(sock, address, sequence, nonce, started, until)
+                rtt = await self._reply(sock, address, sequence, nonce, sent_at, until)
                 if rtt is not None:
                     rtts.append(rtt)
             if sequence + 1 < self._count:
@@ -1081,11 +1128,11 @@ class GuardedPingClient:
         address: IPAddress,
         sequence: int,
         nonce: bytes,
-        started: float,
+        sent_at: float,
         until: float,
     ) -> float | None:
-        """Wait until ``until`` for this packet's reply; its round-trip time or ``None``."""
-        loop = asyncio.get_running_loop()
+        """Wait until ``until`` (loop time) for this packet's reply; its round-trip time
+        (from ``sent_at``, a :func:`time.perf_counter` reading) or ``None``."""
         v6 = isinstance(address, IPv6Address)
         try:
             async with asyncio.timeout_at(until):
@@ -1094,7 +1141,7 @@ class GuardedPingClient:
                     if not _same_address(source, address):
                         continue  # not from the checked address
                     if _echo_reply(data, v6=v6) == (sequence, nonce):
-                        return loop.time() - started
+                        return time.perf_counter() - sent_at
                     # Anything else (a late reply, an ICMP error, junk) is ignored.
         except (OSError, TimeoutError):
             return None

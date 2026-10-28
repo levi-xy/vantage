@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.collectors.store import MetricsStore, standard_labels
 from app.core.crypto import DecryptionError, SecretBox
 from app.core.db import utcnow
-from app.core.net_guard import NetGuardError
+from app.core.net_guard import NetGuardError, PingError
 from app.integrations import instance_config as ic
 from app.integrations.base import InstanceContext, Integration, Sample
 from app.integrations.registry import Registry
@@ -298,6 +298,8 @@ class PollScheduler:
             raise _PollError("poll timed out") from None
         except NetGuardError as exc:  # names the host and the reason, nothing secret
             raise _PollError(f"refused by the network guard: {exc}") from None
+        except PingError as exc:  # fixed text plus, at most, the checked address
+            raise _PollError(f"ping failed: {exc}") from None
         except Exception as exc:
             raise _PollError(f"poll failed ({type(exc).__name__})") from None
         if not isinstance(result, list) or not all(isinstance(s, Sample) for s in result):

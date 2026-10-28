@@ -385,6 +385,32 @@ async def test_collector_marks_silent_host_down(
     assert 'vantage_instance_up{vantage_instance="gw-1"' in text
 
 
+async def test_collector_broadcast_status_says_why(
+    fake_icmp: FakeIcmp, engine: Engine, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The poll status carries the same secret-free PingError text as test_connection.
+    caplog.set_level(logging.DEBUG)
+    fake_icmp.connect_error = PermissionError(13, "Permission denied")
+    store, spec = await collect(engine, config(host="10.0.0.255"), site="lab")
+    status = store.status(spec.instance_id)
+    assert status is not None and status.state == "down"
+    assert status.error == (
+        "ping failed: the system refused to ping 10.0.0.255 (is it a broadcast address?)"
+    )
+    assert fake_icmp.sent == []
+    assert "Traceback" not in caplog.text
+
+
+async def test_collector_icmp_not_permitted_status(fake_icmp: FakeIcmp, engine: Engine) -> None:
+    fake_icmp.open_error = PermissionError(13, "Permission denied")
+    store, spec = await collect(engine, config(), site="lab")
+    status = store.status(spec.instance_id)
+    assert status is not None and status.state == "down"
+    assert status.error is not None
+    assert status.error.startswith("ping failed: ICMP is not permitted")
+    assert "ping_group_range" in status.error
+
+
 async def test_collector_degrades_config_made_invalid_by_upgrade(
     fake_icmp: FakeIcmp, engine: Engine, caplog: pytest.LogCaptureFixture
 ) -> None:

@@ -264,12 +264,13 @@ Instance responses carry `status: {state, checked_at, last_success_at, error}` (
 
 The status is in memory: it resets on restart.
 
-`error` is built so it cannot leak. The scheduler does not store an exception's own text, because it can carry URLs, headers or response bodies; it stores the exception type, a fixed text, or (for `NetGuardError` only) the guard's message, which holds just the host as configured and a fixed reason. Today:
+`error` is built so it cannot leak. The scheduler does not store an exception's own text, because it can carry URLs, headers or response bodies; it stores the exception type, a fixed text, or (for `NetGuardError` and `PingError` only) the guard's or ping client's message, which holds just the host as configured or the checked address, and a fixed reason. Today:
 
 | What happened | `error` |
 |---|---|
 | `TimeoutError` or `httpx.TimeoutException` (including the 60 s limit) | `poll timed out` |
 | `NetGuardError` | `refused by the network guard: <the guard's message>` |
+| `PingError` (from `ctx.ping_client()`) | `ping failed: <the client's message>`, for example `ping failed: the system refused to ping 10.0.0.255 (is it a broadcast address?)` |
 | any other exception | `poll failed (<ExceptionType>)`, for example `poll failed (NoReply)` |
 | `poll()` returned something other than a list of `Sample` | `poll returned something other than a list of samples` |
 | stored config no longer validates | `stored config is not valid for this integration` |
@@ -277,7 +278,7 @@ The status is in memory: it resets on restart.
 | building the network guard failed | `network guard unavailable (<ExceptionType>)` |
 | storing the returned samples failed | `storing poll results failed (<ExceptionType>)` |
 
-So a failed poll shows the exception type, one of the fixed texts above, or the guard's message. If the admin needs to tell failures apart, **give your exception a distinct class name** (`NoReply`, not `Exception`); that name is all they will see. Decrypted secret values are also scrubbed from the text, and a guard message must stay free of config values (it names the host as configured and a fixed reason).
+So a failed poll shows the exception type, one of the fixed texts above, or the guard's or ping client's message. If the admin needs to tell failures apart, **give your exception a distinct class name** (`NoReply`, not `Exception`); that name is all they will see. Decrypted secret values are also scrubbed from the text, and a guard message must stay free of config values (it names the host as configured and a fixed reason).
 
 `test_connection()` is different: it returns a `TestResult` with a message you write, so it can be specific (`HTTP 503, expected 2xx or 3xx`). It must still never contain exception text or a secret. If it raises instead, the instance API reports only the exception type (`connection test failed (<Type>)`), or `connection test timed out` after 30 s; a `NetGuardError` is shown as `connection refused by the network guard: ...`.
 
@@ -404,7 +405,8 @@ Add your import and one line, keeping the tuple sorted by `type_id`. Listing it 
 ## 14. Deployment assumptions
 
 - **One backend worker.** The poll collector and `/metrics` live inside one process; with several uvicorn workers every worker would poll every instance and serve its own `/metrics`. This repo runs one worker: don't set `--workers` or `WEB_CONCURRENCY`.
-- **ICMP.** `ctx.ping_client()` uses unprivileged ICMP datagram sockets, not raw sockets. `deploy/docker-compose.yml` sets the `net.ipv4.ping_group_range` sysctl on the backend container so the non-root user may open them; `NET_RAW` is not added. An integration that pings fails with a clear `PingError` when the permission is missing.
+- **ICMP.** `ctx.ping_client()` uses unprivileged ICMP datagram sockets, not raw sockets. `deploy/docker-compose.yml` sets the `net.ipv4.ping_group_range` sysctl on the backend container so the non-root user may open them; `NET_RAW` is not added. An integration that pings fails with a clear `PingError` when the permission is missing (`ping failed: ICMP is not permitted ...` in the poll status).
+- **Event loop.** In the container uvicorn runs on uvloop (`uvicorn[standard]`), which does not implement every asyncio loop method: `loop.sock_recvfrom` and `loop.sock_sendto` raise `NotImplementedError` there. Integrations never touch sockets, so this matters only inside `net_guard`, whose ping client uses `add_reader`/`add_writer` with non-blocking socket calls, measures round trips with `time.perf_counter()` (uvloop's `loop.time()` has millisecond resolution), and sends no further packet once less than 1 ms is left before the total deadline.
 - **Network position.** Everything the integration reaches is reached from the backend container, and Prometheus reaches scrape targets from its own container. A firewall hint is about those two sources.
 
 ---
@@ -444,6 +446,8 @@ fake_icmp.sent       # every SentPing sent: address, type, code, sequence, paylo
 fake_icmp.opened     # sockets opened (empty if the guard refused before pinging)
 fake_icmp.open_error / connect_error / send_error / reply_source / preload   # fault injection
 ```
+
+`fake_icmp` replaces the whole socket layer, so it does not exercise the event-loop I/O. That layer has its own tests in `tests/test_net_guard.py` (a UDP stand-in on loopback, plus a real-kernel loopback echo where unprivileged ICMP is permitted), and they run on both the default asyncio loop and uvloop: mark an async test `pytest.mark.asyncio(loop_factories=["asyncio", "uvloop"])` (the hook is in `tests/conftest.py`; the uvloop run is skipped where uvloop isn't installed, such as Windows).
 
 Names resolve through `netfake.DNS` (`web.example.internal` to `10.0.0.10`, `node.example.internal` to `10.0.0.20`, `ping.example.internal` to `10.0.0.30`, `metadata.example.internal` to the metadata address `169.254.169.254`). Add an entry there for a new fake host rather than using a real name. Routes and responders are keyed by the resolved address, not by name.
 
