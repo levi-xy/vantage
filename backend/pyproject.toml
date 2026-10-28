@@ -33,6 +33,8 @@ dev = [
     "mypy>=1.13,<2",
     "bandit>=1.7,<2",
     "pip-audit>=2.7,<3",
+    # Reads deploy/docker-compose.yml in tests. Already installed through bandit.
+    "pyyaml>=6,<7",
 ]
 
 [build-system]
