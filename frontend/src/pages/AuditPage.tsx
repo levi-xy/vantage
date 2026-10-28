@@ -30,6 +30,13 @@ function Changes({ changes }: { changes: Record<string, unknown> }) {
   );
 }
 
+/** Who acted: a user (through the API), the admin CLI on the server, or the backend. */
+function actor(entry: AuditEntry): string {
+  if (entry.actor_type === "cli") return "Admin CLI";
+  if (entry.actor_type === "system") return "System";
+  return entry.user_id === null ? "—" : `User #${entry.user_id}`;
+}
+
 function Row({ entry }: { entry: AuditEntry }) {
   const cell = "px-3 py-2 align-top";
   return (
@@ -37,9 +44,7 @@ function Row({ entry }: { entry: AuditEntry }) {
       <td className={`${cell} whitespace-nowrap`}>
         <time dateTime={entry.at}>{new Date(entry.at).toLocaleString()}</time>
       </td>
-      <td className={`${cell} whitespace-nowrap`}>
-        {entry.user_id === null ? "—" : `User #${entry.user_id}`}
-      </td>
+      <td className={`${cell} whitespace-nowrap`}>{actor(entry)}</td>
       <td className={`${cell} whitespace-nowrap font-medium`}>{entry.action}</td>
       <td className={cell}>
         <span className="whitespace-nowrap">{entry.target_type}</span>

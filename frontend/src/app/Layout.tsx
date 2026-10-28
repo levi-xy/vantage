@@ -16,7 +16,9 @@ interface NavItem {
 const NAV: readonly NavItem[] = [
   { to: "/", label: "Dashboard", end: true },
   { to: "/devices", label: "Devices", end: false },
+  { to: "/users", label: "Users", end: false, role: "admin" },
   { to: "/audit", label: "Audit log", end: false, role: "admin" },
+  { to: "/account", label: "My account", end: false },
 ];
 
 const ROLE_LABELS: Record<Role, string> = { admin: "Admin", viewer: "Viewer" };

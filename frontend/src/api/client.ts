@@ -11,8 +11,12 @@ import type {
   InstanceUpdate,
   IntegrationInfo,
   Me,
+  PasswordChange,
+  Role,
   SetupStatus,
   TestResult,
+  UserCreate,
+  UserInfo,
 } from "./types";
 
 export const API_BASE = "/api/v1";
@@ -158,6 +162,38 @@ export class ApiClient {
 
   async me(): Promise<Me> {
     return this.#session(await this.request<Me>("GET", "/me"));
+  }
+
+  /** Any role. Needs the current password; ends the user's other sessions (this one stays). */
+  changeMyPassword(body: PasswordChange): Promise<void> {
+    return this.request("POST", "/me/password", body);
+  }
+
+  /** Admin only. */
+  users(): Promise<UserInfo[]> {
+    return this.request("GET", "/users");
+  }
+
+  /** Admin only. */
+  createUser(body: UserCreate): Promise<UserInfo> {
+    return this.request("POST", "/users", body);
+  }
+
+  /** Admin only. The last admin can't be demoted (409). */
+  setUserRole(id: number, role: Role): Promise<UserInfo> {
+    return this.request("PATCH", `/users/${encodeURIComponent(String(id))}`, { role });
+  }
+
+  /** Admin only. Ends all of that user's sessions. */
+  resetUserPassword(id: number, password: string): Promise<void> {
+    return this.request("POST", `/users/${encodeURIComponent(String(id))}/password`, {
+      password,
+    });
+  }
+
+  /** Admin only. The last admin, and your own account, can't be deleted (409). */
+  deleteUser(id: number): Promise<void> {
+    return this.request("DELETE", `/users/${encodeURIComponent(String(id))}`);
   }
 
   /** Admin only. Newest first. */
