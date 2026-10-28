@@ -4,7 +4,7 @@ Importing this package registers all tables on ``Base.metadata``.
 """
 
 from app.models.alert import AlertEvent, AlertRule, AlertState
-from app.models.audit import AuditLog
+from app.models.audit import ActorType, AuditLog
 from app.models.channel import Channel, ChannelType
 from app.models.dashboard import Dashboard
 from app.models.instance import Instance
@@ -15,6 +15,7 @@ from app.models.setting import Setting
 from app.models.user import Role, User
 
 __all__ = [
+    "ActorType",
     "AlertEvent",
     "AlertRule",
     "AlertState",

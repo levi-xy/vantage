@@ -39,6 +39,7 @@ from uuid import UUID
 from pydantic import BaseModel, SecretBytes, SecretStr
 from sqlalchemy.orm import Session
 
+from app.models import ActorType as ActorType  # re-exported: audit.ActorType
 from app.models import AuditLog
 
 REDACTED = "<changed>"
@@ -213,19 +214,29 @@ def record(
     target_type: str,
     target_id: int | str | UUID | None,
     user_id: int | None,
+    actor_type: ActorType,
     changes: Mapping[str, Any] | BaseModel | None = None,
     secret_keys: Iterable[str] = (),
     schema: type[BaseModel] | None = None,
 ) -> AuditLog:
     """Add an audit entry to ``db``'s current transaction. The caller commits.
 
+    ``actor_type`` says who acted (no default, so no write path can forget it): a
+    request through the API (``USER``, with the logged-in ``user_id``, or none for a
+    failed login), the admin CLI (``CLI``) or the backend itself (``SYSTEM``). Only
+    ``USER`` entries may carry a ``user_id``.
+
     For updates, ``changes`` should be a :func:`diff` of the touched fields; any secret
     key in it, at any depth, is collapsed to ``"<changed>"`` (old and new alike).
 
-    Raises ``ValueError`` when ``target_type`` is in :data:`SCHEMA_REQUIRED_TARGETS`,
+    Raises ``ValueError`` when a ``CLI`` or ``SYSTEM`` entry has a ``user_id``, and when
+    ``target_type`` is in :data:`SCHEMA_REQUIRED_TARGETS`,
     ``changes`` is non-empty and no ``schema`` is given (and ``changes`` isn't a model
     instance, which carries its own schema).
     """
+    actor_type = ActorType(actor_type)
+    if user_id is not None and actor_type is not ActorType.USER:
+        raise ValueError(f"a {actor_type.value!r} audit entry has no acting user")
     if (
         target_type in SCHEMA_REQUIRED_TARGETS
         and schema is None
@@ -235,6 +246,7 @@ def record(
         raise ValueError(f"audit changes for {target_type!r} need the schema of its secrets")
     entry = AuditLog(
         user_id=user_id,
+        actor_type=actor_type,
         action=str(action),
         target_type=target_type,
         target_id=None if target_id is None else str(target_id),

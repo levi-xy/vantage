@@ -36,24 +36,25 @@ import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO, Any, NoReturn, cast
+from typing import IO, NoReturn
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
-from sqlalchemy import CursorResult, Engine, delete, func, inspect, select
+from sqlalchemy import Engine, inspect, select
 from sqlalchemy.engine import make_url
-from sqlalchemy.exc import ArgumentError, IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import ArgumentError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.api.auth import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, SETUP_MARKER, USERNAME_PATTERN
-from app.core import audit
+from app.api.auth import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, USERNAME_PATTERN
+from app.core import audit, users
 from app.core.auth import Passwords
 from app.core.config import ConfigError, Settings, load_settings
 from app.core.db import make_engine, make_session_factory
 from app.core.login_failures import UserLoginFailures
-from app.models import Role, Setting, User, UserSession
+from app.models import Role, User
 
-# Recorded in the audit entry's ``changes`` so CLI actions can be told apart from API
-# ones. ``user_id`` (the actor) is empty: the operator is whoever has a shell on the host.
+# CLI entries have ``actor_type = "cli"`` and an empty ``user_id`` (the operator is
+# whoever has a shell on the host). ``changes.source`` is still recorded too, so entries
+# read the same as the ones written before ``actor_type`` existed (M3.5).
 AUDIT_SOURCE = "cli"
 _REQUIRED_TABLES = ("users", "sessions", "login_failures", "settings", "audit_log")
 
@@ -235,23 +236,16 @@ def reset_password(ctx: Context, username: str, from_stdin: bool) -> None:
         user = _find_user(db, username)
         if user is None:  # deleted while the operator was typing
             raise _no_such_user()
-        user.password_hash = password_hash
-        # The user row is written (and locked) before the sessions are deleted. A login
-        # only creates a session if it can update the row while the hash is still the
-        # one it verified (see app.api.auth.login), so either that login fails, or it
-        # commits first and its session is deleted here.
-        db.flush()
-        # Every session ends, so old cookies stop working on their next request.
-        ended = cast(
-            "CursorResult[Any]",
-            db.execute(delete(UserSession).where(UserSession.user_id == user.id)),
-        ).rowcount
-        # The failures counted so far were guesses at the old password: they say nothing
-        # about the new one, and keeping them would leave the user locked out after the
-        # reset that was meant to let them back in.
-        cleared = UserLoginFailures.clear(db, user.id)
+        # Writes the user row before ending every session, so a login racing this reset
+        # can't keep a session (see app.core.users). Old cookies stop working on their
+        # next request, and the failed logins (guesses at the old password) are cleared.
+        result = users.set_password(db, user.id, password_hash)
+        if result is None:  # deleted in the meantime
+            raise _no_such_user()
+        ended, cleared = result.sessions_ended, result.failed_logins_cleared
         audit.record(
             db,
+            actor_type=audit.ActorType.CLI,
             action=audit.Action.UPDATE,
             target_type="user",
             target_id=user.id,
@@ -281,6 +275,7 @@ def unlock(ctx: Context, username: str) -> None:
         cleared = UserLoginFailures.clear(db, user.id)
         audit.record(
             db,
+            actor_type=audit.ActorType.CLI,
             action=audit.Action.UPDATE,
             target_type="user",
             target_id=user.id,
@@ -295,52 +290,38 @@ def unlock(ctx: Context, username: str) -> None:
 def create_user(ctx: Context, username: str, role: Role, from_stdin: bool) -> None:
     username = _validate_username(username)
 
-    def exists(db: Session) -> bool:
-        # Case-insensitive: "Admin" and "admin" look alike to people, and a failed login
-        # for a name that differs only in case counts on the existing account.
-        found = db.scalar(select(User.id).where(func.lower(User.username) == username.lower()))
-        return found is not None
-
+    taken = CliError("a user with that username already exists")
     with ctx.session_factory() as db:
-        if exists(db):
-            raise CliError("a user with that username already exists")
+        # Case-insensitive, like the user API (app.core.users).
+        if users.username_taken(db, username):
+            raise taken
     password = _read_password(ctx.console, from_stdin)
     _validate_password(password)
     password_hash = ctx.passwords.hash(password)
     del password
 
     with ctx.session_factory() as db:
-        if exists(db):
-            raise CliError("a user with that username already exists")
-        user = User(username=username, password_hash=password_hash, role=role)
-        db.add(user)
-        # Like setup: once a user exists, network setup stays closed even if every user
-        # is later deleted.
-        if db.get(Setting, SETUP_MARKER) is None:
-            db.add(Setting(key=SETUP_MARKER, value=True))
         try:
-            db.flush()
-        except IntegrityError:
-            db.rollback()
-            raise CliError("a user with that username already exists") from None
-        audit.record(
-            db,
-            action=audit.Action.CREATE,
-            target_type="user",
-            target_id=user.id,
-            user_id=None,
-            changes={
-                "username": user.username,
-                "role": user.role,
-                "password": audit.REDACTED,
-                "source": AUDIT_SOURCE,
-            },
-        )
-        try:
-            db.commit()
-        except IntegrityError:
-            db.rollback()
-            raise CliError("a user with that username already exists") from None
+            # Also closes network setup, like setup does: once a user exists it stays
+            # closed even if every user is later deleted.
+            user = users.add_user(db, username=username, password_hash=password_hash, role=role)
+            audit.record(
+                db,
+                actor_type=audit.ActorType.CLI,
+                action=audit.Action.CREATE,
+                target_type="user",
+                target_id=user.id,
+                user_id=None,
+                changes={
+                    "username": user.username,
+                    "role": user.role,
+                    "password": audit.REDACTED,
+                    "source": AUDIT_SOURCE,
+                },
+            )
+            users.commit_new_user(db, username)
+        except users.UsernameTaken:
+            raise taken from None
         ctx.console.out(f"Created {role.value} {user.username!r} (id {user.id}).")
         has_admin = db.scalar(select(User.id).where(User.role == Role.ADMIN).limit(1))
         if has_admin is None:

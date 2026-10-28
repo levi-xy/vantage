@@ -14,7 +14,7 @@ from app.core.auth import LoginRateLimiter
 from app.core.db import make_session_factory, utcnow
 from app.core.login_failures import UserLoginFailures
 from app.models import AuditLog, LoginFailure, Role, User
-from tests.test_audit import raw_audit_table
+from tests.audit_helpers import raw_audit_table
 from tests.test_auth import ADMIN, PASSWORD, add_user, login, make_client
 from tests.test_client_address import PROXY, TRUSTED
 

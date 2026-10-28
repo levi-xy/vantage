@@ -196,8 +196,9 @@ docker compose exec backend python -m app.cli unlock <username>
   since browser setup is then closed. Passwords are 12 to 1024 characters and are
   hashed with the same Argon2 parameters as login.
 - **Audited.** A reset or an unlock is an `update` on the user (with
-  `changes.failed_logins_cleared`, a count), a new user a `create`. The actor
-  (`user_id`) is empty and `changes.source` is `"cli"`. The password is recorded only
+  `changes.failed_logins_cleared`, a count), a new user a `create`. The entry's
+  `actor_type` is `cli` and its `user_id` is empty (`changes.source` is `"cli"` too,
+  as in entries from before `actor_type` existed). The password is recorded only
   as `"<changed>"`; neither it nor its hash reaches the table, the output or any log.
   Error messages don't repeat what was typed (an unknown username, an unknown
   argument), because a mistyped command may hold a password.
@@ -211,6 +212,38 @@ docker compose exec backend python -m app.cli unlock <username>
   the new one). Neither can clear the per-address limit, which is in the backend's
   memory: if logins from one address are still refused, `docker compose restart
   backend` clears it (see above).
+
+## User management
+
+Admins manage users in the UI (`/api/v1/users`); every user can change their own
+password (`POST /api/v1/me/password`). The CLI above and the API share the same rules
+(`backend/app/core/users.py`):
+
+- **Passwords are write-only.** No response carries a password or its hash, and audit
+  entries record only `"password": "<changed>"`.
+- **Duplicate usernames are refused ignoring case**, by the same check as
+  `create-user`. Usernames are stored as typed and compared exactly at login; the
+  case-insensitive check is application code shared by the CLI and the API (there is
+  no case-insensitive index). Only a real duplicate is reported as "already exists";
+  any other database error is reported as an error.
+- **A reset ends sessions.** An admin resetting a user's password ends all of that
+  user's sessions and clears their failed logins. It writes the user row before it
+  deletes sessions, like the CLI, so a racing login either fails or loses its session.
+  Changing your own password follows the same order.
+- **Changing your own password** needs the current one and ends your other sessions
+  (this one stays). A wrong current password counts as a failed login on your
+  account, so a stolen session can't guess it faster than the login form allows. The
+  flip side: someone holding a stolen session can lock the account's password login
+  this way. That's no new exposure, since anyone can already lock it with failed logins.
+- **There is always an admin.** The last admin can't be demoted or deleted (409). The
+  check runs after the change, in the same transaction, with the admin rows locked
+  (Postgres), so two admins demoting each other at once can't leave none. An admin
+  can't delete their own account; another admin has to.
+- **A role change takes effect on the user's next request**; their sessions stay.
+- **Audited.** Create, role change, reset, own password change and delete are each an
+  entry with `actor_type` `user` and the acting admin (or user) as `user_id`. A failed
+  login is a `user` entry with an empty `user_id` (nobody is logged in), and entries
+  keep their place with an empty `user_id` once the acting user is deleted.
 
 ## Network guard
 

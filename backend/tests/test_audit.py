@@ -10,13 +10,14 @@ import pytest
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field, SecretBytes, SecretStr
-from sqlalchemy import Engine, select, text
+from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from app.core.audit import REDACTED, Action, diff, record, redact, secret_fields
 from app.core.auth import session_id
 from app.core.db import make_session_factory
-from app.models import AuditLog, Role, User
+from app.models import ActorType, AuditLog, Role, User
+from tests.audit_helpers import raw_audit_table
 from tests.test_auth import (
     ADMIN,
     PASSWORD,
@@ -32,6 +33,7 @@ FAKE_API_TOKEN = "example-token-0f1e2d3c"
 FAKE_COMMUNITY = "example-community-xyz"
 FAKE_BOT_TOKEN = "example-bot-token-123456"
 FAKE_RELAY_VALUE = "example-relay-value-789"
+FAKE_WRONG_PASSWORD = "example-wrong-password-1"
 
 
 class Credentials(BaseModel):
@@ -73,13 +75,6 @@ def db(engine: Engine) -> Iterator[Session]:
 def entries(db: Session) -> list[AuditLog]:
     db.expire_all()
     return list(db.scalars(select(AuditLog).order_by(AuditLog.id)))
-
-
-def raw_audit_table(engine: Engine) -> str:
-    """Every column of every audit_log row, as stored, in one string."""
-    with engine.connect() as conn:
-        rows = conn.execute(text("SELECT * FROM audit_log")).all()
-    return "\n".join(repr(tuple(row)) for row in rows)
 
 
 # --- secret detection ----------------------------------------------------------------
@@ -166,6 +161,7 @@ def test_instance_and_channel_changes_need_a_schema(db: Session, target_type: st
     with pytest.raises(ValueError, match="schema"):
         record(
             db,
+            actor_type=ActorType.USER,
             action=Action.UPDATE,
             target_type=target_type,
             target_id=1,
@@ -173,9 +169,17 @@ def test_instance_and_channel_changes_need_a_schema(db: Session, target_type: st
             changes={"relay_value": FAKE_RELAY_VALUE},
         )
     # Nothing to leak: a delete without changes, or a model instance (its own schema).
-    record(db, action=Action.DELETE, target_type=target_type, target_id=1, user_id=None)
     record(
         db,
+        actor_type=ActorType.USER,
+        action=Action.DELETE,
+        target_type=target_type,
+        target_id=1,
+        user_id=None,
+    )
+    record(
+        db,
+        actor_type=ActorType.USER,
         action=Action.CREATE,
         target_type=target_type,
         target_id=2,
@@ -292,6 +296,7 @@ def test_record_create_update_delete(engine: Engine, db: Session) -> None:
 
     record(
         db,
+        actor_type=ActorType.USER,
         action=Action.CREATE,
         target_type="instance",
         target_id=UUID(target),
@@ -300,6 +305,7 @@ def test_record_create_update_delete(engine: Engine, db: Session) -> None:
     )
     record(
         db,
+        actor_type=ActorType.USER,
         action=Action.UPDATE,
         target_type="instance",
         target_id=target,
@@ -307,7 +313,14 @@ def test_record_create_update_delete(engine: Engine, db: Session) -> None:
         changes=diff({"token_value": FAKE_API_TOKEN}, {"token_value": "example-token-new"}),
         schema=FakeIntegrationConfig,
     )
-    record(db, action=Action.DELETE, target_type="instance", target_id=target, user_id=admin.id)
+    record(
+        db,
+        actor_type=ActorType.USER,
+        action=Action.DELETE,
+        target_type="instance",
+        target_id=target,
+        user_id=admin.id,
+    )
     db.commit()
 
     rows = entries(db)
@@ -326,14 +339,28 @@ def test_record_create_update_delete(engine: Engine, db: Session) -> None:
 
 
 def test_record_is_part_of_the_callers_transaction(db: Session) -> None:
-    record(db, action=Action.DELETE, target_type="link", target_id=1, user_id=None)
+    record(
+        db,
+        actor_type=ActorType.USER,
+        action=Action.DELETE,
+        target_type="link",
+        target_id=1,
+        user_id=None,
+    )
     db.rollback()
     assert entries(db) == []
 
 
 def test_entry_survives_user_deletion(db: Session) -> None:
     user = add_user(db, "gone", Role.VIEWER)
-    record(db, action=Action.UPDATE, target_type="user", target_id=user.id, user_id=user.id)
+    record(
+        db,
+        actor_type=ActorType.USER,
+        action=Action.UPDATE,
+        target_type="user",
+        target_id=user.id,
+        user_id=user.id,
+    )
     db.commit()
     db.delete(user)
     db.commit()
@@ -341,7 +368,59 @@ def test_entry_survives_user_deletion(db: Session) -> None:
     assert row.user_id is None and row.target_id is not None
 
 
+@pytest.mark.parametrize("actor", [ActorType.USER, ActorType.CLI, ActorType.SYSTEM])
+def test_actor_type_is_stored(db: Session, actor: ActorType) -> None:
+    record(
+        db, actor_type=actor, action=Action.DELETE, target_type="link", target_id=1, user_id=None
+    )
+    db.commit()
+    (row,) = entries(db)
+    assert row.actor_type == actor
+
+
+@pytest.mark.parametrize("actor", [ActorType.CLI, ActorType.SYSTEM])
+def test_only_user_entries_have_an_acting_user(db: Session, actor: ActorType) -> None:
+    user = add_user(db, "someone", Role.ADMIN)
+    with pytest.raises(ValueError, match="no acting user"):
+        record(
+            db,
+            actor_type=actor,
+            action=Action.DELETE,
+            target_type="link",
+            target_id=1,
+            user_id=user.id,
+        )
+
+
+def test_actor_type_must_be_known(db: Session) -> None:
+    with pytest.raises(ValueError):
+        record(
+            db,
+            actor_type="robot",  # type: ignore[arg-type]
+            action=Action.DELETE,
+            target_type="link",
+            target_id=1,
+            user_id=None,
+        )
+
+
 # --- wiring into the API -------------------------------------------------------------
+
+
+def test_api_entries_are_user_actions(client: TestClient, db: Session) -> None:
+    me = do_setup(client)
+    client.post("/api/v1/auth/login", json={"username": ADMIN, "password": FAKE_WRONG_PASSWORD})
+    rows = entries(db)
+    assert [(r.action, r.actor_type) for r in rows] == [
+        ("create", ActorType.USER),
+        ("login_failed", ActorType.USER),
+    ]
+    body = client.get("/api/v1/audit").json()
+    assert [(e["action"], e["actor_type"]) for e in body] == [
+        ("login_failed", "user"),
+        ("create", "user"),
+    ]
+    assert body[1]["user_id"] == int(me["id"]) and body[0]["user_id"] is None
 
 
 def test_setup_writes_a_create_entry(client: TestClient, db: Session) -> None:
@@ -473,6 +552,7 @@ def test_no_secret_ever_reaches_the_audit_table(
     # Service-level flows later milestones will use (instances, channels).
     record(
         db,
+        actor_type=ActorType.USER,
         action=Action.CREATE,
         target_type="instance",
         target_id="00000000-0000-4000-8000-0000000000bb",
@@ -485,6 +565,7 @@ def test_no_secret_ever_reaches_the_audit_table(
     )
     record(
         db,
+        actor_type=ActorType.USER,
         action=Action.UPDATE,
         target_type="channel",
         target_id=1,
@@ -544,7 +625,14 @@ def test_audit_endpoint_is_admin_only(client: TestClient, db: Session) -> None:
 def test_audit_endpoint_lists_newest_first_with_paging(client: TestClient, db: Session) -> None:
     me = do_setup(client)
     for i in range(3):
-        record(db, action=Action.DELETE, target_type="link", target_id=i, user_id=int(me["id"]))
+        record(
+            db,
+            actor_type=ActorType.USER,
+            action=Action.DELETE,
+            target_type="link",
+            target_id=i,
+            user_id=int(me["id"]),
+        )
     db.commit()
 
     r = client.get("/api/v1/audit", params={"limit": 2})

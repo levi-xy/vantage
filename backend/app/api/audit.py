@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.api.deps import AdminDep, DbDep
-from app.models import AuditLog
+from app.models import ActorType, AuditLog
 
 router = APIRouter()
 
@@ -18,6 +18,9 @@ MAX_LIMIT = 200
 class AuditEntry(BaseModel):
     id: int
     user_id: int | None
+    # user: through the API (user_id is the logged-in user, or empty for a failed
+    # login); cli: the admin CLI; system: the backend itself.
+    actor_type: ActorType
     action: str
     target_type: str
     target_id: str | None
@@ -41,6 +44,7 @@ def list_audit(
         AuditEntry(
             id=row.id,
             user_id=row.user_id,
+            actor_type=row.actor_type,
             action=row.action,
             target_type=row.target_type,
             target_id=row.target_id,
