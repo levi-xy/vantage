@@ -1,11 +1,11 @@
 """First-run setup, login, logout and the current user (M1.3)."""
 
 from datetime import timedelta
-from typing import Annotated
+from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
-from sqlalchemy import delete, func, select
+from sqlalchemy import CursorResult, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -190,14 +190,33 @@ def login(
     if not passwords.verify(user.password_hash if user else None, password) or user is None:
         _record_failed_login(db, user)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid username or password")
-    limiter.succeeded(user_key, [client_key])
 
     now = utcnow()
+    verified_hash = user.password_hash
     changes: dict[str, object] = {}
-    if passwords.needs_rehash(user.password_hash):
-        user.password_hash = passwords.hash(password)
-        changes["password_hash"] = user.password_hash  # stored as "<changed>"
-    user.last_login_at = now
+    new_hash = verified_hash
+    if passwords.needs_rehash(verified_hash):
+        new_hash = passwords.hash(password)
+        changes["password_hash"] = new_hash  # stored as "<changed>"
+    # Only if the hash is still the one just verified: a password reset (admin CLI)
+    # committed during the slow check must win, so no session is created with the old
+    # password and a rehash never overwrites the new hash. The row lock this takes also
+    # orders the login against a concurrent reset, which then ends the new session.
+    claimed = cast(
+        "CursorResult[Any]",
+        db.execute(
+            update(User)
+            .where(User.id == user.id, User.password_hash == verified_hash)
+            .values(password_hash=new_hash, last_login_at=now)
+            .execution_options(synchronize_session=False)
+        ),
+    )
+    if claimed.rowcount != 1:
+        db.rollback()
+        _record_failed_login(db, db.get(User, user.id))
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid username or password")
+    db.refresh(user)
+    limiter.succeeded(user_key, [client_key])
     audit.record(
         db,
         action=audit.Action.LOGIN,

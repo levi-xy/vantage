@@ -159,12 +159,18 @@ docker compose exec backend python -m app.cli list-users
 - **Passwords never on the command line.** There is no password argument or
   environment variable, since both end up in shell history or process listings. For
   scripts, `--password-stdin` reads one line from stdin instead (use
-  `docker compose exec -T` so stdin is piped). Without `--password-stdin` and without a
-  terminal, the CLI refuses rather than read a password with echo on.
+  `docker compose exec -T` so stdin is piped). The CLI refuses rather than read a
+  password with echo on: `--password-stdin` on a terminal, or a prompt without one.
+- **A reset beats a racing login.** Login only writes its session if the user's hash
+  is still the one it just verified (a conditional update of the user row). A login
+  that checked the old password while a reset was committing gets 401, and a password
+  rehash on login can never overwrite the new hash. A login that committed first has
+  its session deleted by the reset.
 - **Same rules as setup and login.** Usernames match the setup wizard's pattern and are
   stored as typed; login compares them exactly, so `reset-password` does too.
   `create-user` refuses a name that differs from an existing one only in case, since
-  the login rate limit treats them as one. Passwords are 12 to 1024 characters and are
+  the login rate limit treats them as one. It warns when no admin exists afterwards,
+  since browser setup is then closed. Passwords are 12 to 1024 characters and are
   hashed with the same Argon2 parameters as login.
 - **Audited.** A reset is an `update` on the user, a new user a `create`. The actor
   (`user_id`) is empty and `changes.source` is `"cli"`. The password is recorded only

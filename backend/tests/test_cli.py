@@ -10,6 +10,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
@@ -18,9 +19,11 @@ from app.cli import AUDIT_SOURCE, LIMITER_HINT, Console, build_parser, main
 from app.collectors.scheduler import PollScheduler
 from app.core.auth import Passwords
 from app.core.config import Settings, normalize_database_url
+from app.core.crypto import SecretBox
 from app.core.db import make_session_factory
+from app.main import create_app
 from app.models import AuditLog, Role, Setting, User, UserSession
-from tests.conftest import BACKEND_DIR
+from tests.conftest import BACKEND_DIR, TEST_MASTER_KEY
 from tests.test_auth import ADMIN, FAST_HASHER, PASSWORD, add_user, do_setup, login, make_client
 
 NEW_PASSWORD = "example-new-password-456"
@@ -460,3 +463,96 @@ def test_python_m_app_cli_without_master_key(engine: Engine, db_url: str) -> Non
     for proc in (created, listed, reset, unknown):
         assert PASSWORD not in proc.stdout + proc.stderr
         assert NEW_PASSWORD not in proc.stdout + proc.stderr
+
+
+# --- login racing a reset, stdin edge cases, no-admin warning -------------------------
+
+
+class ResetDuringVerify(Passwords):
+    """Runs a CLI reset right after the API verified the old password, before the login
+    writes anything: the window a real concurrent reset can land in."""
+
+    def __init__(self, cli: CliRunner, rehash: bool) -> None:
+        super().__init__(FAST_HASHER)
+        self.cli, self.rehash, self.fired = cli, rehash, False
+
+    def verify(self, password_hash: str | None, password: str) -> bool:
+        ok = super().verify(password_hash, password)
+        if ok and not self.fired:
+            self.fired = True
+            run = self.cli("reset-password", ADMIN, "--password-stdin", stdin=NEW_PASSWORD)
+            assert run.code == 0, run.err
+        return ok
+
+    def needs_rehash(self, password_hash: str) -> bool:
+        return self.rehash or super().needs_rehash(password_hash)
+
+
+@pytest.mark.parametrize("rehash", [False, True], ids=["plain", "rehash"])
+def test_login_racing_a_reset_gets_no_session(
+    cli: CliRunner, db: Session, db_url: str, rehash: bool
+) -> None:
+    add_user(db, ADMIN, Role.ADMIN)
+    racing = ResetDuringVerify(cli, rehash)
+    app = create_app(cli.settings, secret_box=SecretBox(TEST_MASTER_KEY), passwords=racing)
+    with TestClient(app, base_url="https://testserver") as browser:
+        r = browser.post("/api/v1/auth/login", json={"username": ADMIN, "password": PASSWORD})
+        assert racing.fired
+        assert r.status_code == 401
+        assert browser.get("/api/v1/me").status_code == 401
+
+    db.expire_all()
+    user = get_user(db, ADMIN)
+    assert db.scalars(select(UserSession)).all() == []
+    # The CLI's hash survived: no rehash of the old password overwrote it.
+    assert FAST_HASHER.verify(user.password_hash, NEW_PASSWORD)
+    assert user.last_login_at is None
+    assert [r.action for r in audit_rows(db)] == ["update", "login_failed"]
+    with make_client(db_url) as browser:
+        login(browser, ADMIN, NEW_PASSWORD)
+
+
+def test_password_stdin_refused_on_a_terminal(cli: CliRunner, db: Session) -> None:
+    user = add_user(db, ADMIN, Role.ADMIN)
+    old_hash = user.password_hash
+    stdin = FakeTty(NEW_PASSWORD + "\n")
+    err = io.StringIO()
+    console = Console(stdin=stdin, stdout=io.StringIO(), stderr=err, getpass=Prompt())
+    code = main(
+        ["reset-password", ADMIN, "--password-stdin"],
+        console=console,
+        settings=cli.settings,
+        passwords=cli.passwords,
+    )
+    assert code == 1
+    assert "echo" in err.getvalue() and "-T" in err.getvalue()
+    assert stdin.tell() == 0  # nothing was read
+    assert get_user(db, ADMIN).password_hash == old_hash
+
+
+def test_non_utf8_stdin_gives_a_clean_error(cli: CliRunner, db: Session) -> None:
+    add_user(db, ADMIN, Role.ADMIN)
+    stdin = io.TextIOWrapper(io.BytesIO(b"example-pass\xffword-123\n"), encoding="utf-8")
+    out, err = io.StringIO(), io.StringIO()
+    code = main(
+        ["reset-password", ADMIN, "--password-stdin"],
+        console=Console(stdin=stdin, stdout=out, stderr=err),
+        settings=cli.settings,
+        passwords=cli.passwords,
+    )
+    assert code == 1
+    assert "UTF-8" in err.getvalue()
+    for leak in ("0xff", "\\xff", "position", "example-pass"):
+        assert leak not in err.getvalue() + out.getvalue()
+    assert audit_rows(db) == []
+
+
+def test_viewer_without_admin_warns(cli: CliRunner) -> None:
+    run = cli("create-user", "viewer1", "--role", "viewer", "--password-stdin", stdin=PASSWORD)
+    assert run.code == 0, run.err
+    assert "no admin user" in run.err
+
+    run = cli("create-user", ADMIN, "--role", "admin", "--password-stdin", stdin=PASSWORD)
+    assert run.code == 0 and run.err == ""
+    run = cli("create-user", "viewer2", "--role", "viewer", "--password-stdin", stdin=PASSWORD)
+    assert run.code == 0 and run.err == ""

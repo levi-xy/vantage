@@ -34,10 +34,10 @@ import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO, NoReturn
+from typing import IO, Any, NoReturn, cast
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
-from sqlalchemy import Engine, delete, func, inspect, select
+from sqlalchemy import CursorResult, Engine, delete, func, inspect, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError, IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
@@ -118,7 +118,25 @@ class Console:
 
 def _read_password(console: Console, from_stdin: bool) -> str:
     """The new password: one stdin line, or a hidden prompt asked twice."""
+    try:
+        return _read_password_unchecked(console, from_stdin)
+    except (UnicodeError, OSError):
+        # Not the exception text: a decode error quotes the offending byte and position.
+        raise CliError(
+            "could not read the password (stdin must be UTF-8 text); nothing was changed"
+        ) from None
+
+
+def _read_password_unchecked(console: Console, from_stdin: bool) -> str:
     if from_stdin:
+        if console.stdin.isatty():
+            # A terminal echoes what is typed into stdin. `docker compose exec` gives one
+            # by default; piping needs `exec -T`.
+            raise CliError(
+                "--password-stdin needs piped input, not a terminal (it would echo the "
+                "password): pipe it in with docker compose exec -T, or leave out "
+                "--password-stdin to get a hidden prompt"
+            )
         # One line. Read a little past the limit so an over-long line is still refused
         # rather than silently cut short.
         line = console.stdin.readline(MAX_PASSWORD_LENGTH + 2)
@@ -211,11 +229,16 @@ def reset_password(ctx: Context, username: str, from_stdin: bool) -> None:
         if user is None:  # deleted while the operator was typing
             raise _no_such_user()
         user.password_hash = password_hash
+        # The user row is written (and locked) before the sessions are deleted. A login
+        # only creates a session if it can update the row while the hash is still the
+        # one it verified (see app.api.auth.login), so either that login fails, or it
+        # commits first and its session is deleted here.
+        db.flush()
         # Every session ends, so old cookies stop working on their next request.
-        ended = db.scalar(
-            select(func.count()).select_from(UserSession).where(UserSession.user_id == user.id)
-        )
-        db.execute(delete(UserSession).where(UserSession.user_id == user.id))
+        ended = cast(
+            "CursorResult[Any]",
+            db.execute(delete(UserSession).where(UserSession.user_id == user.id)),
+        ).rowcount
         audit.record(
             db,
             action=audit.Action.UPDATE,
@@ -280,6 +303,12 @@ def create_user(ctx: Context, username: str, role: Role, from_stdin: bool) -> No
             db.rollback()
             raise CliError("a user with that username already exists") from None
         ctx.console.out(f"Created {role.value} {user.username!r} (id {user.id}).")
+        has_admin = db.scalar(select(User.id).where(User.role == Role.ADMIN).limit(1))
+        if has_admin is None:
+            ctx.console.err(
+                "warning: there is no admin user, and setup in the browser is now closed. "
+                "Create one with: python -m app.cli create-user <username> --role admin"
+            )
 
 
 def list_users(ctx: Context) -> None:
@@ -403,6 +432,10 @@ def main(
         return 1
     except (KeyboardInterrupt, EOFError):
         console.err("cancelled; nothing was changed")
+        return 1
+    except (UnicodeError, OSError):
+        # Not the exception text: a decode error quotes the offending byte.
+        console.err("error: reading input or writing output failed")
         return 1
     except SQLAlchemyError:
         # Not the exception text: it can include the URL or row values.
