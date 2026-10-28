@@ -84,7 +84,15 @@ MAX_FAILURE_TEXT = 200
 
 
 class _PollError(Exception):
-    """A poll failure with a safe, secret-free description."""
+    """A poll failure with a safe, secret-free description.
+
+    ``limit`` caps the text, applied only after the secrets are scrubbed out of it: a
+    cut first could leave a fragment of a secret that the scrub no longer matches.
+    """
+
+    def __init__(self, text: str, *, limit: int | None = None) -> None:
+        super().__init__(text)
+        self.limit = limit
 
 
 @dataclass
@@ -229,7 +237,10 @@ class PollScheduler:
             secrets, ctx = self._context(type(integration), spec)
             samples = await self._poll(integration, ctx, timeout)
         except _PollError as exc:
-            self._failed(spec, _scrub(str(exc), secrets), time.monotonic() - started)
+            text = _scrub(str(exc), secrets)  # scrub first, then cap
+            if exc.limit is not None:
+                text = text[: exc.limit]
+            self._failed(spec, text, time.monotonic() - started)
             return
         except Exception as exc:  # last line of defence: never let one poll kill its task
             self._failed(spec, f"poll failed ({type(exc).__name__})", time.monotonic() - started)
@@ -307,8 +318,9 @@ class PollScheduler:
         except PingError as exc:  # fixed text plus, at most, the checked address
             raise _PollError(f"ping failed: {exc}") from None
         except PollFailure as exc:  # a message the integration wrote to be shown
-            text = str(exc)[:MAX_FAILURE_TEXT] or f"poll failed ({type(exc).__name__})"
-            raise _PollError(text) from None
+            # Capped by poll_once, after the scrub, never here.
+            text = str(exc) or f"poll failed ({type(exc).__name__})"
+            raise _PollError(text, limit=MAX_FAILURE_TEXT) from None
         except Exception as exc:
             raise _PollError(f"poll failed ({type(exc).__name__})") from None
         if not isinstance(result, list) or not all(isinstance(s, Sample) for s in result):

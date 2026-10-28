@@ -111,7 +111,14 @@ class PollFails(FakeIntegration):
     type_id = "poll_fails"
 
     async def poll(self, ctx: InstanceContext) -> list[Sample]:
-        message = {"long": "x" * 1000, "empty": ""}.get(ctx.name, "no answer from 10.0.0.10")
+        messages = {
+            "long": "x" * 1000,
+            "empty": "",
+            # The token starts 10 characters before the cap: cutting before scrubbing
+            # would leave its first 10 characters in the status.
+            "straddle": "x" * (MAX_FAILURE_TEXT - 10) + TOKEN + " trailing text",
+        }
+        message = messages.get(ctx.name, "no answer from 10.0.0.10")
         raise Unanswered(message)
 
 
@@ -382,6 +389,28 @@ async def test_poll_failure_text_is_capped_or_falls_back_to_type(
     assert getattr(store.status(instance_id), "error", None) == expected
 
 
+async def test_poll_failure_scrubs_before_capping(
+    scheduler: PollScheduler,
+    factory: sessionmaker[Session],
+    box: SecretBox,
+    store: MetricsStore,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    instance_id = add(factory, box, "poll_fails", "straddle")
+    with caplog.at_level(logging.DEBUG):
+        try:
+            await scheduler.sync()
+            await wait_for(lambda: getattr(store.status(instance_id), "state", "") == "down")
+        finally:
+            await scheduler.stop()
+    error = getattr(store.status(instance_id), "error", None)
+    assert error is not None
+    assert len(error) <= MAX_FAILURE_TEXT
+    # Not even a fragment (Hard rule 3): no prefix of 4+ characters of the secret.
+    for text in (error, caplog.text):
+        assert not any(TOKEN[:n] in text for n in range(4, len(TOKEN) + 1))
+
+
 @pytest.mark.parametrize("branch", [*BRANCHES, "garbage", "invalid_config"])
 async def test_poll_status_never_contains_config_or_secret_values(
     scheduler: PollScheduler,
@@ -409,6 +438,9 @@ async def test_poll_status_never_contains_config_or_secret_values(
     shown = [status.error, caplog.text, exposition(store)]
     for value in SECRETS.values():
         assert all(value not in text for text in shown), branch
+    # No config value in the status. For the passthrough branches (guard, ping,
+    # PollFailure) this holds only because these test messages don't include the host:
+    # those branches may show the host as configured, by design.
     for value in [*(str(v) for v in config.values()), "not-a-port"]:
         assert value not in status.error, branch
 

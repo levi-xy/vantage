@@ -14,7 +14,10 @@ class PollFailure(Exception):
     scrubbing decrypted secret values and capping the length. The integration author
     writes the message and is responsible for it: fixed text plus, at most, the host as
     configured or a checked address. Never a secret, another exception's text, a URL with
-    a query string, or device-supplied text.
+    a query string, or device-supplied text. The scrub is a last line of defence and
+    only an exact, case-sensitive match of each decrypted secret value: a secret that
+    is encoded or transformed (base64, URL-encoded, upper-cased, hashed, split) is not
+    caught, and keeping it out is the author's responsibility.
 
     Subclass it with a distinct name (``NoReply``), so tests and logs can tell failures
     apart. An empty message falls back to ``poll failed (<Type>)``.
