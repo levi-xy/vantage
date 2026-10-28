@@ -41,8 +41,16 @@ Further rules:
   stored only when it matches an existing user (`target_id` is then that user's id).
   Otherwise it is recorded as `"<unknown>"`, because the typed text is
   attacker-controlled and is sometimes a password. The submitted password is never
-  passed in. Attempts refused by the rate limiter (429) are not recorded, so the table
-  can't be flooded.
+  passed in.
+- **Locked-out logins.** A login refused with 429 because the account is locked (its
+  `login_failures` window is full) is audited as `login_failed` with the user as target
+  and `changes` = `{"username": <stored username>, "locked": true}`, whether the password
+  was right or wrong, so an admin can see that someone kept trying. The submitted
+  username is never stored: a case variant such as `ADMIN` is recorded as the account it
+  counted on. To keep a spray from filling the table, at most one such entry is written
+  per account per minute (plain `login_failed` entries don't suppress it). This is best
+  effort: parallel requests may each write one. Refusals by the per-client limit, and
+  for usernames that match no user, are not recorded.
 - **Tests.** `backend/tests/test_audit.py` sends known secret values through every
   audited flow. It then scans the raw `audit_log` rows and the `GET /api/v1/audit`
   response to prove none of the values appear.

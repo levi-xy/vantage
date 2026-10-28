@@ -412,9 +412,22 @@ def test_password_typed_as_username_is_not_stored(
     assert not raw_contains(engine, PASSWORD)
 
 
-def test_rate_limited_attempts_write_nothing(client: TestClient, db: Session) -> None:
+def test_locked_out_attempts_write_one_entry_a_minute(client: TestClient, db: Session) -> None:
+    """Refusals of a locked account are audited (M1.9), but only once a minute, so a
+    spray can't flood the table. The full M1.9 tests are in test_login_failures.py."""
     add_user(db, "viewer1", Role.VIEWER)
     body = {"username": "viewer1", "password": "example-wrong-password-2"}
+    for _ in range(5):
+        assert client.post("/api/v1/auth/login", json=body).status_code == 401
+    assert len(entries(db)) == 5
+    for _ in range(3):
+        assert client.post("/api/v1/auth/login", json=body).status_code == 429
+    assert len(entries(db)) == 6
+    assert entries(db)[-1].changes == {"username": "viewer1", "locked": True}
+
+
+def test_unknown_username_refusals_write_nothing(client: TestClient, db: Session) -> None:
+    body = {"username": "nobody", "password": "example-wrong-password-2"}
     for _ in range(5):
         assert client.post("/api/v1/auth/login", json=body).status_code == 401
     assert len(entries(db)) == 5
