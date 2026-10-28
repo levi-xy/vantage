@@ -1,0 +1,16 @@
+# Hand-written, trimmed smartctl_exporter output. Fake serials; no real values.
+# HELP smartctl_version smartctl version
+# TYPE smartctl_version gauge
+smartctl_version{json_format_version="1",smartctl_version="7.4",svn_revision="5530",build_info="fake"} 1
+# HELP smartctl_device Device info
+# TYPE smartctl_device gauge
+smartctl_device{device="sda",interface="sat",protocol="ATA",model_name="EXAMPLE SSD 500G",serial_number="EXAMPLE0001",firmware_version="FW01"} 1
+smartctl_device{device="nvme0",interface="nvme",protocol="NVMe",model_name="EXAMPLE NVME 1T",serial_number="EXAMPLE0002",firmware_version="FW02"} 1
+# HELP smartctl_device_smart_status SMART overall-health self-assessment test result (1 = passed)
+# TYPE smartctl_device_smart_status gauge
+smartctl_device_smart_status{device="sda"} 1
+smartctl_device_smart_status{device="nvme0"} 0
+# HELP smartctl_device_temperature Device temperature in celsius
+# TYPE smartctl_device_temperature gauge
+smartctl_device_temperature{device="sda",temperature_type="current"} 34
+smartctl_device_temperature{device="nvme0",temperature_type="current"} 41
