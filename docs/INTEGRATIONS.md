@@ -574,4 +574,5 @@ Index of per-integration docs, in `type_id` order. The first three are the refer
 |---|---|---|---|
 | `http_check` | HTTP check | polled | [`integrations/http_check.md`](integrations/http_check.md) |
 | `linux_host` | Linux host (node_exporter) | scrape-only | [`integrations/linux_host.md`](integrations/linux_host.md) |
+| `pfsense` | pfSense (Telegraf) | scrape-only | [`integrations/pfsense.md`](integrations/pfsense.md) |
 | `ping_check` | Ping check | polled over ICMP | [`integrations/ping_check.md`](integrations/ping_check.md) |

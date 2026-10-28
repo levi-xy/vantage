@@ -1,0 +1,29 @@
+# Hand-written, trimmed Telegraf prometheus_client output for a pfSense box. Fake values.
+# HELP cpu_usage_idle Telegraf collected metric
+# TYPE cpu_usage_idle gauge
+cpu_usage_idle{cpu="cpu-total",host="fw-example"} 91.5
+# HELP mem_total Telegraf collected metric
+# TYPE mem_total untyped
+mem_total{host="fw-example"} 8.5e+09
+# HELP mem_used_percent Telegraf collected metric
+# TYPE mem_used_percent gauge
+mem_used_percent{host="fw-example"} 23.4
+# HELP net_bytes_recv Telegraf collected metric
+# TYPE net_bytes_recv counter
+net_bytes_recv{host="fw-example",interface="igb0"} 1.234e+10
+net_bytes_recv{host="fw-example",interface="igb1"} 5.6e+09
+# HELP net_bytes_sent Telegraf collected metric
+# TYPE net_bytes_sent counter
+net_bytes_sent{host="fw-example",interface="igb0"} 2.2e+09
+net_bytes_sent{host="fw-example",interface="igb1"} 9.1e+09
+# HELP pf_entries Telegraf collected metric
+# TYPE pf_entries untyped
+pf_entries{host="fw-example"} 1342
+# HELP ping_average_response_ms Telegraf collected metric
+# TYPE ping_average_response_ms gauge
+ping_average_response_ms{host="fw-example",url="192.0.2.1"} 12.4
+ping_average_response_ms{host="fw-example",url="198.51.100.1"} 30.1
+# HELP ping_percent_packet_loss Telegraf collected metric
+# TYPE ping_percent_packet_loss gauge
+ping_percent_packet_loss{host="fw-example",url="192.0.2.1"} 0
+ping_percent_packet_loss{host="fw-example",url="198.51.100.1"} 10
