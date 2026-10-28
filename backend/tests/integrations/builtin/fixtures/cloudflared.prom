@@ -1,0 +1,27 @@
+# Hand-written, trimmed cloudflared metrics. Fake values only.
+# HELP build_info Build and version information
+# TYPE build_info gauge
+build_info{goversion="go1.22.2",revision="example",version="2024.6.1"} 1
+# HELP cloudflared_tunnel_ha_connections Number of active ha connections
+# TYPE cloudflared_tunnel_ha_connections gauge
+cloudflared_tunnel_ha_connections 4
+# HELP cloudflared_tunnel_total_requests Amount of requests proxied through all the tunnels
+# TYPE cloudflared_tunnel_total_requests counter
+cloudflared_tunnel_total_requests 1234
+# HELP cloudflared_tunnel_request_errors Amount of error proxying requests through all the tunnels
+# TYPE cloudflared_tunnel_request_errors counter
+cloudflared_tunnel_request_errors 7
+# HELP cloudflared_tunnel_response_by_code Count of responses by HTTP status code
+# TYPE cloudflared_tunnel_response_by_code counter
+cloudflared_tunnel_response_by_code{status_code="200"} 1200
+cloudflared_tunnel_response_by_code{status_code="502"} 7
+# HELP cloudflared_proxy_connect_latency Time to establish a connection to the origin, in milliseconds
+# TYPE cloudflared_proxy_connect_latency histogram
+cloudflared_proxy_connect_latency_bucket{le="1"} 100
+cloudflared_proxy_connect_latency_bucket{le="10"} 900
+cloudflared_proxy_connect_latency_bucket{le="+Inf"} 1234
+cloudflared_proxy_connect_latency_sum 5000
+cloudflared_proxy_connect_latency_count 1234
+# HELP go_goroutines Number of goroutines that currently exist.
+# TYPE go_goroutines gauge
+go_goroutines 42
