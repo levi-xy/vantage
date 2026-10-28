@@ -90,6 +90,10 @@ M0 ──► M1 ──► M2 ──┬──► M4a ─┐
 | M1.7 | Trusted proxy and login rate limit | `VANTAGE_TRUSTED_PROXIES` (CIDR list; the compose file sets it to the frontend container). Only when the direct peer is a trusted proxy does the backend take the client address from a header that nginx **overwrites** from `$remote_addr` (not appends, unlike today's `X-Forwarded-For`); otherwise it uses the peer address. The login limiter keys on that real client address; remove the `TODO(maintainer)` in `auth.py`. Tests: a spoofed header from an untrusted peer is ignored, and one client's failures can't lock out another |
 | M1.8 | Persistent per-user login counters | Failed-login counts per username live in the database (a data-model change, so Contract 2 is updated in the PR), not in the in-memory limiter. A spray of junk usernames can then never push a near-locked account out of the table, and lockouts survive a restart. The in-memory per-client limiter stays. Admin CLI (M1.6) gets `unlock <username>` so a legitimately locked admin can recover at once. Tests: the spray scenario from the PR #23 reviews (4 guesses on `admin`, then thousands of junk-username attempts from many addresses) leaves `admin` locked after the 5th guess; counters expire; nothing secret is stored |
 
+**Carried over from reviews (PR #34):**
+- Needs a maintainer decision (Contract 2, docs only): the `sessions` table added in M1.3 is missing from the data-model table in `AGENTS.md`. Add it as it exists in the code.
+- Login timing: for an existing username, login writes a `login_failures` row before the Argon2 check. An unknown username only runs the dummy Argon2 check. The difference is a few ms against tens of ms, and both paths give the same 401/429. Accepted as low severity. Note it in `docs/SECURITY.md` (M8.3).
+
 ## M2: Integration framework
 
 | ID | Task | Acceptance criteria |
@@ -116,6 +120,11 @@ M0 ──► M1 ──► M2 ──┬──► M4a ─┐
 **Found in the real-stack Docker test (2026-10-28), not yet scheduled:**
 - The poll collector keeps each instance's config in memory. It rereads the config on an API change or a restart, not on every poll. So a config that becomes invalid without going through the API (a direct database edit) shows "stored config is not valid for this integration" only after a restart. Upgrades always restart the backend, so this is low priority; decide whether to recheck on every poll.
 - Prometheus logs one "connection refused" on its first `/sd/targets` fetch, because the backend isn't listening yet. Harmless; it recovers on the next refresh.
+- Re-run on `main` after PRs #30–#34: the uvloop ping bug and the gateway drift are fixed. Still open:
+  - A `ping_check` host that doesn't answer shows `poll failed (NoReply)` in its status. PR #33 gave `PingError` a readable message, but `NoReply` is `ping_check`'s own exception, so it still falls through to the generic branch in `collectors/scheduler.py`. Show the same text `test_connection` gives ("no reply from …"). Test the poll status for this case.
+  - Login attempts refused with 429 while an account is locked aren't audited, so an admin can't see that someone kept trying. Record them (as `login_failed` with a `locked` flag, or similar), without letting the audit table grow without bound under a spray.
+- From the PR #33 review: the scheduler's `PingError` branch puts the exception text in the instance status, trusting every `PingError` message to be secret-free by convention only. Add a test that the poll status never contains config values.
+- CI never sends real ICMP (both event-loop variants of the socket test skip there), so `ping_check` changes still need a run on the real Docker stack.
 - Docs nits from the PR #26 review, for the next edit of `docs/INTEGRATIONS.md`:
   - §11: "the API attaches only the first hint" holds only for the API's own timeout path.
   - §3 and `docs/integrations/ping_check.md`: point to the validator in `PingCheckConfig` instead of calling the bound a plain product.
@@ -141,6 +150,7 @@ M0 ──► M1 ──► M2 ──┬──► M4a ─┐
 - Refuse duplicate usernames case-insensitively in the user API, as `create-user` does: the login limiter keys on the lowercased name. (PR #27)
 - Resetting another user's password from the API races logins the same way the CLI reset does. Reuse the CLI's order (write the user row, then delete sessions). Add a deterministic test for the order where the login holds the row lock first; today only the "reset commits first" order is tested. (PR #27)
 - `create-user` reports any `IntegrityError` as "already exists", even when it isn't a duplicate. Share a narrower check with the API. (PR #27)
+- Once users can be deleted, add a test for a user deleted while their login is in progress, between the `login_failures` commit and the password check. Today `expire_on_commit=False` keeps the loaded user usable, so it should return 401, not 500. (PR #34)
 - Needs a maintainer decision (Contract 2), raised in PR #27: an `actor_type` column on `audit_log`, so CLI and system actions aren't told apart only by `user_id = NULL` plus `changes.source`; and a unique index on `lower(username)`.
 
 ## M4: Built-in integrations (parallel, one agent each)
@@ -158,6 +168,12 @@ Each task: config schema, `test_connection`, scrape targets and/or `poll`, cards
 | M4g | Cloudflare account | GraphQL analytics + tunnel status via `cloud_hosts = ("api.cloudflare.com",)`; per-zone traffic, cache, status codes, countries, threats; respects API rate limits |
 | M4h | Emby | Sessions (now playing, transcode vs direct), library counts, server info; read-only endpoints only |
 
+**Carried over from reviews (scrape integrations; one small follow-up task, or include in the next M4 task):**
+- `test_connection` in the scrape integrations (`linux_host`, `smart_exporter`, `cloudflared`, `pfsense`) reads up to 8 MiB and parses it synchronously on the event loop, so a hostile or broken host can stall the loop briefly. Lower the cap (real exporter pages are tens of KB) or parse in a thread. (PR #30)
+- The parsers catch only `ValueError` from `prometheus_client`, and the parse runs outside `test_connection`'s `try`. Any other exception on garbage input would make `test_connection` raise instead of returning a failed `TestResult`. Low priority: 3,000 random garbage inputs raised only `ValueError`. Hardening only: catch broadly around the parse and add a garbage-input test per integration. (PR #32)
+- Docs: `docs/integrations/cloudflared.md` Config paragraph is garbled ("host is found by name by the save-time check"). Say instead that the SSRF guard resolves and checks the host when the instance is saved. `docs/integrations/pfsense.md` should name the port default (9273) instead of "Telegraf's default". (PR #31, PR #32)
+- Not verified against real devices: cloudflared's default metrics port (20241) and metric names (PR #31), and the pfSense gateway metrics, which need a Telegraf `ping` input per gateway (PR #32). Maintainer lab checkpoint.
+
 ## M5: Dashboard
 
 | ID | Task | Acceptance criteria |
@@ -166,7 +182,7 @@ Each task: config schema, `test_connection`, scrape targets and/or `poll`, cards
 | M5.2 | Card framework | Card registry, grid via react-grid-layout, layout saved per dashboard, new instances' cards added automatically |
 | M5.3 | Live updates | WebSocket pushes instance status and refresh hints; UI reconnects automatically |
 | M5.4 | Overview row | Devices healthy, active alerts, WAN status, total throughput |
-| M5.5 | Integration cards | One card per M4 integration (split into sub-tasks per card if parallelizing), including switch faceplate and NAS drive bays |
+| M5.5 | Integration cards | One card per M4 integration (split into sub-tasks per card if parallelizing), including switch faceplate and NAS drive bays. Card types already declared by merged integrations, so they need a frontend card: `smart-disks` (PR #30), `cloudflared` (PR #31), `pfsense-overview` and `pfsense-gateways` (PR #32), plus those of the M2.5/M2.7 reference integrations |
 
 ## M6: Network map
 
@@ -191,7 +207,7 @@ Each task: config schema, `test_connection`, scrape targets and/or `poll`, cards
 | M8.1 | HTTPS | Serves HTTPS with a user-supplied cert or a generated self-signed one |
 | M8.2 | Backup/restore | Export and import DB + reminder that the master key is backed up separately; plus a master-key rotation command that re-encrypts every stored secret with a new key (needs the old key, all-or-nothing, audited) |
 | M8.3 | Security review | A dedicated reviewer agent does a full threat-model review; findings fixed; `docs/SECURITY.md` written |
-| M8.4 | Docs and release | README quick start verified on a clean machine; versioned Docker images; changelog; license file; `docs/ARCHITECTURE.md` |
+| M8.4 | Docs and release | README quick start verified on a clean machine; versioned Docker images; changelog; license file; `docs/ARCHITECTURE.md`. README gets an "Upgrading" section: when a release changes the compose network, run `docker compose down` then `up -d` (a plain `up -d` leaves the frontend without its fixed address and the dashboard down); otherwise `up -d --build` is enough, and migrations run on start |
 
 ---
 
