@@ -7,6 +7,7 @@ function entry(id: number, overrides: Partial<AuditEntry> = {}): AuditEntry {
   return {
     id,
     user_id: 1,
+    actor_type: "user",
     action: "update",
     target_type: "instance",
     target_id: `00000000-0000-4000-8000-${String(id).padStart(12, "0")}`,
@@ -118,6 +119,27 @@ describe("audit page", () => {
     const table = await findTable();
     expect(within(table).getByText(markup)).toBeInTheDocument();
     expect(table.querySelector("img")).toBeNull();
+  });
+
+  it("names the admin CLI and the backend as actors", async () => {
+    const backend = fakeBackend({
+      session: exampleMe("admin"),
+      routes: {
+        "GET /audit": () =>
+          json([
+            entry(3, { actor_type: "system", user_id: null }),
+            entry(2, { actor_type: "cli", user_id: null }),
+            entry(1, { actor_type: "user", user_id: null, action: "login_failed" }),
+          ]),
+      },
+    });
+    renderApp("/audit", backend);
+    const table = await findTable();
+    const [, system, cli, failed] = within(table).getAllByRole("row");
+    if (!system || !cli || !failed) throw new Error("expected three entries");
+    expect(within(system).getByText("System")).toBeInTheDocument();
+    expect(within(cli).getByText("Admin CLI")).toBeInTheDocument();
+    expect(within(failed).getByText("—")).toBeInTheDocument();
   });
 
   it("says when there are no entries", async () => {

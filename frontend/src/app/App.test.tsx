@@ -17,6 +17,8 @@ describe("routing", () => {
     ["/", "Dashboard"],
     ["/devices", "Devices"],
     ["/audit", "Audit log"],
+    ["/users", "Users"],
+    ["/account", "My account"],
     ["/no/such/page", "Page not found"],
   ])("renders %s inside the layout", async (path, heading) => {
     renderApp(path);

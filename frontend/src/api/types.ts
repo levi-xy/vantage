@@ -22,9 +22,36 @@ export interface Me {
   csrf_token: string;
 }
 
+/** `GET /users`, and the response of creating or updating one. Never carries a password or hash. */
+export interface UserInfo {
+  id: number;
+  username: string;
+  role: Role;
+  /** ISO 8601 timestamps. */
+  created_at: string;
+  last_login_at: string | null;
+}
+
+/** Body of `POST /users`. */
+export interface UserCreate {
+  username: string;
+  password: string;
+  role: Role;
+}
+
+/** Body of `POST /me/password`. */
+export interface PasswordChange {
+  current_password: string;
+  new_password: string;
+}
+
+/** Who made an audited change: the API (a user), the admin CLI, or the backend itself. */
+export type ActorType = "user" | "cli" | "system";
+
 export interface AuditEntry {
   id: number;
   user_id: number | null;
+  actor_type: ActorType;
   action: string;
   target_type: string;
   target_id: string | null;

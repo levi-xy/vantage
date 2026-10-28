@@ -1,4 +1,5 @@
 import type { RouteObject } from "react-router";
+import { AccountPage } from "../pages/AccountPage";
 import { AuditPage } from "../pages/AuditPage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { DevicesPage } from "../pages/DevicesPage";
@@ -6,6 +7,7 @@ import { AddDevicePage, EditDevicePage } from "../pages/devices/DeviceFormPages"
 import { LoginPage } from "../pages/LoginPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
 import { SetupPage } from "../pages/SetupPage";
+import { UsersPage } from "../pages/UsersPage";
 import { RequireRole, SessionGate } from "./gates";
 import { Layout } from "./Layout";
 
@@ -60,6 +62,15 @@ export const routes: RouteObject[] = [
           </RequireRole>
         ),
       },
+      {
+        path: "users",
+        element: (
+          <RequireRole role="admin">
+            <UsersPage />
+          </RequireRole>
+        ),
+      },
+      { path: "account", element: <AccountPage /> },
       { path: "*", element: <NotFoundPage /> },
     ],
   },
