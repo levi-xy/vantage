@@ -306,8 +306,10 @@ async def test_poll_partial_loss(fake_icmp: FakeIcmp) -> None:
 
 
 async def test_poll_no_reply_raises(fake_icmp: FakeIcmp) -> None:
-    with pytest.raises(NoReply):
-        await poll()
+    with pytest.raises(NoReply) as caught:
+        await poll(count=2)
+    # The same text test_connection gives, so the poll status reads the same.
+    assert str(caught.value) == f"no reply from {HOST} (2 packets sent, ICMP may be blocked)"
 
 
 async def test_poll_refused_by_guard(fake_icmp: FakeIcmp) -> None:
@@ -379,7 +381,9 @@ async def test_collector_marks_silent_host_down(
     store, spec = await collect(engine, config(), site="lab")
     status = store.status(spec.instance_id)
     assert status is not None and status.state == "down"
-    assert status.error == "poll failed (NoReply)"
+    assert status.error == f"no reply from {HOST} (1 packets sent, ICMP may be blocked)"
+    assert status.error == (await run_test()).message  # reads as test_connection does
+    assert fake_icmp.sent  # echo requests went out (to the fake socket), none answered
     text = generate_latest(make_registry(store)).decode()
     assert "vantage_ping_check_packet_loss_ratio" not in text
     assert 'vantage_instance_up{vantage_instance="gw-1"' in text

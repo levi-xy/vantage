@@ -42,6 +42,7 @@ from app.integrations.base import (
     TestResult,
 )
 from app.integrations.builtin.common import checked_host
+from app.integrations.errors import PollFailure
 
 TYPE_ID = "ping_check"
 # Metric names: vantage_<type_id>_<metric> (Contract 1).
@@ -57,9 +58,10 @@ METRIC_RTT_MAX = f"vantage_{TYPE_ID}_rtt_max_seconds"
 PACKET_BUDGET_SECONDS = MAX_PING_TOTAL_TIMEOUT - PING_RESOLVE_TIMEOUT
 
 
-class NoReply(Exception):
+class NoReply(PollFailure):
     """Not one echo request was answered. Raised by ``poll()`` so the collector marks
-    the instance ``down``; the collector shows only this type name."""
+    the instance ``down``; its message, the same as ``test_connection``'s, becomes the
+    status ``error``."""
 
 
 class PingCheckConfig(BaseModel):
@@ -116,6 +118,11 @@ class PingCheckConfig(BaseModel):
         return self
 
 
+def _no_reply(host: str, sent: int) -> str:
+    # Only the host as configured and a count: safe to show (see PollFailure).
+    return f"no reply from {host} ({sent} packets sent, ICMP may be blocked)"
+
+
 def _ms(seconds: float | None) -> str:
     return "?" if seconds is None else f"{seconds * 1000:.1f} ms"
 
@@ -149,7 +156,7 @@ class PingCheck(Integration):
             # Silence is what a firewall dropping ICMP looks like: give the hint.
             return TestResult(
                 ok=False,
-                message=f"no reply from {host} ({result.sent} packets sent, ICMP may be blocked)",
+                message=_no_reply(host, result.sent),
                 hint=self._hint(host),
             )
         return TestResult(
@@ -171,7 +178,7 @@ class PingCheck(Integration):
         result = await self._ping(ctx)
         rtts = result.rtts
         if not rtts:
-            raise NoReply
+            raise NoReply(_no_reply(ctx.config_as(PingCheckConfig).host, result.sent))
         return [
             Sample(name=METRIC_LOSS, value=result.loss_ratio, type="gauge"),
             Sample(name=METRIC_SENT, value=float(result.sent), type="gauge"),

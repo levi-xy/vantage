@@ -247,7 +247,7 @@ A poll that raises, hangs or returns garbage affects only its own instance. Old 
 
 ### Raise on failure, return on a result
 
-- **No usable answer** (timeout, refused, TLS failure, guard refusal, the host is silent): **raise**. The instance goes `down` and `vantage_instance_up` is 0. `http_check` lets the exception from `_check` propagate; `ping_check` raises its own `NoReply` when no echo was answered.
+- **No usable answer** (timeout, refused, TLS failure, guard refusal, the host is silent): **raise**. The instance goes `down` and `vantage_instance_up` is 0. `http_check` lets the exception from `_check` propagate; `ping_check` raises its own `NoReply` (a `PollFailure`, see below) when no echo was answered.
 - **A real answer that says "bad"**: **return samples**. A wrong HTTP status is a result (`vantage_http_check_success 0`, plus the status code); partial packet loss is a result. This is what lets an alert rule say what the device answered.
 - Do not catch broad `Exception` in `poll()` to return an empty list: that reports `up` with no data.
 
@@ -264,21 +264,22 @@ Instance responses carry `status: {state, checked_at, last_success_at, error}` (
 
 The status is in memory: it resets on restart.
 
-`error` is built so it cannot leak. The scheduler does not store an exception's own text, because it can carry URLs, headers or response bodies; it stores the exception type, a fixed text, or (for `NetGuardError` and `PingError` only) the guard's or ping client's message, which holds just the host as configured or the checked address, and a fixed reason. Today:
+`error` is built so it cannot leak. The scheduler does not store an exception's own text, because it can carry URLs, headers or response bodies; it stores the exception type, a fixed text, the guard's or ping client's message for `NetGuardError` and `PingError` (just the host as configured or the checked address, and a fixed reason), or the message of a `PollFailure` (`app.integrations.errors`), which the integration writes to be shown. Today:
 
 | What happened | `error` |
 |---|---|
 | `TimeoutError` or `httpx.TimeoutException` (including the 60 s limit) | `poll timed out` |
 | `NetGuardError` | `refused by the network guard: <the guard's message>` |
 | `PingError` (from `ctx.ping_client()`) | `ping failed: <the client's message>`, for example `ping failed: the system refused to ping 10.0.0.255 (is it a broadcast address?)` |
-| any other exception | `poll failed (<ExceptionType>)`, for example `poll failed (NoReply)` |
+| `PollFailure` (raised by the integration) | its message, cut to 200 characters, for example `no reply from 10.0.0.30 (3 packets sent, ICMP may be blocked)`; `poll failed (<ExceptionType>)` if the message is empty |
+| any other exception | `poll failed (<ExceptionType>)`, for example `poll failed (SnmpError)` |
 | `poll()` returned something other than a list of `Sample` | `poll returned something other than a list of samples` |
 | stored config no longer validates | `stored config is not valid for this integration` |
 | stored secrets can't be decrypted | `stored secrets can't be decrypted (was the master key changed?)` |
 | building the network guard failed | `network guard unavailable (<ExceptionType>)` |
 | storing the returned samples failed | `storing poll results failed (<ExceptionType>)` |
 
-So a failed poll shows the exception type, one of the fixed texts above, or the guard's or ping client's message. If the admin needs to tell failures apart, **give your exception a distinct class name** (`NoReply`, not `Exception`); that name is all they will see. Decrypted secret values are also scrubbed from the text, and a guard message must stay free of config values (it names the host as configured and a fixed reason).
+So a failed poll shows the exception type, one of the fixed texts above, the guard's or ping client's message, or a `PollFailure` message. If the admin needs to tell failures apart, **give your exception a distinct class name** (`NoReply`, not `Exception`); for anything but a `PollFailure`, that name is all they will see. To show a specific reason, subclass `PollFailure` and write its message as you would a `TestResult.message`: fixed text plus, at most, the host as configured or a checked address; never a secret, another exception's text, a URL with a query string, or device-supplied text. The collector scrubs decrypted secret values out of the message before cutting it to 200 characters, but only by exact, case-sensitive match: a secret that is encoded or transformed (base64, URL-encoded, upper-cased, hashed, split) is not caught, and keeping it out is your responsibility. `ping_check` uses the same text in `NoReply` as in its `test_connection` result. Decrypted secret values are also scrubbed from the text, and a guard message must stay free of config values (it names the host as configured and a fixed reason).
 
 `test_connection()` is different: it returns a `TestResult` with a message you write, so it can be specific (`HTTP 503, expected 2xx or 3xx`). It must still never contain exception text or a secret. If it raises instead, the instance API reports only the exception type (`connection test failed (<Type>)`), or `connection test timed out` after 30 s; a `NetGuardError` is shown as `connection refused by the network guard: ...`.
 
