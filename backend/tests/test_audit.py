@@ -33,6 +33,7 @@ FAKE_API_TOKEN = "example-token-0f1e2d3c"
 FAKE_COMMUNITY = "example-community-xyz"
 FAKE_BOT_TOKEN = "example-bot-token-123456"
 FAKE_RELAY_VALUE = "example-relay-value-789"
+FAKE_WRONG_PASSWORD = "example-wrong-password-1"
 
 
 class Credentials(BaseModel):
@@ -408,7 +409,7 @@ def test_actor_type_must_be_known(db: Session) -> None:
 
 def test_api_entries_are_user_actions(client: TestClient, db: Session) -> None:
     me = do_setup(client)
-    client.post("/api/v1/auth/login", json={"username": ADMIN, "password": "example-wrong-pw"})
+    client.post("/api/v1/auth/login", json={"username": ADMIN, "password": FAKE_WRONG_PASSWORD})
     rows = entries(db)
     assert [(r.action, r.actor_type) for r in rows] == [
         ("create", ActorType.USER),

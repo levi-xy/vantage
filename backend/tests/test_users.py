@@ -27,6 +27,13 @@ API = "/api/v1"
 NEW_PASSWORD = "example-new-password-456"
 OTHER_PASSWORD = "example-other-password-789"
 WRONG = "example-wrong-password"
+# Shorter than the 12-character minimum.
+TOO_SHORT = "example-pw"
+
+
+def creds(username: str, password: str) -> dict[str, str]:
+    """A login request body."""
+    return {"username": username, "password": password}
 
 
 class HookedPasswords(Passwords):
@@ -222,7 +229,7 @@ def test_create_refuses_duplicates_ignoring_case(admin: TestClient, db: Session,
 @pytest.mark.parametrize(
     "body",
     [
-        {"username": "new1", "password": "ex-pw-9", "role": "viewer"},
+        {"username": "new1", "password": TOO_SHORT, "role": "viewer"},
         {"username": "bad name", "password": NEW_PASSWORD, "role": "viewer"},
         {"username": "new1", "password": NEW_PASSWORD, "role": "root"},
         {"username": "new1", "password": NEW_PASSWORD, "role": "viewer", "password_hash": "x"},
@@ -386,10 +393,7 @@ def test_reset_ends_that_users_sessions_only(
     assert admin.get(f"{API}/me").status_code == 200  # the admin's own session stays
 
     assert (
-        browser(app)
-        .post(f"{API}/auth/login", json={"username": "viewer1", "password": PASSWORD})
-        .status_code
-        == 401
+        browser(app).post(f"{API}/auth/login", json=creds("viewer1", PASSWORD)).status_code == 401
     )
     login(browser(app), "viewer1", NEW_PASSWORD)
 
@@ -410,10 +414,10 @@ def test_reset_of_your_own_password_here_ends_your_session(admin: TestClient, db
 
 
 def test_reset_validates_the_password(admin: TestClient, db: Session) -> None:
-    for body in ({"password": "ex-pw-9"}, {"password": NEW_PASSWORD, "role": "admin"}, {}):
+    for body in ({"password": TOO_SHORT}, {"password": NEW_PASSWORD, "role": "admin"}, {}):
         r = admin.post(f"{API}/users/{user_id(db, ADMIN)}/password", json=body)
         assert r.status_code == 422
-        assert "ex-pw-9" not in r.text and NEW_PASSWORD not in r.text
+        assert TOO_SHORT not in r.text and NEW_PASSWORD not in r.text
 
 
 def test_reset_writes_the_user_row_before_ending_sessions(
@@ -449,7 +453,7 @@ def test_login_holding_the_row_first_loses_its_session_to_the_reset(
     result: dict[str, int] = {}
 
     def login_now() -> None:
-        r = racer.post(f"{API}/auth/login", json={"username": "viewer1", "password": PASSWORD})
+        r = racer.post(f"{API}/auth/login", json=creds("viewer1", PASSWORD))
         result["status"] = r.status_code
 
     passwords.on_hash = login_now
@@ -476,7 +480,7 @@ def test_reset_racing_a_login_that_already_verified(
 
     passwords.on_verify = reset_now
     racer = browser(app)
-    r = racer.post(f"{API}/auth/login", json={"username": "viewer1", "password": PASSWORD})
+    r = racer.post(f"{API}/auth/login", json=creds("viewer1", PASSWORD))
     assert r.status_code == 401
     assert racer.get(f"{API}/me").status_code == 401
     db.expire_all()
@@ -539,7 +543,7 @@ def test_user_deleted_during_their_login_gets_401(
 
     passwords.on_verify = delete_now
     racer = browser(app)
-    r = racer.post(f"{API}/auth/login", json={"username": "viewer1", "password": password})
+    r = racer.post(f"{API}/auth/login", json=creds("viewer1", password))
     assert r.status_code == 401
     assert racer.get(f"{API}/me").status_code == 401
     db.expire_all()
@@ -601,16 +605,13 @@ def test_wrong_current_passwords_lock_like_failed_logins(
     right = {"current_password": PASSWORD, "new_password": NEW_PASSWORD}
     assert me.post(f"{API}/me/password", json=right).status_code == 429
     assert (
-        browser(app)
-        .post(f"{API}/auth/login", json={"username": "viewer1", "password": PASSWORD})
-        .status_code
-        == 429
+        browser(app).post(f"{API}/auth/login", json=creds("viewer1", PASSWORD)).status_code == 429
     )
 
 
 def test_change_my_password_validates(app: Any, admin: TestClient) -> None:
     for body in (
-        {"current_password": PASSWORD, "new_password": "ex-pw-9"},
+        {"current_password": PASSWORD, "new_password": TOO_SHORT},
         {"current_password": PASSWORD},
         {"current_password": PASSWORD, "new_password": NEW_PASSWORD, "username": "x"},
     ):
