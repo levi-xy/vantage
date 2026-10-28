@@ -43,6 +43,7 @@ DNS: dict[str, list[str]] = {
     "web.example.internal": ["10.0.0.10"],
     "node.example.internal": ["10.0.0.20"],
     "ping.example.internal": ["10.0.0.30"],
+    "fw.example.internal": ["10.0.0.1"],
     "metadata.example.internal": ["169.254.169.254"],
 }
 
