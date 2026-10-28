@@ -1,4 +1,4 @@
-"""Persistent per-user login failure counters (M1.8)."""
+"""Persistent per-user login failure counters (M1.8); auditing locked-out logins (M1.9)."""
 
 import json
 from collections.abc import Iterator
@@ -13,7 +13,8 @@ from app.api.auth import LOGIN_LIMITS, LOGIN_WINDOW_SECONDS
 from app.core.auth import LoginRateLimiter
 from app.core.db import make_session_factory, utcnow
 from app.core.login_failures import UserLoginFailures
-from app.models import LoginFailure, Role, User
+from app.models import AuditLog, LoginFailure, Role, User
+from tests.test_audit import raw_audit_table
 from tests.test_auth import ADMIN, PASSWORD, add_user, login, make_client
 from tests.test_client_address import PROXY, TRUSTED
 
@@ -241,3 +242,140 @@ def test_nothing_secret_is_stored(db_url: str, engine: Engine, db: Session) -> N
     assert len(json.loads(stored)) == 3
     for value in (WRONG, PASSWORD, "viewer1", "192.0.2.77", PROXY):
         assert value not in stored
+
+
+# --- auditing locked-out attempts (M1.9) ----------------------------------------------
+
+
+def audit_entries(db: Session) -> list[AuditLog]:
+    db.expire_all()
+    return list(db.scalars(select(AuditLog).order_by(AuditLog.id)))
+
+
+def locked_entries(db: Session) -> list[AuditLog]:
+    return [e for e in audit_entries(db) if e.changes.get("locked") is True]
+
+
+def age_audit_entries(db: Session, delta: timedelta) -> None:
+    """Move every audit entry back in time, as if ``delta`` had passed."""
+    for entry in audit_entries(db):
+        entry.at -= delta
+    db.commit()
+
+
+def test_locked_attempts_are_refused_and_audited_once_a_minute(
+    db_url: str, engine: Engine, db: Session
+) -> None:
+    user = add_user(db, "viewer1", Role.VIEWER)
+    with make_client(db_url, peer=PROXY, trusted_proxies=TRUSTED) as proxy:
+        for i in range(USER_LIMIT):
+            assert attempt(proxy, "viewer1", WRONG, real_ip=f"198.51.100.{i}") == 401
+        # Five plain login_failed entries, all from the last minute: they must not
+        # suppress the first locked entry.
+        assert len(audit_entries(db)) == USER_LIMIT
+        assert locked_entries(db) == []
+
+        # The 6th and later attempts are refused, right password or not, from anywhere.
+        for i, password in enumerate([WRONG, PASSWORD, WRONG, PASSWORD]):
+            assert attempt(proxy, "viewer1", password, real_ip=f"203.0.113.{i}") == 429
+        [entry] = locked_entries(db)
+        assert entry.action == "login_failed"
+        assert entry.target_type == "user" and entry.target_id == str(user.id)
+        assert entry.user_id is None
+        assert entry.changes == {"username": "viewer1", "locked": True}
+        assert len(audit_entries(db)) == USER_LIMIT + 1
+
+        # Over a minute later: the next refusal is audited again, once.
+        age_audit_entries(db, timedelta(seconds=61))
+        for _ in range(3):
+            assert attempt(proxy, "viewer1", PASSWORD, real_ip="203.0.113.9") == 429
+        assert len(locked_entries(db)) == 2
+        assert len(audit_entries(db)) == USER_LIMIT + 2
+
+        # Within the minute of the newest locked entry: nothing more.
+        age_audit_entries(db, timedelta(seconds=30))
+        assert attempt(proxy, "viewer1", WRONG, real_ip="203.0.113.10") == 429
+        assert len(locked_entries(db)) == 2
+
+    # The lockout itself is unchanged: refusals counted nothing.
+    assert rows(db, user.id) == USER_LIMIT
+
+
+def test_locked_case_variant_is_recorded_as_the_stored_account(
+    db_url: str, engine: Engine, db: Session
+) -> None:
+    user = add_user(db, "viewer1", Role.VIEWER)
+    with make_client(db_url) as client:
+        for _ in range(USER_LIMIT):
+            assert attempt(client, "viewer1", WRONG) == 401
+        assert attempt(client, "VIEWER1", PASSWORD) == 429
+    [entry] = locked_entries(db)
+    assert entry.target_id == str(user.id)
+    assert entry.changes == {"username": "viewer1", "locked": True}
+    raw = raw_audit_table(engine)
+    for value in ("VIEWER1", PASSWORD, WRONG, user.password_hash):
+        assert value not in raw
+
+
+def test_locked_entry_holds_nothing_secret(db_url: str, engine: Engine, db: Session) -> None:
+    user = add_user(db, "viewer1", Role.VIEWER)
+    with make_client(db_url, peer=PROXY, trusted_proxies=TRUSTED) as proxy:
+        for _ in range(USER_LIMIT):
+            assert attempt(proxy, "viewer1", WRONG, real_ip="192.0.2.77") == 401
+        r = proxy.post(
+            "/api/v1/auth/login",
+            json={"username": "viewer1", "password": PASSWORD},
+            headers={"X-Real-IP": "192.0.2.78"},
+        )
+        assert r.status_code == 429
+        for value in (PASSWORD, WRONG, user.password_hash):
+            assert value not in r.text
+    [entry] = locked_entries(db)
+    assert set(entry.changes) == {"username", "locked"}
+    raw = raw_audit_table(engine)
+    for value in (PASSWORD, WRONG, user.password_hash, "$argon2", "192.0.2.78", PROXY):
+        assert value not in raw
+
+
+def test_client_limit_refusals_are_not_audited(db_url: str, engine: Engine, db: Session) -> None:
+    add_user(db, "viewer1", Role.VIEWER)
+    with make_client(db_url) as client:
+        client.app.state.login_limiter = LoginRateLimiter(  # type: ignore[attr-defined]
+            {"user": USER_LIMIT, "client": 2}, window_seconds=LOGIN_WINDOW_SECONDS
+        )
+        for _ in range(2):
+            assert attempt(client, "viewer1", WRONG) == 401
+        for _ in range(3):
+            assert attempt(client, "viewer1", PASSWORD) == 429
+    assert len(audit_entries(db)) == 2
+    assert locked_entries(db) == []
+
+
+def test_unknown_username_refusals_are_not_audited(
+    db_url: str, engine: Engine, db: Session
+) -> None:
+    with make_client(db_url) as client:
+        for _ in range(USER_LIMIT):
+            assert attempt(client, "nobody", WRONG) == 401
+        for _ in range(3):
+            assert attempt(client, "nobody", WRONG) == 429
+    assert len(audit_entries(db)) == USER_LIMIT
+    assert locked_entries(db) == []
+
+
+def test_lockout_ends_as_before_after_audited_refusals(
+    db_url: str, engine: Engine, db: Session
+) -> None:
+    """Auditing a refusal neither adds a counted failure nor blocks the unlock."""
+    user = add_user(db, "viewer1", Role.VIEWER)
+    with make_client(db_url) as client:
+        for _ in range(USER_LIMIT):
+            assert attempt(client, "viewer1", WRONG) == 401
+        assert attempt(client, "viewer1", PASSWORD) == 429
+        assert rows(db, user.id) == USER_LIMIT
+        # What `app.cli unlock` does (the command itself is tested in test_cli.py).
+        UserLoginFailures.clear(db, user.id)
+        db.commit()
+        login(client, "viewer1")
+        assert rows(db, user.id) == 0
+    assert len(locked_entries(db)) == 1

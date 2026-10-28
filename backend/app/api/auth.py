@@ -27,7 +27,7 @@ from app.core.auth import LoginRateLimiter, Passwords, csrf_token, new_session_t
 from app.core.config import Settings
 from app.core.db import utcnow
 from app.core.login_failures import UserLoginFailures
-from app.models import Role, Setting, User, UserSession
+from app.models import AuditLog, Role, Setting, User, UserSession
 
 router = APIRouter()
 
@@ -46,6 +46,9 @@ MAX_PASSWORD_LENGTH = 1024
 # that match no account in the in-memory limiter.
 LOGIN_LIMITS = {"user": 5, "client": 50}
 LOGIN_WINDOW_SECONDS = 900
+# At most one "locked" audit entry per account in this long (M1.9), so a spray against a
+# locked account can't fill the audit log.
+LOCKED_AUDIT_INTERVAL = timedelta(minutes=1)
 
 PasswordsDep = Annotated[Passwords, Depends(get_passwords)]
 LimiterDep = Annotated[LoginRateLimiter, Depends(get_login_limiter)]
@@ -155,7 +158,8 @@ def _record_failed_login(db: Session, user: User | None) -> None:
     Committed right away: the 401 that follows rolls back the request's transaction.
     Only a known user's stored username is kept; anything else becomes "<unknown>".
     The submitted password is never passed in. Rate-limited (429) attempts never get
-    here, so they can't be used to flood the table.
+    here, so they can't be used to flood the table; refusals because the account is
+    locked are audited separately, at most once a minute (:func:`_record_locked_login`).
     """
     audit.record(
         db,
@@ -164,6 +168,44 @@ def _record_failed_login(db: Session, user: User | None) -> None:
         target_id=user.id if user else None,
         user_id=None,
         changes={"username": user.username if user else audit.UNKNOWN_USERNAME},
+    )
+    db.commit()
+
+
+def _record_locked_login(db: Session, user_id: int) -> None:
+    """Audit a login refused (429) because the account ``user_id`` is locked (M1.9).
+
+    Records the stored username, never the submitted one (a case variant such as
+    "ADMIN" is recorded as the account it counted on), and never the password. At most
+    one entry per account per :data:`LOCKED_AUDIT_INTERVAL`: skipped while a ``locked``
+    entry for this user is newer than that (plain ``login_failed`` entries don't count).
+    Best effort: parallel refusals may each write one, which is acceptable. Committed
+    right away, since the 429 that follows rolls back the request's transaction.
+    """
+    user = db.get(User, user_id)
+    if user is None:  # deleted since it was looked up: nothing to attribute it to
+        return
+    recent = db.scalar(
+        select(AuditLog.id)
+        .where(
+            AuditLog.action == audit.Action.LOGIN_FAILED.value,
+            AuditLog.target_type == "user",
+            AuditLog.target_id == str(user.id),
+            AuditLog.at > utcnow() - LOCKED_AUDIT_INTERVAL,
+            AuditLog.changes["locked"].as_boolean().is_(True),
+        )
+        .order_by(AuditLog.at.desc(), AuditLog.id.desc())
+        .limit(1)
+    )
+    if recent is not None:
+        return
+    audit.record(
+        db,
+        action=audit.Action.LOGIN_FAILED,
+        target_type="user",
+        target_id=user.id,
+        user_id=None,
+        changes={"username": user.username, "locked": True},
     )
     db.commit()
 
@@ -215,6 +257,9 @@ def login(
         retry_after = counter.acquire(db, counted_id)
         if retry_after is not None:
             limiter.refund(memory_keys)  # a refused attempt counts nothing anywhere
+            # Only an account lockout is audited. Refusals by the in-memory limiter
+            # (per client, or usernames that match no account) stay unaudited.
+            _record_locked_login(db, counted_id)
     if retry_after is not None:
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,

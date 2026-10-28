@@ -162,6 +162,7 @@ class Integration(ABC):
 
 - `instances.config` and `instances.secrets` are split by the integration's schema: `SecretStr` fields go to `secrets`, everything else to `config`.
 - `login_failures` holds one row per failed login for an **existing** user: who and when, nothing else (no submitted username, password or client address). The per-user limit counts rows in a sliding 15-minute window, so lockouts survive a restart and can't be evicted. Usernames that match no user, and the per-client limit, stay in the in-memory limiter. A successful login, `app.cli unlock <username>` and `app.cli reset-password` clear the user's rows.
+- A login refused (429) because the account is locked writes an `audit_log` entry: `action=login_failed`, the user as target, `changes` = `{"username": <stored username>, "locked": true}` (never the submitted username or password). At most one per account per minute, best effort; refusals by the per-client limit or for unknown usernames aren't audited.
 - `sessions` holds one row per login session. The cookie carries a random token; the database stores only its SHA-256 hash, so a copy of the database can't be used to log in. Deleting a row ends that session: logout, a new login on the same browser, password reset, expiry or idle timeout, and user deletion (cascade).
 - The master key is read from `VANTAGE_MASTER_KEY_FILE` (preferred) or `VANTAGE_MASTER_KEY`. The app refuses to start without it.
 
