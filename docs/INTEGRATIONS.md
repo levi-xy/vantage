@@ -31,7 +31,7 @@ Contents
 15. [Tests](#15-tests)
 16. [Checklist before you open the PR](#16-checklist-before-you-open-the-pr)
 17. [Documenting your integration](#17-documenting-your-integration)
-18. [Built-in integrations](#18-built-in-integrations)
+18. [Index of integration docs](#18-built-in-integrations)
 
 ---
 
@@ -114,7 +114,7 @@ Rules that follow from the code:
 Rules, in the order they are enforced:
 
 1. **A secret field is a top-level field typed `SecretStr` or `SecretStr | None`.** Nothing else. Nested models, lists, `dict`s and `SecretBytes` are rejected by the conformance suite, and `instance_config.secret_field_keys` raises rather than store a nested secret in plaintext.
-2. **Anything credential-shaped must be a secret.** The conformance suite fails a plain-typed field whose name ends in `password`, `passwd`, `passphrase`, `secret`, `token`, `community`, `api_key`/`apikey`, `private_key`, `auth_key` or `priv_key` (`SECRET_NAME_PATTERN` in `tests/integrations/conformance.py`). SNMP communities and v3 keys are secrets too.
+2. **Anything credential-shaped must be a secret, and its name should say so with an underscore.** The conformance suite fails a plain-typed field when its name matches `(^|_)(password|passwd|passphrase|secret|token|community|api_?key|private_key|auth_key|priv_key)$` (`SECRET_NAME_PATTERN` in `tests/integrations/conformance.py`): the credential word must be the whole name or follow an underscore, at the end. So `api_token`, `bearer_token`, `admin_password`, `snmp_community`, `token` and `api_key` are caught; `bearertoken`, `authtoken`, `mytoken` and `token_value` are **not**, and nothing catches a credential under a name such as `auth` or `pass`. The check is a safety net, not a definition: name every secret field `*_token`, `*_password`, `*_secret`, `*_community` or `*_key` with the underscore, and type it `SecretStr`, whatever the check would say. SNMP communities and v3 keys are secrets too (section 7).
 3. **Secrets are write-only.** The served schema flags them `writeOnly`, and `schema.py` strips every `default`, `examples`, `example`, `const` and `enum` from them, so no secret-derived value is served. Instance responses never contain them; they carry only `secrets_set: {field: bool}`, which the form uses to show "set" or "not set". On PATCH an omitted secret means "unchanged". An empty or whitespace-only secret is refused; an optional secret that is `None` is simply not stored.
 4. **Do not put an example secret value in a secret field's `description` or `json_schema_extra`.** `schema.py` removes the value-carrying keywords above, but it serves author text such as `description` and `json_schema_extra` as written. A description is for telling the admin what the field is: `description="Optional. Sent as an Authorization header to this URL only."` (`http_check`).
 5. **Secrets never leave the backend**: not in an API response, a log line, an audit entry, a `TestResult.message`, a `FirewallHint`, an exception message you raise, or a metric label. The audit log replaces secret fields with `"<changed>"`. As defence in depth the instance API scrubs the decrypted secret values out of a `TestResult`, and the collector scrubs them out of error text and drops any sample that carries one in a label value; do not rely on that, it is a last line.
@@ -190,13 +190,39 @@ ctx.snmp_client(host, auth, *, port=161) -> GuardedSnmpClient    # auth: SnmpV2c
 ctx.ping_client(host, *, count=3, reply_timeout=1.0) -> GuardedPingClient
 ```
 
-- **Never** import `httpx.AsyncClient`, `socket`, an SNMP library, or an ICMP library into integration code, and never open a raw socket. `ping_check`'s test parses every file under `builtin/` and fails on `socket`, `asyncio_dgram`, `icmplib`, `scapy` or `SOCK_RAW`.
+- **Never** import `httpx.AsyncClient`, `socket`, an SNMP library, or an ICMP library into integration code, and never open a raw socket. `ping_check`'s test parses every file under `builtin/` and fails on imports of `socket`, `asyncio_dgram`, `icmplib` or `scapy`, and on the text `SOCK_RAW`. It does **not** look for a hand-built `httpx.AsyncClient` (or `requests`, `aiohttp`, ...); using one is still forbidden, and reviewers check for it by hand.
 - The guarded clients resolve the host once, check every address, and connect to the checked address; redirects are not followed automatically. HTTP requests have a 5 s connect and 15 s total limit by default.
-- **Read-only.** Send `GET` (or `HEAD`/`OPTIONS` where a device needs it). Never `POST`/`PUT`/`PATCH`/`DELETE` to a device endpoint that changes state, even if the library or API offers it (Hard rule 2). SNMP is `get`/`walk` only. ICMP echo changes nothing. If an API can only be read through a `POST` (some GraphQL and query APIs), say so in the PR and in your doc section so the reviewer can confirm it is read-only.
+- **Read-only.** Send `GET` (or `HEAD`/`OPTIONS` where a device needs it). Never `POST`/`PUT`/`PATCH`/`DELETE` to a device endpoint that changes state, even if the library or API offers it (Hard rule 2). SNMP is `get`/`walk` only. ICMP echo changes nothing. If an API can only be read through a `POST` (some GraphQL and query APIs), **do not build it first**: stop and raise it as a `TODO(maintainer)` question (and in the PR), saying which endpoint and why the request cannot change state. Hard rule 2 is the maintainer's to interpret, not the author's.
 - `ctx.http_client(verify=False)` is for an instance whose admin has opted into a self-signed certificate. Expose it as a per-instance config field defaulting to `True`, as `http_check` does.
 - The guard's own exceptions are `NetGuardError` (policy: denied address, unresolvable name, cloud host over HTTP, ...), and for ping `PingError`. Their messages are safe to display (host as configured, an address, or fixed text).
 - Wrap a whole request in `asyncio.timeout(...)` as `http_check` does, so DNS, connect, TLS and headers share one budget; the guarded client's 15 s cap sits underneath it.
 - Stream when you only need headers or a bounded body: `client.stream("GET", url)`. `linux_host` caps what it reads at 8 MiB with `_read_limited`.
+
+### SNMP
+
+`ctx.snmp_client(host, auth, port=161)` returns a `GuardedSnmpClient` (`net_guard.py`). `auth` is `SnmpV2c(community=SecretStr)` or `SnmpV3(username, auth_key, priv_key, auth_protocol, priv_protocol)`; both are importable from `app.core.net_guard`.
+
+- **Read-only by construction.** The client exposes `get(oids)` and `walk(oid, max_rows=10_000)` and nothing else: no `set`. `test_snmp_is_read_only` in `tests/test_net_guard.py` fails if a write operation appears. `walk` stays inside the subtree you ask for.
+- **OIDs are numeric** (`"1.3.6.1.2.1.2.2.1.10"`; a leading dot is accepted). Symbolic names raise `ValueError`; there is no MIB lookup. Both calls return `SnmpVarBind(oid, value)` where `value` is an `int` (counters, gauges, ticks), a `str` (OIDs, IP addresses), `bytes` (octet strings) or `None` (noSuchObject, noSuchInstance, endOfMibView). Octet strings are device-supplied: decode defensively and bound what you put in a label.
+- **Secrets map to top-level `SecretStr` fields** of your config, passed straight in:
+
+  ```python
+  class MySnmpConfig(BaseModel):
+      host: str                       # found by name by the save-time check
+      community: SecretStr            # v2c
+      # v3 instead: username: str (plaintext config), auth_key / priv_key: SecretStr | None
+
+  client = ctx.snmp_client(cfg.host, SnmpV2c(community=cfg.community))
+  ```
+
+  An integration that supports several versions uses a version field and `SecretStr | None` for each secret, and builds `SnmpV2c` or `SnmpV3` from it. SNMPv3 privacy needs an auth key (the client raises `ValueError` otherwise): validate that combination in a `model_validator` so the admin sees it at save time, without echoing values. The v3 `username` is a plain `str` in `SnmpV3`, so it is stored in plaintext config.
+- **Limits.** 5 s per attempt, 2 retries, 15 s in total; `ctx.snmp_client()` passes no overrides. A timeout raises `SnmpError`; so does any other SNMP failure, with text that never contains the community or keys. `SnmpError` is not a `NetGuardError`, so in `poll()` it shows as `poll failed (SnmpError)`. In `test_connection()` catch it and return a `TestResult` yourself, with a UDP firewall hint.
+- **Private addresses only.** SNMP never gets the cloud exemption.
+- **Close the client** (`client.close()`, in `try/finally`) when you are done.
+- **Firewall:** `FirewallHint(protocol="udp", port=port, destination=host, reason=...)`.
+- **State which OIDs you read**, and why each is read-only, in the integration's doc file and PR.
+
+**Testing SNMP.** `netfake.py` has no SNMP fake (SNMP is UDP through pysnmp, not the HTTP socket layer). Do what `tests/test_net_guard.py` (`SnmpRecorder`) and `tests/integrations/test_base.py` do: monkeypatch `net_guard.get_cmd` and `net_guard.walk_cmd` with async stand-ins that record their arguments and return rows built from pysnmp types (`ObjectName`, `OctetString`, `Counter32`, `Integer32`, `IpAddress`, `NoSuchInstance`), so the real guard and client code still run. Assert that the recorded target is the checked address (use `fake_guards` and `netfake.DNS`), that a denied host is refused with no call recorded, that only the OIDs you intend are requested, and that the community or keys never appear in a message, label, log or response. `SnmpRecorder` is defined inside `test_net_guard.py` and cannot be imported: copy the few lines you need.
 
 **`poll()` and `test_connection()` must `await` all their I/O.** The scheduler cuts a poll off with `asyncio.timeout`, which can only interrupt code that is waiting at an `await`. A blocking call (`requests`, `time.sleep`, a synchronous SNMP or file read, a CPU-heavy loop) cannot be interrupted, and because everything runs on one event loop it stalls the polling of every instance and the API with it. Use `await asyncio.sleep`, not `time.sleep`, and the async clients above.
 
@@ -214,6 +240,10 @@ ctx.ping_client(host, *, count=3, reply_timeout=1.0) -> GuardedPingClient
 4. It checks the result is a `list[Sample]`, validates and stores the samples (section 9) and marks the instance `up`; or records a failure and marks it `down`.
 
 A poll that raises, hangs or returns garbage affects only its own instance. Old samples of a failed instance are dropped, not served stale.
+
+### Choosing the poll interval
+
+`poll_interval_seconds()` defaults to 60. Return a fixed positive `int`. The scheduler reads it once when an instance's poll task starts and clamps it to 10 s to 86 400 s (a value that is not a number becomes 10 s). Pick the slowest interval that still serves the dashboard and alerts: every poll is traffic to a real device and time on the shared event loop. Cheap local checks (ping, HTTP check) suit 30 to 60 s; a heavy walk or a rate-limited cloud API should use minutes and stay well inside the provider's limits. The poll is cut off after `min(interval, 60)` s, so a poll that legitimately needs more than 60 s has to be split up; a longer interval does not give it more time.
 
 ### Raise on failure, return on a result
 
@@ -234,7 +264,7 @@ Instance responses carry `status: {state, checked_at, last_success_at, error}` (
 
 The status is in memory: it resets on restart.
 
-`error` is built so it cannot leak. The scheduler never uses an exception's text, because it can carry URLs, headers or response bodies. Today:
+`error` is built so it cannot leak. The scheduler does not store an exception's own text, because it can carry URLs, headers or response bodies; it stores the exception type, a fixed text, or (for `NetGuardError` only) the guard's message, which holds just the host as configured and a fixed reason. Today:
 
 | What happened | `error` |
 |---|---|
@@ -244,8 +274,10 @@ The status is in memory: it resets on restart.
 | `poll()` returned something other than a list of `Sample` | `poll returned something other than a list of samples` |
 | stored config no longer validates | `stored config is not valid for this integration` |
 | stored secrets can't be decrypted | `stored secrets can't be decrypted (was the master key changed?)` |
+| building the network guard failed | `network guard unavailable (<ExceptionType>)` |
+| storing the returned samples failed | `storing poll results failed (<ExceptionType>)` |
 
-So a failed poll shows only the exception type (or the guard's message). If the admin needs to tell failures apart, **give your exception a distinct class name** (`NoReply`, not `Exception`); that name is all they will see. Decrypted secret values are also scrubbed from the text, and a guard message must stay free of config values (it names the host as configured and a fixed reason).
+So a failed poll shows the exception type, one of the fixed texts above, or the guard's message. If the admin needs to tell failures apart, **give your exception a distinct class name** (`NoReply`, not `Exception`); that name is all they will see. Decrypted secret values are also scrubbed from the text, and a guard message must stay free of config values (it names the host as configured and a fixed reason).
 
 `test_connection()` is different: it returns a `TestResult` with a message you write, so it can be specific (`HTTP 503, expected 2xx or 3xx`). It must still never contain exception text or a secret. If it raises instead, the instance API reports only the exception type (`connection test failed (<Type>)`), or `connection test timed out` after 30 s; a `NetGuardError` is shown as `connection refused by the network guard: ...`.
 
@@ -371,7 +403,7 @@ Add your import and one line, keeping the tuple sorted by `type_id`. Listing it 
 
 ## 14. Deployment assumptions
 
-- **One backend worker.** The poll collector keeps its state, and `/metrics` is served from that state, inside one process. With several uvicorn workers every worker would poll every instance and serve its own partial `/metrics`, and Prometheus would scrape whichever answered. The Docker image runs a single `uvicorn` with no `--workers`; do not add `--workers N` (or set `WEB_CONCURRENCY`, which uvicorn's command line also reads) in a deployment.
+- **One backend worker.** The poll collector and `/metrics` live inside one process; with several uvicorn workers every worker would poll every instance and serve its own `/metrics`. This repo runs one worker: don't set `--workers` or `WEB_CONCURRENCY`.
 - **ICMP.** `ctx.ping_client()` uses unprivileged ICMP datagram sockets, not raw sockets. `deploy/docker-compose.yml` sets the `net.ipv4.ping_group_range` sysctl on the backend container so the non-root user may open them; `NET_RAW` is not added. An integration that pings fails with a clear `PingError` when the permission is missing.
 - **Network position.** Everything the integration reaches is reached from the backend container, and Prometheus reaches scrape targets from its own container. A firewall hint is about those two sources.
 
@@ -417,6 +449,21 @@ Names resolve through `netfake.DNS` (`web.example.internal` to `10.0.0.10`, `nod
 
 Helpers: `make_ctx(MyIntegration, config_dict)` builds a context like a connection test's; `fake_guards` is a guard factory with the fake resolver, to pass to `make_client(db_url, net_guard_factory=fake_guards)` and to `PollScheduler(net_guard_factory=...)`; `http_response(status, body, ...)` builds the raw response bytes.
 
+### Testing `cloud_hosts`
+
+A cloud integration declares `cloud_hosts = ("api.example.com",)` (see `FakeCloudIntegration` in `tests/integrations/fake.py`). The guard lets only those exact names through, over HTTPS, and only when every DNS answer is public. `fake_guards(cls)` already passes `cls.cloud_hosts` to the guard, so `fake_net` works unchanged. You add two things: a DNS entry for the cloud name, and a stand-in for "public", because no RFC 5737 address counts as public. `tests/test_net_guard.py` has a `public_test_net` fixture for the second; copy it into your test module:
+
+```python
+@pytest.fixture
+def public_test_net(monkeypatch: pytest.MonkeyPatch) -> None:
+    test_net = IPv4Network("192.0.2.0/24")
+    original = net_guard._is_public
+    monkeypatch.setattr(net_guard, "_is_public", lambda addr: addr in test_net or original(addr))
+    monkeypatch.setitem(DNS, "api.example.com", ["192.0.2.50"])   # DNS is netfake.DNS
+```
+
+Then `fake_net.serve("192.0.2.50", 443, http_response(200, body))` and call through `ctx.http_client()` with `https://api.example.com/...`. Tests to write (this setup was run and works): the https request succeeds and `fake_net.connects == [("192.0.2.50", 443)]`; the same host over `http://` raises `NetGuardError` with no connect; a cloud name whose DNS answer is private (`10.0.0.9`) is refused; a public name that is not in `cloud_hosts` is refused. Declare names, never addresses (the conformance suite rejects addresses), and keep per-instance hosts out of `cloud_hosts`.
+
 ### What your tests must cover
 
 AGENTS.md (Testing rules, Review checklist) is the requirement. In practice, copy the structure of `test_http_check.py` / `test_linux_host.py` / `test_ping_check.py`:
@@ -461,6 +508,10 @@ Copy this into the PR description and tick it.
 - [ ] Read-only: no state-changing request anywhere; tests assert the methods and paths
 - [ ] Every `await`ed call in `poll()`/`test_connection()` is async; nothing blocking, no sleeps with `time.sleep`
 - [ ] Requests have an explicit timeout inside the guarded client's 15 s cap
+- [ ] If SNMP: the doc file lists which OIDs are read and why each is read-only; secrets are `SecretStr`; the client is closed
+- [ ] If a read needs a `POST` (or anything not obviously a read): raised as a `TODO(maintainer)` before building
+- [ ] If `cloud_hosts`: tested over https, over http (refused), with a private answer (refused) and with a non-declared public host (refused)
+- [ ] `poll_interval_seconds()` chosen deliberately (section 8)
 - [ ] Bodies read from a device are bounded
 
 **Behaviour**
@@ -474,7 +525,7 @@ Copy this into the PR description and tick it.
 **Tests and docs**
 - [ ] Tests for schema, `test_connection` success and failure (with the hint), parsing, no writes, guard refusal, standard labels, API and `/sd/targets` where relevant, and every secret-leak assertion above
 - [ ] Test data is RFC 5737 / RFC 1918 and obviously fake; fixtures contain nothing from a real network
-- [ ] A section for the integration in this file (section 17), and no `README`/`AGENTS.md` contract changed
+- [ ] `docs/integrations/<type_id>.md` written from the template (section 17) and linked from the index in section 18; no `README`/`AGENTS.md` contract changed
 - [ ] `python scripts/check.py` passes
 - [ ] PR description: what changed, how it was tested, contract questions, new dependencies and why, `TODO(maintainer)` items
 
@@ -482,10 +533,12 @@ Copy this into the PR description and tick it.
 
 ## 17. Documenting your integration
 
-Each integration task adds one section to section 18 of this file, in `type_id` order, headed `### <display_name> (`<type_id>`)`. Keep it factual and short, and use this skeleton. A one-line "none" is better than a missing heading.
+Each integration gets **its own file**, `docs/integrations/<type_id>.md`, so parallel PRs do not conflict. Add one row to the index in section 18 (in `type_id` order; if two PRs collide on the index, the later one rebases). Keep the file factual and short, and use this skeleton. A one-line "none" is better than a missing heading.
+
+**Do not copy defaults, bounds or metric lists that the code already states**: they drift. Name the field and say what it is for, and link to the config model and the metric constants in the source. Document what the code cannot say: what is read and why it is read-only, the failure modes, the firewall flows, and caveats.
 
 ```markdown
-### <Display name> (`<type_id>`)
+# <Display name> (`<type_id>`)
 
 **Style:** scrape-only | polled | polled over ICMP | both. **Category:** `<category>`. **Version:** `<x.y.z>`.
 
@@ -515,84 +568,10 @@ Each integration task adds one section to section 18 of this file, in `type_id` 
 
 ## 18. Built-in integrations
 
-Per-integration reference, in `type_id` order. These three are the reference implementations; each M4 integration adds its own section here.
+Index of per-integration docs, in `type_id` order. The first three are the reference implementations.
 
-### HTTP check (`http_check`)
-
-**Style:** polled. **Category:** `generic`. **Version:** `0.1.0`.
-
-**What it reads:** one `GET` of the configured URL per poll, headers only (the body is never downloaded), redirects not followed. HTTP only; ICMP is `ping_check`.
-
-**Config**
-
-| Field | Type | Default | Notes |
+| `type_id` | Integration | Style | Doc |
 |---|---|---|---|
-| `url` | string (`http://` or `https://`, at most 2048) | required | Found by name by the save-time check. No credentials in it; everything in it, including the query string, is stored in plaintext and shown to every user. |
-| `expected_status` | int 100 to 599 or empty | empty | Empty: any 2xx or 3xx counts as success. |
-| `verify_tls` | bool | `true` | Turn off only for a self-signed certificate. |
-| `timeout_seconds` | int 1 to 15 | `10` | Bounds the whole request. |
-| `bearer_token` | secret, optional | none | Sent as `Authorization: Bearer` to this URL only. |
-
-**Secrets:** `bearer_token`.
-
-**Metrics** (gauges): `vantage_http_check_success` (1 if the status was accepted), `vantage_http_check_status_code`, `vantage_http_check_duration_seconds` (time to the response headers).
-
-**Status and failures:** no response (timeout, refused, TLS, guard refusal) raises, so the instance is `down` (`poll timed out`, `refused by the network guard: ...`, or `poll failed (<Type>)`). A response with the wrong status is a result, not a failure: `success` is 0 and the instance stays `up`.
-
-**Firewall:** TCP from the backend to the URL's port (80 / 443 by default).
-
-**Cards:** `http-check`, "HTTP check", 2 by 2.
-
-**Fixtures:** none; responses are built in the test with `http_response()`.
-
-### Linux host (`linux_host`)
-
-**Style:** scrape-only. **Category:** `host`. **Version:** `0.1.0`.
-
-**What it reads:** Prometheus scrapes node_exporter's `/metrics`; metrics keep their native names. `test_connection` makes one `GET /metrics` through the guarded client (verifying TLS, reading at most 8 MiB) and checks the page is node_exporter by its `node_exporter_build_info`.
-
-**Config**
-
-| Field | Type | Default | Notes |
-|---|---|---|---|
-| `host` | IP or DNS name (ASCII) | required | Found by name by the save-time check, together with `port`. |
-| `port` | int 1 to 65535 | `9100` | |
-| `scheme` | `http` or `https` | `http` | `https` only if Prometheus trusts the exporter's certificate. |
-
-**Secrets:** none. Prometheus scrapes with no credentials, so node_exporter must answer without authentication.
-
-**Metrics:** node_exporter's own (`node_cpu_seconds_total`, `node_memory_*`, `node_filesystem_*`, ...), plus Prometheus' `up`, all with the four standard labels from `/sd/targets`. Vantage emits no `vantage_linux_host_*` metric and no `vantage_instance_up`.
-
-**Status and failures:** always `unknown` (not polled). Whether the scrape works is Prometheus' `up`. A host that fails DNS or the guard is left out of `/sd/targets`.
-
-**Firewall:** TCP to the exporter port, from Prometheus (scrapes) and from the backend (the test).
-
-**Cards:** `linux-host`, "Linux host", 4 by 3.
-
-**Fixtures:** `tests/integrations/builtin/fixtures/node_exporter.prom`, hand-written and trimmed.
-
-### Ping check (`ping_check`)
-
-**Style:** polled over ICMP. **Category:** `generic`. **Version:** `0.1.0`.
-
-**What it reads:** `count` ICMP echo requests per poll through `ctx.ping_client()`. Echo changes nothing on the target.
-
-**Config**
-
-| Field | Type | Default | Notes |
-|---|---|---|---|
-| `host` | IP or DNS name (ASCII), private ranges only | required | Found by name by the save-time check. Stored in plaintext. |
-| `count` | int 1 to 10 | `3` | Packets per check, one per second. |
-| `timeout_seconds` | int 1 to 5 | `1` | Per-reply wait. `count` times the larger of 1 s and this must be at most 10 s (15 s total minus 5 s reserved for DNS). |
-
-**Secrets:** none.
-
-**Metrics** (gauges): `vantage_ping_check_packet_loss_ratio`, `vantage_ping_check_packets_sent`, `vantage_ping_check_packets_received`, `vantage_ping_check_rtt_min_seconds`, `vantage_ping_check_rtt_avg_seconds`, `vantage_ping_check_rtt_max_seconds`.
-
-**Status and failures:** no reply at all raises `NoReply` (`poll failed (NoReply)`), as does a missing ICMP permission (`poll failed (PingError)`); a guard refusal shows `refused by the network guard: ...`. Partial loss is a result and the instance stays `up`.
-
-**Firewall:** `icmp`, port `None`: allow echo requests from the backend to the host and the replies back.
-
-**Cards:** `ping-check`, "Ping check", 2 by 2.
-
-**Fixtures:** none; replies are scripted with `fake_icmp`.
+| `http_check` | HTTP check | polled | [`integrations/http_check.md`](integrations/http_check.md) |
+| `linux_host` | Linux host (node_exporter) | scrape-only | [`integrations/linux_host.md`](integrations/linux_host.md) |
+| `ping_check` | Ping check | polled over ICMP | [`integrations/ping_check.md`](integrations/ping_check.md) |

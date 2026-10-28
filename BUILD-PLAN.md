@@ -131,7 +131,7 @@ M0 ──► M1 ──► M2 ──┬──► M4a ─┐
 
 ## M4: Built-in integrations (parallel, one agent each)
 
-Each task: config schema, `test_connection`, scrape targets and/or `poll`, cards list, firewall hints, fixtures, tests per `AGENTS.md`, and a section in `docs/INTEGRATIONS.md`.
+Each task: config schema, `test_connection`, scrape targets and/or `poll`, cards list, firewall hints, fixtures, tests per `AGENTS.md`, and its own doc file `docs/integrations/<type_id>.md` (template in `docs/INTEGRATIONS.md`).
 
 | ID | Integration | Notes |
 |---|---|---|
