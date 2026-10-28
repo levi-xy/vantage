@@ -102,10 +102,13 @@ The client address comes from one helper,
 - **uvicorn's own proxy handling is off** (`--no-proxy-headers` in the backend image),
   so the peer address the app sees is the real TCP peer.
 
-`deploy/docker-compose.yml` pins the compose network to `192.168.255.240/28`, gives the
-frontend (nginx) the fixed address `192.168.255.242`, hands out every other container's
-address from `192.168.255.248/29`, and sets `VANTAGE_TRUSTED_PROXIES=192.168.255.242/32`.
-Only nginx can therefore name the client.
+`deploy/docker-compose.yml` pins the compose network to `192.168.255.240/28` with the
+gateway at `192.168.255.241`, gives the frontend (nginx) the fixed address
+`192.168.255.242`, hands out every other container's address from `192.168.255.248/29`,
+and sets `VANTAGE_TRUSTED_PROXIES=192.168.255.242/32`. Only nginx can therefore name the
+client. The gateway is pinned because Docker versions differ when it is left out
+(Docker 29.1 picked `192.168.255.248`, from inside `ip_range`), so the address
+host-loopback clients appear to come from would depend on the Docker version.
 
 Why this range: a fixed subnet can clash with a network the host already uses. Docker's
 own compose examples use `172.16.238.0/24`, and the low `172.16.0.0/12` and `10.0.0.0/8`
@@ -115,9 +118,16 @@ only reaches that part of its default pools after about 30 other networks. If it
 clashes, `docker compose up` fails with "Pool overlaps with other one on this address
 space", or the backend can't reach devices in that range. To fix it, pick another
 unused /28 and change these together in `deploy/docker-compose.yml`: the network's
-`subnet` and `ip_range` (the upper half of the subnet), the frontend's `ipv4_address`
-(an address in the lower half, not the first one, which Docker uses as the gateway),
-and the `VANTAGE_TRUSTED_PROXIES` default (that address as a /32).
+`subnet` and `ip_range` (the upper half of the subnet), its `gateway` (the first usable
+address of the subnet), the frontend's `ipv4_address` (another address in the lower
+half), and the `VANTAGE_TRUSTED_PROXIES` default (that address as a /32).
+
+Changing the network of an existing install: run `docker compose down`, then
+`docker compose up -d` (volumes, and so the data, are kept). A plain `docker compose up -d`
+replaces the network but reconnects the running containers without the frontend's fixed
+address: nginx then keeps restarting with "host not found in upstream". The same applies
+once to installs created before the gateway was pinned. If that already happened,
+`docker compose up -d --force-recreate` fixes it.
 
 Limits:
 

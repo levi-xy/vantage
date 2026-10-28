@@ -62,14 +62,21 @@ secrets:
 
 # A fixed subnet so the frontend's address is known in advance. Other containers get
 # addresses from ip_range only, so none of them can take the frontend's address.
-# If this range clashes with your LAN, change subnet, ip_range, the frontend's
-# ipv4_address and VANTAGE_TRUSTED_PROXIES together.
+# The gateway is pinned too: unpinned, newer Docker versions pick it from ip_range.
+# If this range clashes with your LAN, change subnet, ip_range, gateway, the
+# frontend's ipv4_address and VANTAGE_TRUSTED_PROXIES together.
+# After changing any of them on an existing install (including the upgrade that pinned
+# the gateway), run `docker compose down` and then `docker compose up -d`; a plain
+# `up -d` reconnects the frontend without its fixed address (see docs/SECURITY.md).
+# TODO(maintainer): there is no upgrade-notes section yet; move this note there once
+# one exists.
 networks:
   default:
     ipam:
       config:
         - subnet: 192.168.255.240/28
           ip_range: 192.168.255.248/29
+          gateway: 192.168.255.241
 
 volumes:
   backend-data:
