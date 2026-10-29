@@ -185,7 +185,7 @@ An integration may do both (scrape an exporter and poll an API); the rules for e
 All outbound traffic goes through `net_guard` (Hard rule 5, Contract 5). The context gives you three guarded clients:
 
 ```python
-ctx.http_client(*, verify=True, base_url="", headers=None) -> httpx.AsyncClient
+ctx.http_client(*, verify=True, base_url="", headers=None) -> httpx.AsyncClient   # verify: bool | ssl.SSLContext
 ctx.snmp_client(host, auth, *, port=161, timeout=5.0, retries=2) -> GuardedSnmpClient    # auth: SnmpV1 | SnmpV2c | SnmpV3; timeout/retries may only be lowered
 ctx.ping_client(host, *, count=3, reply_timeout=1.0) -> GuardedPingClient
 ```
@@ -194,6 +194,7 @@ ctx.ping_client(host, *, count=3, reply_timeout=1.0) -> GuardedPingClient
 - The guarded clients resolve the host once, check every address, and connect to the checked address; redirects are not followed automatically. HTTP requests have a 5 s connect and 15 s total limit by default.
 - **Read-only.** Send `GET` (or `HEAD`/`OPTIONS` where a device needs it). Never `POST`/`PUT`/`PATCH`/`DELETE` to a device endpoint that changes state, even if the library or API offers it (Hard rule 2). SNMP is `get`/`walk` only. ICMP echo changes nothing. If an API can only be read through a `POST` (some GraphQL and query APIs), **do not build it first**: stop and raise it as a `TODO(maintainer)` question (and in the PR), saying which endpoint and why the request cannot change state. Hard rule 2 is the maintainer's to interpret, not the author's.
 - `ctx.http_client(verify=False)` is for an instance whose admin has opted into a self-signed certificate. Expose it as a per-instance config field defaulting to `True`, as `http_check` does.
+- Prefer pinning to turning verification off: `verify` also takes an `ssl.SSLContext` that trusts only a certificate the admin pasted (hostname checks stay on). `proxmox` does this with its `tls_ca_certificate` field (`pinned_context()`), and keeps its "don't verify" switch as a separate, clearly labelled last resort. A cloud host is refused unless the context verifies the certificate and the hostname.
 - The guard's own exceptions are `NetGuardError` (policy: denied address, unresolvable name, cloud host over HTTP, ...), and for ping `PingError`. Their messages are safe to display (host as configured, an address, or fixed text).
 - Wrap a whole request in `asyncio.timeout(...)` as `http_check` does, so DNS, connect, TLS and headers share one budget; the guarded client's 15 s cap sits underneath it.
 - Stream when you only need headers or a bounded body: `client.stream("GET", url)`. `linux_host` caps what it reads at 8 MiB with `_read_limited`.
@@ -585,5 +586,6 @@ Index of per-integration docs, in `type_id` order. `http_check`, `linux_host` an
 | `linux_host` | Linux host (node_exporter) | scrape-only | [`integrations/linux_host.md`](integrations/linux_host.md) |
 | `pfsense` | pfSense (Telegraf) | scrape-only | [`integrations/pfsense.md`](integrations/pfsense.md) |
 | `ping_check` | Ping check | polled over ICMP | [`integrations/ping_check.md`](integrations/ping_check.md) |
+| `proxmox` | Proxmox VE | polled (HTTPS API) | [`integrations/proxmox.md`](integrations/proxmox.md) |
 | `smart_exporter` | SMART disk health (smartctl_exporter) | scrape-only | [`integrations/smart_exporter.md`](integrations/smart_exporter.md) |
 | `snmp_device` | SNMP device | polled (SNMP) | [`integrations/snmp_device.md`](integrations/snmp_device.md) |

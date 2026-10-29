@@ -16,6 +16,7 @@ from app.integrations.builtin.http_check import HttpCheck
 from app.integrations.builtin.linux_host import LinuxHost
 from app.integrations.builtin.pfsense import PfSense
 from app.integrations.builtin.ping_check import PingCheck
+from app.integrations.builtin.proxmox import Proxmox
 from app.integrations.builtin.smart_exporter import SmartExporter
 from app.integrations.builtin.snmp_device import SnmpDevice
 from app.integrations.schema import config_json_schema
@@ -27,6 +28,7 @@ BUILTIN_INTEGRATIONS: tuple[type[Integration], ...] = (
     LinuxHost,  # linux_host
     PfSense,  # pfsense
     PingCheck,  # ping_check
+    Proxmox,  # proxmox
     SmartExporter,  # smart_exporter
     SnmpDevice,  # snmp_device
 )
