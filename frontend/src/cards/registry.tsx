@@ -8,7 +8,13 @@ import { EmbyOverviewCard } from "./emby-overview/EmbyOverviewCard";
 import { HttpCheckCard } from "./http-check/HttpCheckCard";
 import { LinuxHostCard } from "./linux-host/LinuxHostCard";
 import { PingCheckCard } from "./ping-check/PingCheckCard";
+import { PfsenseGatewaysCard } from "./pfsense-gateways/PfsenseGatewaysCard";
+import { PfsenseOverviewCard } from "./pfsense-overview/PfsenseOverviewCard";
 import { PlaceholderCard } from "./PlaceholderCard";
+import { ProxmoxGuestsCard } from "./proxmox-guests/ProxmoxGuestsCard";
+import { ProxmoxNodeCard } from "./proxmox-node/ProxmoxNodeCard";
+import { SnmpOverviewCard } from "./snmp-overview/SnmpOverviewCard";
+import { SnmpPortsCard } from "./snmp-ports/SnmpPortsCard";
 import { SmartDisksCard } from "./smart-disks/SmartDisksCard";
 
 /** What every card receives. Cards fetch their data only through the typed API client. */
@@ -33,8 +39,14 @@ const CARD_COMPONENTS: Readonly<Record<string, ComponentType<CardProps>>> = {
   "emby-overview": EmbyOverviewCard,
   "http-check": HttpCheckCard,
   "linux-host": LinuxHostCard,
+  "pfsense-gateways": PfsenseGatewaysCard,
+  "pfsense-overview": PfsenseOverviewCard,
   "ping-check": PingCheckCard,
+  "proxmox-guests": ProxmoxGuestsCard,
+  "proxmox-node": ProxmoxNodeCard,
   "smart-disks": SmartDisksCard,
+  "snmp-overview": SnmpOverviewCard,
+  "snmp-ports": SnmpPortsCard,
 };
 
 export function cardComponent(cardType: string): ComponentType<CardProps> {
