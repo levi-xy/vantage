@@ -1,0 +1,77 @@
+{
+  "data": {
+    "viewer": {
+      "zones": [
+        {
+          "zoneTag": "e0000000000000000000000000000001",
+          "httpRequests1hGroups": [
+            {
+              "sum": {
+                "requests": 12000,
+                "cachedRequests": 8000,
+                "bytes": 500000000,
+                "cachedBytes": 300000000,
+                "threats": 12,
+                "pageViews": 3000,
+                "countryMap": [
+                  {
+                    "clientCountryName": "US",
+                    "requests": 6000,
+                    "threats": 5
+                  },
+                  {
+                    "clientCountryName": "DE",
+                    "requests": 3000,
+                    "threats": 4
+                  },
+                  {
+                    "clientCountryName": "GB",
+                    "requests": 2400,
+                    "threats": 0
+                  },
+                  {
+                    "clientCountryName": "XX",
+                    "requests": 500,
+                    "threats": 1
+                  },
+                  {
+                    "clientCountryName": "T1",
+                    "requests": 100,
+                    "threats": 2
+                  }
+                ],
+                "responseStatusMap": [
+                  {
+                    "edgeResponseStatus": 200,
+                    "requests": 10000
+                  },
+                  {
+                    "edgeResponseStatus": 304,
+                    "requests": 1200
+                  },
+                  {
+                    "edgeResponseStatus": 404,
+                    "requests": 600
+                  },
+                  {
+                    "edgeResponseStatus": 500,
+                    "requests": 150
+                  },
+                  {
+                    "edgeResponseStatus": 503,
+                    "requests": 50
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "zoneTag": "e0000000000000000000000000000002",
+          "httpRequests1hGroups": []
+        }
+      ]
+    }
+  },
+  "errors": null
+}

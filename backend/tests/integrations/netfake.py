@@ -70,6 +70,7 @@ class FakeRequest:
     method: str
     target: str  # path and query
     headers: dict[str, str]  # lowercased names
+    body: bytes = b""  # what the client sent after the headers
 
 
 Handler = Callable[[FakeRequest], Awaitable[bytes] | bytes]
@@ -88,14 +89,15 @@ def http_response(
 
 
 def _parse(raw: bytes, address: str, port: int) -> FakeRequest:
-    head = raw.split(b"\r\n\r\n", 1)[0].decode("latin-1")
+    head_bytes, _, body = raw.partition(b"\r\n\r\n")
+    head = head_bytes.decode("latin-1")
     request_line, *header_lines = head.split("\r\n")
     method, target, _ = request_line.split(" ", 2)
     headers = {}
     for line in header_lines:
         name, _, value = line.partition(":")
         headers[name.strip().lower()] = value.strip()
-    return FakeRequest(address, port, method, target, headers)
+    return FakeRequest(address, port, method, target, headers, body)
 
 
 class _Stream(httpcore.AsyncNetworkStream):

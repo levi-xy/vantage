@@ -11,6 +11,7 @@ from collections.abc import Iterable, Iterator
 from typing import Any, TypedDict
 
 from app.integrations.base import Category, Integration
+from app.integrations.builtin.cloudflare import Cloudflare
 from app.integrations.builtin.cloudflared import Cloudflared
 from app.integrations.builtin.http_check import HttpCheck
 from app.integrations.builtin.linux_host import LinuxHost
@@ -24,6 +25,7 @@ from app.integrations.schema import config_json_schema
 
 # Built-in integrations, one per line, sorted by type_id.
 BUILTIN_INTEGRATIONS: tuple[type[Integration], ...] = (
+    Cloudflare,  # cloudflare
     Cloudflared,  # cloudflared
     HttpCheck,  # http_check
     LinuxHost,  # linux_host

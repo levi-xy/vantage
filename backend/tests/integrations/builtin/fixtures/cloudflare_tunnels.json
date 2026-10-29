@@ -1,0 +1,117 @@
+{
+  "success": true,
+  "errors": [],
+  "messages": [],
+  "result": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "account_tag": "0000000000000000000000000acc0001",
+      "name": "example-home",
+      "status": "healthy",
+      "created_at": "2026-01-01T00:00:00Z",
+      "deleted_at": null,
+      "connections": [
+        {
+          "colo_name": "ams01",
+          "id": "00000000-0000-4000-9000-000000000001",
+          "is_pending_reconnect": false,
+          "origin_ip": "192.0.2.10",
+          "opened_at": "2026-10-29T08:00:00Z",
+          "client_id": "00000000-0000-4000-a000-000000000001",
+          "client_version": "2026.10.0"
+        },
+        {
+          "colo_name": "ams01",
+          "id": "00000000-0000-4000-9000-000000000002",
+          "is_pending_reconnect": false,
+          "origin_ip": "192.0.2.10",
+          "opened_at": "2026-10-29T08:00:00Z",
+          "client_id": "00000000-0000-4000-a000-000000000001",
+          "client_version": "2026.10.0"
+        },
+        {
+          "colo_name": "fra01",
+          "id": "00000000-0000-4000-9000-000000000003",
+          "is_pending_reconnect": false,
+          "origin_ip": "192.0.2.10",
+          "opened_at": "2026-10-29T08:00:00Z",
+          "client_id": "00000000-0000-4000-a000-000000000001",
+          "client_version": "2026.10.0"
+        },
+        {
+          "colo_name": "fra01",
+          "id": "00000000-0000-4000-9000-000000000004",
+          "is_pending_reconnect": false,
+          "origin_ip": "192.0.2.10",
+          "opened_at": "2026-10-29T08:00:00Z",
+          "client_id": "00000000-0000-4000-a000-000000000001",
+          "client_version": "2026.10.0"
+        }
+      ],
+      "conns_active_at": "2026-10-29T08:00:00Z",
+      "conns_inactive_at": null,
+      "tun_type": "cfd_tunnel",
+      "metadata": {},
+      "remote_config": true
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "account_tag": "0000000000000000000000000acc0001",
+      "name": "example-lab",
+      "status": "degraded",
+      "created_at": "2026-01-01T00:00:00Z",
+      "deleted_at": null,
+      "connections": [
+        {
+          "colo_name": "ams01",
+          "id": "00000000-0000-4000-9000-000000000005",
+          "is_pending_reconnect": false,
+          "origin_ip": "192.0.2.10",
+          "opened_at": "2026-10-29T08:00:00Z",
+          "client_id": "00000000-0000-4000-a000-000000000001",
+          "client_version": "2026.10.0"
+        }
+      ],
+      "conns_active_at": "2026-10-29T08:00:00Z",
+      "conns_inactive_at": null,
+      "tun_type": "cfd_tunnel",
+      "metadata": {},
+      "remote_config": true
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000003",
+      "account_tag": "0000000000000000000000000acc0001",
+      "name": "example-old",
+      "status": "inactive",
+      "created_at": "2026-01-01T00:00:00Z",
+      "deleted_at": null,
+      "connections": [],
+      "conns_active_at": null,
+      "conns_inactive_at": null,
+      "tun_type": "cfd_tunnel",
+      "metadata": {},
+      "remote_config": true
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000004",
+      "account_tag": "0000000000000000000000000acc0001",
+      "name": "example-deleted",
+      "status": "inactive",
+      "created_at": "2026-01-01T00:00:00Z",
+      "deleted_at": "2026-06-01T00:00:00Z",
+      "connections": [],
+      "conns_active_at": null,
+      "conns_inactive_at": null,
+      "tun_type": "cfd_tunnel",
+      "metadata": {},
+      "remote_config": true
+    }
+  ],
+  "result_info": {
+    "page": 1,
+    "per_page": 100,
+    "count": 4,
+    "total_count": 3,
+    "total_pages": 1
+  }
+}
