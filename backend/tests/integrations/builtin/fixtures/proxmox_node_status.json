@@ -1,0 +1,37 @@
+{
+  "data": {
+    "boot-info": {"mode": "efi", "secureboot": 0},
+    "cpu": 0.0412,
+    "cpuinfo": {
+      "cores": 4,
+      "cpus": 8,
+      "flags": "fpu vme de pse",
+      "hvm": "1",
+      "mhz": "3400.000",
+      "model": "Example CPU @ 3.40GHz",
+      "sockets": 1,
+      "user_hz": 100
+    },
+    "current-kernel": {
+      "machine": "x86_64",
+      "release": "6.8.12-1-pve",
+      "sysname": "Linux",
+      "version": "#1 SMP PREEMPT_DYNAMIC PMX 6.8.12-1 (2024-08-05T16:17Z)"
+    },
+    "idle": 0,
+    "ksm": {"shared": 0},
+    "kversion": "Linux 6.8.12-1-pve #1 SMP PREEMPT_DYNAMIC PMX 6.8.12-1 (2024-08-05T16:17Z)",
+    "loadavg": ["0.42", "0.35", "0.30"],
+    "memory": {"free": 20669530112, "total": 33554432000, "used": 12884901888},
+    "pveversion": "pve-manager/8.2.4/0000000000000000",
+    "rootfs": {
+      "avail": 86268837888,
+      "free": 91420143616,
+      "total": 101083820032,
+      "used": 9663676416
+    },
+    "swap": {"free": 8589930496, "total": 8589930496, "used": 0},
+    "uptime": 864000,
+    "wait": 0.0012
+  }
+}

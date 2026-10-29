@@ -1,0 +1,40 @@
+{
+  "data": [
+    {
+      "cpu": 0.0412,
+      "disk": 9663676416,
+      "id": "node/pve-example",
+      "level": "",
+      "maxcpu": 8,
+      "maxdisk": 101083820032,
+      "maxmem": 33554432000,
+      "mem": 12884901888,
+      "node": "pve-example",
+      "ssl_fingerprint": "00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00",
+      "status": "online",
+      "type": "node",
+      "uptime": 864000
+    },
+    {
+      "cpu": 0.0105,
+      "disk": 5368709120,
+      "id": "node/pve-example-2",
+      "level": "",
+      "maxcpu": 4,
+      "maxdisk": 101083820032,
+      "maxmem": 16777216000,
+      "mem": 4294967296,
+      "node": "pve-example-2",
+      "ssl_fingerprint": "00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00",
+      "status": "online",
+      "type": "node",
+      "uptime": 432000
+    },
+    {
+      "id": "node/pve-example-3",
+      "node": "pve-example-3",
+      "status": "offline",
+      "type": "node"
+    }
+  ]
+}

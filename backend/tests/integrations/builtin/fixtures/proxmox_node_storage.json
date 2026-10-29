@@ -1,0 +1,36 @@
+{
+  "data": [
+    {
+      "active": 1,
+      "avail": 86268837888,
+      "content": "iso,vztmpl,backup",
+      "enabled": 1,
+      "shared": 0,
+      "storage": "local",
+      "total": 101083820032,
+      "type": "dir",
+      "used": 9663676416,
+      "used_fraction": 0.0956
+    },
+    {
+      "active": 1,
+      "avail": 300647710720,
+      "content": "images,rootdir",
+      "enabled": 1,
+      "shared": 0,
+      "storage": "local-lvm",
+      "total": 375809638400,
+      "type": "lvmthin",
+      "used": 75161927680,
+      "used_fraction": 0.2
+    },
+    {
+      "active": 0,
+      "content": "backup",
+      "enabled": 1,
+      "shared": 1,
+      "storage": "nfs-backup",
+      "type": "nfs"
+    }
+  ]
+}
