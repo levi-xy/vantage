@@ -331,7 +331,8 @@ class SnmpDevice(Integration):
         return TestResult(ok=True, message=f"SNMP v{cfg.version} answer from {name}{detail}")
 
     async def poll(self, ctx: InstanceContext) -> list[Sample]:
-        """sysDescr/sysName/sysObjectID/sysUpTime in one GET, then the IF-MIB walks.
+        """sysDescr/sysName/sysObjectID/sysUpTime/hrSystemUptime in one GET (two on
+        SNMPv1, see :func:`ifmib.read_system`), then the IF-MIB walks.
 
         No answer to the first request raises :class:`SnmpNoResponse`; an error answer
         :class:`SnmpRequestFailed`; silence partway through the walks
@@ -345,7 +346,7 @@ class SnmpDevice(Integration):
         try:
             async with asyncio.timeout(POLL_BUDGET_SECONDS):
                 with _failures(where, timeout=SnmpNoResponse(_no_response(where))):
-                    system = await ifmib.read_system(client)
+                    system = await ifmib.read_system(client, v1=cfg.version == "1")
                 with _failures(where, timeout=SnmpWalkTimedOut(_walk_timed_out(where))):
                     table = await ifmib.read_interfaces(client, cfg.ifmib_options())
         except TimeoutError:

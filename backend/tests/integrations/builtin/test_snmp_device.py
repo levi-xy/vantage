@@ -20,7 +20,7 @@ import pytest
 from fastapi.testclient import TestClient
 from prometheus_client import generate_latest
 from pydantic import ValidationError
-from pysnmp.proto.rfc1902 import Counter32, OctetString
+from pysnmp.proto.rfc1902 import Counter32, Integer32, OctetString, TimeTicks
 from sqlalchemy import Engine
 
 from app.collectors.scheduler import MAX_POLL_TIMEOUT_SECONDS, PollScheduler, PollSpec
@@ -396,7 +396,11 @@ async def test_poll_netsnmp_linux(fake_snmp: FakeSnmp) -> None:
         "sys_descr": "Linux example-switch 6.6.0-example #1 SMP x86_64",
         "sys_object_id": "1.3.6.1.4.1.8072.3.2.10",
     }
-    assert got[("uptime_seconds", "")].value == 86400.0
+    # hrSystemUptime (the host) wins over sysUpTime (the agent), which stays visible.
+    uptime = got[("uptime_seconds", "")]
+    assert (uptime.value, uptime.labels) == (90000.0, {"source": "hrSystemUptime"})
+    assert got[("agent_uptime_seconds", "")].value == 86400.0
+    assert got[("agent_uptime_seconds", "")].labels == {}
     assert got[("interfaces", "")].value == 4.0
     assert got[("interfaces_polled", "")].value == 4.0
     eth0 = {"if_index": "2", "if_name": "eth0"}
@@ -438,6 +442,9 @@ async def test_poll_reads_exactly_the_documented_oids(fake_snmp: FakeSnmp) -> No
     await run_poll(v2c())
     [get] = [c for c in fake_snmp.calls if c.op == "get"]
     assert set(get.oids) == set(ifmib.SYSTEM_OIDS)
+    # hrSystemUptime rides in the same GET as the MIB-II system group.
+    assert set(ifmib.SYSTEM_OIDS) == set(ifmib.MIB2_SYSTEM_OIDS) | {ifmib.HR_SYSTEM_UPTIME}
+    assert ifmib.HR_SYSTEM_UPTIME == "1.3.6.1.2.1.25.1.1.0"
     assert set(fake_snmp.walked()) == set(ifmib.IF_TABLE.values()) | set(ifmib.IF_X_TABLE.values())
     # Every walk is bounded: the first by the hard cap, the rest by the rows it found.
     walks = [c for c in fake_snmp.calls if c.op == "walk"]
@@ -466,7 +473,11 @@ async def test_poll_cisco_hc_fallback_per_interface(fake_snmp: FakeSnmp) -> None
     assert "\r" not in descr and "\n" not in descr
     assert descr.startswith("Cisco IOS Software, Example Software")
     assert len(descr) <= ifmib.MAX_SYS_DESCR
-    assert got[("uptime_seconds", "")].value == pytest.approx(1_234_567.89)
+    # No HOST-RESOURCES-MIB on IOS (noSuchObject): uptime falls back to sysUpTime.
+    uptime = got[("uptime_seconds", "")]
+    assert uptime.value == pytest.approx(1_234_567.89)
+    assert uptime.labels == {"source": "sysUpTime"}
+    assert got[("agent_uptime_seconds", "")].value == pytest.approx(1_234_567.89)
 
 
 async def test_poll_routeros(fake_snmp: FakeSnmp) -> None:
@@ -518,6 +529,113 @@ async def test_poll_v3(fake_snmp: FakeSnmp) -> None:
     got = by_name(await run_poll(v3()))
     assert got[("if_in_bytes", "eth0")].value == 5_000_000_000.0
     assert {call.mp_model for call in fake_snmp.calls} == {3}
+
+
+# --- uptime: hrSystemUptime first, sysUpTime as the fallback ----------------------------
+
+
+async def test_poll_v1_reads_hr_uptime_in_its_own_get(fake_snmp: FakeSnmp) -> None:
+    # On v1 one missing object fails the whole GET, so hrSystemUptime is asked alone.
+    serve(fake_snmp)
+    got = by_name(await run_poll(v2c(version="1")))
+    gets = [c.oids for c in fake_snmp.calls if c.op == "get"]
+    assert gets == [ifmib.MIB2_SYSTEM_OIDS, (ifmib.HR_SYSTEM_UPTIME,)]
+    assert got[("uptime_seconds", "")].labels == {"source": "hrSystemUptime"}
+    assert got[("uptime_seconds", "")].value == 90000.0
+    assert_read_only(fake_snmp)
+
+
+async def test_poll_v1_without_hr_mib_falls_back(fake_snmp: FakeSnmp) -> None:
+    # RouterOS fixture: no HOST-RESOURCES-MIB. The v1 noSuchName on the second GET is
+    # not a failure; the system group from the first GET is kept.
+    serve(fake_snmp, "snmp_routeros")
+    got = by_name(await run_poll(v2c(version="1")))
+    assert got[("info", "")].labels["sys_name"] == "example-switch"
+    uptime = got[("uptime_seconds", "")]
+    assert (uptime.value, uptime.labels) == (3600.0, {"source": "sysUpTime"})
+    assert got[("agent_uptime_seconds", "")].value == 3600.0
+
+
+@pytest.mark.parametrize("value", [TimeTicks(0), OctetString(b"12345"), Integer32(-1)])
+async def test_poll_invalid_hr_uptime_falls_back(fake_snmp: FakeSnmp, value: Any) -> None:
+    mib = load_walk("snmp_netsnmp_linux")
+    mib[ifmib.HR_SYSTEM_UPTIME] = value
+    fake_snmp.agent(ADDRESS, mib, community=COMMUNITY)
+    got = by_name(await run_poll(v2c()))
+    uptime = got[("uptime_seconds", "")]
+    assert (uptime.value, uptime.labels) == (86400.0, {"source": "sysUpTime"})
+
+
+async def test_poll_without_any_uptime(fake_snmp: FakeSnmp) -> None:
+    mib = load_walk("snmp_netsnmp_linux")
+    del mib[ifmib.SYS_UPTIME], mib[ifmib.HR_SYSTEM_UPTIME]
+    fake_snmp.agent(ADDRESS, mib, community=COMMUNITY)
+    got = by_name(await run_poll(v2c()))
+    assert ("uptime_seconds", "") not in got
+    assert ("agent_uptime_seconds", "") not in got
+    assert ("info", "") in got
+
+
+# --- live capture: VyOS 2025.06 rolling (lab, 2026-10-28) ------------------------------
+
+VYOS_INTERFACES = ["lo", "eth0", "eth1", "eth2", "eth3", "pim6reg"]
+
+
+@pytest.mark.parametrize("version", ["2c", "3"])
+async def test_poll_vyos_live_capture(fake_snmp: FakeSnmp, version: str) -> None:
+    if version == "3":
+        serve_v3(fake_snmp, "snmp_vyos_live")
+        samples = await run_poll(v3())
+    else:
+        serve(fake_snmp, "snmp_vyos_live")
+        samples = await run_poll(v2c())
+    got = by_name(samples)
+    assert got[("info", "")].labels == {
+        "sys_name": "lab-vyos",
+        "sys_descr": "VyOS 2025.06.01-0024-rolling",
+        "sys_object_id": "1.3.6.1.4.1.44641",
+    }
+    # snmpd restarts on every commit: sysUpTime was 58 s, the host had been up ~3.5 h.
+    uptime = got[("uptime_seconds", "")]
+    assert (uptime.value, uptime.labels) == (12797.12, {"source": "hrSystemUptime"})
+    assert got[("agent_uptime_seconds", "")].value == 58.02
+    assert got[("interfaces", "")].value == 6.0
+    assert got[("interfaces_polled", "")].value == 6.0
+    infos = [s for s in samples if s.name == f"{PREFIX}_if_info"]
+    assert [s.labels["if_name"] for s in infos] == VYOS_INTERFACES
+    # VyOS sets ifAlias to the interface name when no description is configured.
+    aliases = {s.labels["if_name"]: s.labels["if_alias"] for s in infos}
+    assert aliases == {**{n: n for n in VYOS_INTERFACES}, "pim6reg": "pim6reg@NONE"}
+    for name in VYOS_INTERFACES:
+        assert got[("if_counters_64bit", name)].value == 1.0, name
+    assert got[("if_in_bytes", "eth0")].value == 35260.0
+    assert got[("if_out_bytes", "eth0")].value == 37488.0
+    assert got[("if_in_errors", "eth0")].value == 40.0
+    assert got[("if_speed_bits_per_second", "eth0")].value == 1e9
+    assert got[("if_speed_bits_per_second", "lo")].value == 10e6
+    # 64-bit counters everywhere: the 32-bit octet columns were never walked.
+    assert ifmib.IF_TABLE["in_octets"] not in fake_snmp.walked()
+    assert ifmib.IF_TABLE["out_octets"] not in fake_snmp.walked()
+    assert_read_only(fake_snmp)
+    assert_no_secret(*samples)
+
+
+async def test_poll_vyos_live_capture_exclude_virtual(fake_snmp: FakeSnmp) -> None:
+    serve(fake_snmp, "snmp_vyos_live")
+    samples = await run_poll(v2c(exclude_interfaces=["pim6reg", "lo"]))
+    got = by_name(samples)
+    assert got[("interfaces", "")].value == 6.0
+    assert got[("interfaces_polled", "")].value == 4.0
+    names = {s.labels["if_name"] for s in samples if "if_name" in s.labels}
+    assert names == {"eth0", "eth1", "eth2", "eth3"}
+
+
+async def test_connection_vyos_live_capture(fake_snmp: FakeSnmp) -> None:
+    serve(fake_snmp, "snmp_vyos_live")
+    result = await run_test(v2c())
+    assert result == TestResult(
+        ok=True, message="SNMP v2c answer from lab-vyos: VyOS 2025.06.01-0024-rolling"
+    )
 
 
 async def test_poll_interface_cap(fake_snmp: FakeSnmp) -> None:
@@ -853,7 +971,8 @@ async def test_collector_exposes_samples_with_standard_labels(
     assert f'{PREFIX}_if_in_bytes_total{{if_index="2",if_name="eth0",{std}}} 5e+09' in text
     assert f"# TYPE {PREFIX}_if_in_errors_total counter" in text
     assert f"# TYPE {PREFIX}_if_oper_status gauge" in text
-    assert f"{PREFIX}_uptime_seconds{{{std}}} 86400.0" in text
+    assert f'{PREFIX}_uptime_seconds{{source="hrSystemUptime",{std}}} 90000.0' in text
+    assert f"{PREFIX}_agent_uptime_seconds{{{std}}} 86400.0" in text
     assert f"vantage_instance_up{{{std}}} 1.0" in text
     assert f"vantage_poll_dropped_samples{{{std}}} 0.0" in text
     assert_no_secret(text, caplog.text)

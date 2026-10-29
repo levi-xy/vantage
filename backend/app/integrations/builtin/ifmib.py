@@ -10,6 +10,10 @@ nothing else: no SET, ever (Hard rule 2). Every OID read is listed in
 :data:`SYSTEM_OIDS`, :data:`IF_TABLE` and :data:`IF_X_TABLE`, and in
 ``docs/integrations/snmp_device.md``.
 
+Uptime: sysUpTime is the SNMP agent's uptime, not the device's (VyOS, for one, restarts
+snmpd on every config commit). hrSystemUptime (HOST-RESOURCES-MIB) is the host's, so it
+is read in the same GET and preferred where the agent has it; switches often don't.
+
 How a poll reads the interfaces, and why:
 
 1. Walk ``ifDescr`` (every ``ifTable`` row has one) to learn the interfaces, at most
@@ -34,7 +38,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Literal
 
-from app.core.net_guard import GuardedSnmpClient, SnmpVarBind
+from app.core.net_guard import GuardedSnmpClient, SnmpError, SnmpTimeout, SnmpVarBind
 from app.integrations.base import Sample
 
 # --- OIDs (numeric; the guarded client does no MIB lookups) ----------------------------
@@ -43,7 +47,11 @@ SYS_DESCR = "1.3.6.1.2.1.1.1.0"
 SYS_OBJECT_ID = "1.3.6.1.2.1.1.2.0"
 SYS_UPTIME = "1.3.6.1.2.1.1.3.0"  # TimeTicks, hundredths of a second
 SYS_NAME = "1.3.6.1.2.1.1.5.0"
-SYSTEM_OIDS = (SYS_DESCR, SYS_OBJECT_ID, SYS_UPTIME, SYS_NAME)
+MIB2_SYSTEM_OIDS = (SYS_DESCR, SYS_OBJECT_ID, SYS_UPTIME, SYS_NAME)
+# HOST-RESOURCES-MIB hrSystemUptime.0: TimeTicks since the host booted.
+HR_SYSTEM_UPTIME = "1.3.6.1.2.1.25.1.1.0"
+# Everything the system GET asks for.
+SYSTEM_OIDS = (*MIB2_SYSTEM_OIDS, HR_SYSTEM_UPTIME)
 
 # IF-MIB ifTable (1.3.6.1.2.1.2.2.1.<column>.<ifIndex>): the columns read.
 IF_TABLE = {
@@ -136,7 +144,24 @@ class SystemInfo:
     descr: str = ""
     name: str = ""
     object_id: str = ""
-    uptime_seconds: float | None = None
+    # sysUpTime: how long the SNMP agent has been running.
+    agent_uptime_seconds: float | None = None
+    # hrSystemUptime: how long the host has been up, where the agent has it.
+    host_uptime_seconds: float | None = None
+
+    @property
+    def uptime_seconds(self) -> float | None:
+        """The best available device uptime: hrSystemUptime, else sysUpTime."""
+        if self.host_uptime_seconds is not None:
+            return self.host_uptime_seconds
+        return self.agent_uptime_seconds
+
+    @property
+    def uptime_source(self) -> Literal["hrSystemUptime", "sysUpTime"] | None:
+        """The object :attr:`uptime_seconds` came from."""
+        if self.host_uptime_seconds is not None:
+            return "hrSystemUptime"
+        return "sysUpTime" if self.agent_uptime_seconds is not None else None
 
     @property
     def readable(self) -> bool:
@@ -147,6 +172,9 @@ class SystemInfo:
 def parse_system(rows: Iterable[SnmpVarBind]) -> SystemInfo:
     values = {row.oid.lstrip("."): row.value for row in rows}
     ticks = _number(values.get(SYS_UPTIME))
+    # Absent (noSuchObject/noSuchInstance come back as None), not a number, or 0 (an
+    # agent that doesn't really track it): fall back to sysUpTime.
+    host_ticks = _number(values.get(HR_SYSTEM_UPTIME)) or None
     object_id = values.get(SYS_OBJECT_ID)
     return SystemInfo(
         descr=clean_text(values.get(SYS_DESCR), MAX_SYS_DESCR),
@@ -155,13 +183,28 @@ def parse_system(rows: Iterable[SnmpVarBind]) -> SystemInfo:
         object_id=object_id
         if isinstance(object_id, str) and object_id.replace(".", "").isdigit()
         else "",
-        uptime_seconds=ticks / 100 if ticks is not None else None,
+        agent_uptime_seconds=ticks / 100 if ticks is not None else None,
+        host_uptime_seconds=host_ticks / 100 if host_ticks is not None else None,
     )
 
 
-async def read_system(client: GuardedSnmpClient) -> SystemInfo:
-    """One GET of sysDescr, sysObjectID, sysUpTime and sysName."""
-    return parse_system(await client.get(list(SYSTEM_OIDS)))
+async def read_system(client: GuardedSnmpClient, *, v1: bool = False) -> SystemInfo:
+    """One GET of sysDescr, sysObjectID, sysUpTime, sysName and hrSystemUptime.
+
+    On SNMPv1 one missing object fails the whole GET (``noSuchName``), and many agents
+    have no HOST-RESOURCES-MIB. So with ``v1`` hrSystemUptime is read in a second GET of
+    its own, and an error answer to that one only means it's absent. A timeout raises.
+    """
+    if not v1:
+        return parse_system(await client.get(list(SYSTEM_OIDS)))
+    rows = await client.get(list(MIB2_SYSTEM_OIDS))
+    try:
+        rows += await client.get([HR_SYSTEM_UPTIME])
+    except SnmpTimeout:
+        raise
+    except SnmpError:
+        pass  # noSuchName: the agent has no hrSystemUptime
+    return parse_system(rows)
 
 
 # --- interfaces --------------------------------------------------------------------
@@ -337,7 +380,9 @@ async def read_interfaces(client: GuardedSnmpClient, options: IfMibOptions) -> I
 
 
 def system_samples(info: SystemInfo, prefix: str) -> list[Sample]:
-    """``<prefix>_uptime_seconds`` and ``<prefix>_info`` (1, with sys_* labels)."""
+    """``<prefix>_info`` (1, with sys_* labels), ``<prefix>_uptime_seconds`` (the best
+    available device uptime, labelled ``source`` with the object it came from) and
+    ``<prefix>_agent_uptime_seconds`` (sysUpTime, whenever the agent reports it)."""
     samples = [
         Sample(
             name=f"{prefix}_info",
@@ -350,9 +395,22 @@ def system_samples(info: SystemInfo, prefix: str) -> list[Sample]:
             type="gauge",
         )
     ]
-    if info.uptime_seconds is not None:
+    if info.uptime_seconds is not None and info.uptime_source is not None:
         samples.append(
-            Sample(name=f"{prefix}_uptime_seconds", value=info.uptime_seconds, type="gauge")
+            Sample(
+                name=f"{prefix}_uptime_seconds",
+                labels={"source": info.uptime_source},
+                value=info.uptime_seconds,
+                type="gauge",
+            )
+        )
+    if info.agent_uptime_seconds is not None:
+        samples.append(
+            Sample(
+                name=f"{prefix}_agent_uptime_seconds",
+                value=info.agent_uptime_seconds,
+                type="gauge",
+            )
         )
     return samples
 
