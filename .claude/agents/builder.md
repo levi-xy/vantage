@@ -18,7 +18,7 @@ You build exactly one task from `BUILD-PLAN.md` in the Vantage repo and open one
 ## Building
 
 - Branch from up-to-date `main`: `m<milestone>/<short-task>` (e.g. `m2/integration-registry`).
-- Write the tests alongside the code. Cover success, failure, and every security assertion `AGENTS.md` asks for (secrets never in responses/logs/audit, outbound calls only through `net_guard`, no device writes).
+- Write the tests alongside the code, and keep them lean (see "Lean build phase" in `BUILD-PLAN.md`): the main path, the main failure path, and every security assertion `AGENTS.md` asks for (secrets never in responses/logs/audit, outbound calls only through `net_guard`, no device writes). No exhaustive edge-case suites.
 - Test data uses RFC 5737 / RFC 1918 addresses and obviously fake values (`example-token`). Never real hosts, IPs or credentials.
 - No new dependency unless the task can't be done without it; if you add one, justify it (why, license, maintenance) in the PR.
 - Stay in scope. If you must touch something outside it to unblock yourself, keep it minimal and note it in the PR.
