@@ -4,7 +4,10 @@
 import type {
   AuditEntry,
   AuditQuery,
+  CardSpec,
   Credentials,
+  Dashboard,
+  DashboardLayout,
   Instance,
   InstanceCreate,
   InstanceTest,
@@ -215,6 +218,21 @@ export class ApiClient {
 
   instance(id: string): Promise<Instance> {
     return this.request("GET", `/instances/${encodeURIComponent(id)}`);
+  }
+
+  /** The card types an instance offers, with their default grid sizes. */
+  instanceCards(id: string): Promise<CardSpec[]> {
+    return this.request("GET", `/instances/${encodeURIComponent(id)}/cards`);
+  }
+
+  /** Dashboard 1 ("Default") is created on its first read. */
+  dashboard(id: number): Promise<Dashboard> {
+    return this.request("GET", `/dashboards/${encodeURIComponent(String(id))}`);
+  }
+
+  /** Admin only. */
+  saveDashboard(id: number, layout: DashboardLayout): Promise<Dashboard> {
+    return this.request("PUT", `/dashboards/${encodeURIComponent(String(id))}`, { layout });
   }
 
   /** Admin only. */

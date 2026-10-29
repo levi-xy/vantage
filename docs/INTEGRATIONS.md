@@ -387,6 +387,7 @@ def cards(self) -> list[CardSpec]:
 - `card_type` is a lowercase slug (`[a-z][a-z0-9_-]*`) that names a frontend card folder; `title` is non-empty; `default_size` is `(width, height)` in grid units, both at least 1. The conformance suite checks these.
 - Return a list even for one card. The list is served by `GET /instances/{id}/cards`.
 - The card components themselves are frontend work (M5.5). A backend integration task defines the specs, and says in its doc section which metrics each card is expected to read.
+- The dashboard places every card an instance declares automatically, at `default_size` on a 12-column grid (width is capped at 12). A `card_type` with no frontend component yet is shown as a generic placeholder (instance name, status, card title); a component is registered in `frontend/src/cards/registry.tsx`.
 
 ---
 

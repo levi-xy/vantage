@@ -76,13 +76,6 @@ describe("layout", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Audit log" })).toBeInTheDocument();
     expect(nav).toHaveClass("hidden");
   });
-
-  it("uses one column on phones and a grid on wider screens", async () => {
-    await renderReady("/");
-    await screen.findByRole("heading", { level: 1, name: "Dashboard" });
-    const grid = screen.getByText(/No cards yet/).parentElement;
-    expect(grid).toHaveClass("grid-cols-1", "md:grid-cols-2");
-  });
 });
 
 describe("theme", () => {
