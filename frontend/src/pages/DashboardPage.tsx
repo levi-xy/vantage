@@ -2,6 +2,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { useEffect, useMemo, useRef } from "react";
 import type { CardPlacement, Dashboard } from "../api";
 import { useApiClient, useUser } from "../app/session";
+import { OverviewRow } from "../cards/OverviewRow";
 import { DashboardGrid } from "../cards/DashboardGrid";
 import { cardKey, mergeLayout } from "../cards/layout";
 import type { AvailableCard } from "../cards/layout";
@@ -108,6 +109,7 @@ export function DashboardPage() {
           {errorText(save.error)}
         </p>
       )}
+      {instances.data && <OverviewRow instances={instances.data} />}
       {body}
     </>
   );

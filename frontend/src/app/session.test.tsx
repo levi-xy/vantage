@@ -263,7 +263,11 @@ describe("logout", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Logout failed");
     expect(screen.getByRole("navigation", { name: "Main" })).toBeInTheDocument();
     await waitFor(() => expect(client.hasSession).toBe(true));
-    expect(backend.requests().at(-1)?.route).toBe("GET /me");
+    const routes = backend
+      .requests()
+      .map((r) => r.route)
+      .filter((r) => r !== "POST /query");
+    expect(routes.at(-1)).toBe("GET /me");
   });
 
   it("shows the unreachable screen when neither logout nor the session check get through", async () => {

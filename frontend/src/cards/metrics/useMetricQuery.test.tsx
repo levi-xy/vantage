@@ -41,6 +41,12 @@ describe("rangeWindow", () => {
   });
 });
 
+describe("rangeWindow minimum", () => {
+  it("never uses a step below the proxy's 15 s minimum", () => {
+    expect(rangeWindow(300, 1_700_000_000_000).step).toBe(15);
+  });
+});
+
 describe("query hooks", () => {
   it("send an instant query scoped to the instance", async () => {
     const { wrapper, sent } = setup();
@@ -60,6 +66,6 @@ describe("query hooks", () => {
     const [body] = sent();
     expect(body.query).toBe('up{vantage_instance_id="inst-1"}');
     expect(body.end - body.start).toBe(600);
-    expect(body.step).toBe(10);
+    expect(body.step).toBe(15);
   });
 });
