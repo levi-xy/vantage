@@ -15,6 +15,8 @@ import type {
   IntegrationInfo,
   Me,
   PasswordChange,
+  QueryRequest,
+  QueryResult,
   Role,
   SetupStatus,
   TestResult,
@@ -206,6 +208,11 @@ export class ApiClient {
     if (query.before_id !== undefined) params.set("before_id", String(query.before_id));
     const qs = params.toString();
     return this.request("GET", qs ? `/audit?${qs}` : "/audit");
+  }
+
+  /** PromQL proxy: an instant query, or a range query when `start`, `end` and `step` are set. */
+  query(request: QueryRequest): Promise<QueryResult> {
+    return this.request("POST", "/query", request);
   }
 
   integrations(): Promise<IntegrationInfo[]> {

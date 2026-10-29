@@ -188,3 +188,24 @@ export interface Dashboard {
   name: string;
   layout: DashboardLayout;
 }
+
+/** Body of `POST /query`. Times are Unix seconds, `step` seconds. No start/end = instant query. */
+export interface QueryRequest {
+  query: string;
+  start?: number;
+  end?: number;
+  step?: number;
+}
+
+/** One series. `values` are `[unix_seconds, "value"]` pairs; values are strings (`"NaN"`, `"+Inf"`). */
+export interface QuerySeries {
+  labels: Record<string, string>;
+  values: [number, string][];
+}
+
+/** Response of `POST /query` (backend/app/api/query.py). */
+export interface QueryResult {
+  result_type: "vector" | "matrix" | "scalar" | "string";
+  series: QuerySeries[];
+  warnings: string[];
+}
