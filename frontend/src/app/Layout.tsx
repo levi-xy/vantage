@@ -1,8 +1,11 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { NavLink, Outlet } from "react-router";
 import type { Role } from "../api";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { buttonSecondary } from "../components/styles";
+import { useLiveUpdates } from "./live";
+import type { LiveState } from "./live";
 import { useSession, useUser } from "./session";
 
 interface NavItem {
@@ -22,6 +25,20 @@ const NAV: readonly NavItem[] = [
 ];
 
 const ROLE_LABELS: Record<Role, string> = { admin: "Admin", viewer: "Viewer" };
+
+/** Whether live pushes are flowing. Text as well as colour. */
+function LiveIndicator({ state }: { state: LiveState }) {
+  const live = state === "live";
+  return (
+    <span className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+      <span
+        aria-hidden="true"
+        className={`h-2 w-2 rounded-full ${live ? "bg-emerald-500" : "bg-amber-500"}`}
+      />
+      {live ? "Live" : "Reconnecting"}
+    </span>
+  );
+}
 
 /** The user's name and role, and the logout button. */
 function UserMenu() {
@@ -72,6 +89,7 @@ function navClass({ isActive }: { isActive: boolean }): string {
 export function Layout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const user = useUser();
+  const live = useLiveUpdates(useQueryClient());
   const nav = NAV.filter((item) => item.role === undefined || item.role === user.role);
 
   return (
@@ -96,6 +114,7 @@ export function Layout() {
           </button>
           <span className="text-lg font-semibold tracking-tight">Vantage</span>
           <div className="ml-auto flex items-center gap-3">
+            <LiveIndicator state={live} />
             <ThemeToggle />
             <UserMenu />
           </div>

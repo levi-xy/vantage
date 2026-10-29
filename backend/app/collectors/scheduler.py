@@ -27,7 +27,8 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.collectors.store import MetricsStore, standard_labels
+from app.collectors.hub import EventHub, refresh_message, status_message
+from app.collectors.store import InstanceStatus, MetricsStore, standard_labels
 from app.core.crypto import DecryptionError, SecretBox
 from app.core.db import utcnow
 from app.core.net_guard import NetGuardError, PingError
@@ -110,6 +111,7 @@ class PollScheduler:
         secret_box: SecretBox,
         net_guard_factory: ic.NetGuardFactory,
         store: MetricsStore,
+        hub: EventHub | None = None,
         refresh_seconds: float = REFRESH_SECONDS,
         min_interval_seconds: float = MIN_POLL_INTERVAL_SECONDS,
     ) -> None:
@@ -118,6 +120,7 @@ class PollScheduler:
         self._box = secret_box
         self._guards = net_guard_factory
         self._store = store
+        self._hub = hub
         self._refresh = refresh_seconds
         self._min_interval = min_interval_seconds
         self._jobs: dict[uuid.UUID, _Job] = {}
@@ -268,6 +271,7 @@ class PollScheduler:
             )
         if was is not None and was.state == "down":
             log.info("instance %s (%s) is up again", spec.instance_id, spec.type_id)
+        self._publish(spec, was, refresh=True)
 
     def _failed(self, spec: PollSpec, error: str, duration: float) -> None:
         was = self._store.status(spec.instance_id)
@@ -276,6 +280,17 @@ class PollScheduler:
             log.warning(
                 "poll of instance %s (%s) failed: %s", spec.instance_id, spec.type_id, error
             )
+        self._publish(spec, was, refresh=False)
+
+    def _publish(self, spec: PollSpec, was: InstanceStatus | None, *, refresh: bool) -> None:
+        """Push the new status when it changed, and a refresh hint after a good poll."""
+        if self._hub is None:
+            return
+        now = self._store.status(spec.instance_id)
+        if now is not None and (was is None or (was.state, was.error) != (now.state, now.error)):
+            self._hub.publish(status_message(spec.instance_id, now))
+        if refresh:
+            self._hub.publish(refresh_message(spec.instance_id))
 
     def _context(
         self, cls: type[Integration], spec: PollSpec

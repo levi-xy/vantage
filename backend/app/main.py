@@ -13,6 +13,7 @@ from app.api import api_router
 from app.api.auth import LOGIN_LIMITS, LOGIN_WINDOW_SECONDS
 from app.api.deps import SAFE_METHODS
 from app.collectors.endpoint import router as metrics_router
+from app.collectors.hub import EventHub
 from app.collectors.scheduler import PollScheduler
 from app.collectors.store import MetricsStore, make_registry
 from app.core.auth import LoginRateLimiter, Passwords
@@ -93,12 +94,14 @@ def create_app(
     # Poll collector (M2.4): results kept in memory, served on /metrics.
     app.state.metrics_store = MetricsStore()
     app.state.metrics_registry = make_registry(app.state.metrics_store)
+    app.state.event_hub = EventHub()
     app.state.poller = PollScheduler(
         session_factory=app.state.session_factory,
         registry=app.state.registry,
         secret_box=secret_box,
         net_guard_factory=app.state.net_guard_factory,
         store=app.state.metrics_store,
+        hub=app.state.event_hub,
     )
 
     app.include_router(api_router)
