@@ -1,7 +1,7 @@
 import { screen } from "@testing-library/react";
 import { exampleMe, fakeBackend, json, mockSystemTheme, renderApp } from "../test-utils";
 import { exampleInstance, INSTANCE_ID } from "../pages/devices/testFixtures";
-import { hasWanSource, healthCounts, wanSummary } from "./overview";
+import { hasWanSource, healthCounts, THROUGHPUT_QUERY, wanSummary } from "./overview";
 
 beforeEach(() => mockSystemTheme(false));
 
@@ -22,6 +22,15 @@ describe("overview helpers", () => {
     expect(wanSummary(result(["0", "100", "20"]))).toEqual({ up: 2, total: 3 });
     expect(hasWanSource([up])).toBe(false);
     expect(hasWanSource([exampleInstance({ type_id: "pfsense" })])).toBe(true);
+  });
+});
+
+describe("throughput query", () => {
+  it("uses the counters' _total names and guards each sum", () => {
+    expect(THROUGHPUT_QUERY).toContain("if_in_bytes_total");
+    expect(THROUGHPUT_QUERY).toContain("if_out_bytes_total");
+    expect(THROUGHPUT_QUERY).toContain("node_network_receive_bytes_total");
+    expect(THROUGHPUT_QUERY.match(/or vector\(0\)/g)).toHaveLength(4);
   });
 });
 
