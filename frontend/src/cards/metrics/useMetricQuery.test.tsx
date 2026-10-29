@@ -66,6 +66,6 @@ describe("query hooks", () => {
     const [body] = sent();
     expect(body.query).toBe('up{vantage_instance_id="inst-1"}');
     expect(body.end - body.start).toBe(600);
-    expect(body.step).toBe(10);
+    expect(body.step).toBe(15);
   });
 });
