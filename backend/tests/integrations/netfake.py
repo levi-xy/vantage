@@ -46,6 +46,7 @@ DNS: dict[str, list[str]] = {
     "fw.example.internal": ["10.0.0.1"],
     "snmp.example.internal": ["10.0.0.40"],
     "pve.example.internal": ["10.0.0.50"],
+    "emby.example.internal": ["10.0.0.60"],
     "metadata.example.internal": ["169.254.169.254"],
 }
 

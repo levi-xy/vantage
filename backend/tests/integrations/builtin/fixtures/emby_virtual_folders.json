@@ -1,0 +1,6 @@
+[
+  {"Name": "Example Movies", "CollectionType": "movies", "ItemId": "1", "Locations": ["/example/movies"]},
+  {"Name": "Example Shows", "CollectionType": "tvshows", "ItemId": "2", "Locations": ["/example/shows"]},
+  {"Name": "Example Music", "CollectionType": "music", "ItemId": "3", "Locations": ["/example/music"]},
+  {"Name": "Example Misc", "ItemId": "4", "Locations": ["/example/misc"]}
+]
