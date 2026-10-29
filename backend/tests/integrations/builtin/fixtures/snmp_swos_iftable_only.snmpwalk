@@ -1,0 +1,70 @@
+# Hand-written in `snmpwalk -On` style from MikroTik's public MIB and SwOS documentation.
+# ifTable only (no ifXTable, no health), the oldest shape SwOS might answer with. NOT
+# recorded from a device (SwOS cannot be emulated in our lab). Example values only.
+# TODO(maintainer): lab checkpoint. Replace with a scrubbed walk of a real SwOS switch.
+# Assumed shape: an 8 x 1G + 2 x SFP+ switch, ports named by default ("Port1".."Port8",
+# "SFP+9", "SFP+10"), port 3 renamed by the admin, MikroTik enterprise sysObjectID.
+.1.3.6.1.2.1.1.1.0 = STRING: "CSS610-EXAMPLE"
+.1.3.6.1.2.1.1.2.0 = OID: .1.3.6.1.4.1.14988.2
+.1.3.6.1.2.1.1.3.0 = Timeticks: (8640000) 1 day, 0:00:00.00
+.1.3.6.1.2.1.1.5.0 = STRING: "example-swos"
+.1.3.6.1.2.1.2.2.1.2.1 = STRING: "Port1"
+.1.3.6.1.2.1.2.2.1.2.2 = STRING: "Port2"
+.1.3.6.1.2.1.2.2.1.2.3 = STRING: "Uplink to core (10G)"
+.1.3.6.1.2.1.2.2.1.2.4 = STRING: "Port4"
+.1.3.6.1.2.1.2.2.1.2.9 = STRING: "SFP+9"
+.1.3.6.1.2.1.2.2.1.2.10 = STRING: "SFP+10"
+.1.3.6.1.2.1.2.2.1.5.1 = Gauge32: 1000000000
+.1.3.6.1.2.1.2.2.1.5.2 = Gauge32: 1000000000
+.1.3.6.1.2.1.2.2.1.5.3 = Gauge32: 1000000000
+.1.3.6.1.2.1.2.2.1.5.4 = Gauge32: 1000000000
+.1.3.6.1.2.1.2.2.1.5.9 = Gauge32: 4294967295
+.1.3.6.1.2.1.2.2.1.5.10 = Gauge32: 4294967295
+.1.3.6.1.2.1.2.2.1.7.1 = INTEGER: up(1)
+.1.3.6.1.2.1.2.2.1.7.2 = INTEGER: up(1)
+.1.3.6.1.2.1.2.2.1.7.3 = INTEGER: up(1)
+.1.3.6.1.2.1.2.2.1.7.4 = INTEGER: up(1)
+.1.3.6.1.2.1.2.2.1.7.9 = INTEGER: up(1)
+.1.3.6.1.2.1.2.2.1.7.10 = INTEGER: up(1)
+.1.3.6.1.2.1.2.2.1.8.1 = INTEGER: up(1)
+.1.3.6.1.2.1.2.2.1.8.2 = INTEGER: down(2)
+.1.3.6.1.2.1.2.2.1.8.3 = INTEGER: up(1)
+.1.3.6.1.2.1.2.2.1.8.4 = INTEGER: down(2)
+.1.3.6.1.2.1.2.2.1.8.9 = INTEGER: up(1)
+.1.3.6.1.2.1.2.2.1.8.10 = INTEGER: down(2)
+.1.3.6.1.2.1.2.2.1.10.1 = Counter32: 1000
+.1.3.6.1.2.1.2.2.1.10.2 = Counter32: 2000
+.1.3.6.1.2.1.2.2.1.10.3 = Counter32: 3000
+.1.3.6.1.2.1.2.2.1.10.4 = Counter32: 4000
+.1.3.6.1.2.1.2.2.1.10.9 = Counter32: 5000
+.1.3.6.1.2.1.2.2.1.10.10 = Counter32: 6000
+.1.3.6.1.2.1.2.2.1.13.1 = Counter32: 0
+.1.3.6.1.2.1.2.2.1.13.2 = Counter32: 0
+.1.3.6.1.2.1.2.2.1.13.3 = Counter32: 0
+.1.3.6.1.2.1.2.2.1.13.4 = Counter32: 0
+.1.3.6.1.2.1.2.2.1.13.9 = Counter32: 0
+.1.3.6.1.2.1.2.2.1.13.10 = Counter32: 0
+.1.3.6.1.2.1.2.2.1.14.1 = Counter32: 0
+.1.3.6.1.2.1.2.2.1.14.2 = Counter32: 0
+.1.3.6.1.2.1.2.2.1.14.3 = Counter32: 0
+.1.3.6.1.2.1.2.2.1.14.4 = Counter32: 0
+.1.3.6.1.2.1.2.2.1.14.9 = Counter32: 0
+.1.3.6.1.2.1.2.2.1.14.10 = Counter32: 0
+.1.3.6.1.2.1.2.2.1.16.1 = Counter32: 2000
+.1.3.6.1.2.1.2.2.1.16.2 = Counter32: 4000
+.1.3.6.1.2.1.2.2.1.16.3 = Counter32: 6000
+.1.3.6.1.2.1.2.2.1.16.4 = Counter32: 8000
+.1.3.6.1.2.1.2.2.1.16.9 = Counter32: 10000
+.1.3.6.1.2.1.2.2.1.16.10 = Counter32: 12000
+.1.3.6.1.2.1.2.2.1.19.1 = Counter32: 0
+.1.3.6.1.2.1.2.2.1.19.2 = Counter32: 0
+.1.3.6.1.2.1.2.2.1.19.3 = Counter32: 0
+.1.3.6.1.2.1.2.2.1.19.4 = Counter32: 0
+.1.3.6.1.2.1.2.2.1.19.9 = Counter32: 0
+.1.3.6.1.2.1.2.2.1.19.10 = Counter32: 0
+.1.3.6.1.2.1.2.2.1.20.1 = Counter32: 0
+.1.3.6.1.2.1.2.2.1.20.2 = Counter32: 0
+.1.3.6.1.2.1.2.2.1.20.3 = Counter32: 0
+.1.3.6.1.2.1.2.2.1.20.4 = Counter32: 0
+.1.3.6.1.2.1.2.2.1.20.9 = Counter32: 0
+.1.3.6.1.2.1.2.2.1.20.10 = Counter32: 0
