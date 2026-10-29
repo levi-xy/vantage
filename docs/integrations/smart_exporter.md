@@ -18,4 +18,6 @@
 
 **Limits and caveats:** disks the exporter cannot read (permissions, RAID controllers it is not configured for) are simply absent. Hostnames are resolved again by Prometheus when it scrapes, so only an IP-literal host is fully protected against DNS rebinding.
 
+**Setup on a NAS:** [exporters/nas.md](../exporters/nas.md) and the compose bundle in `deploy/exporters/nas/`, which runs the exporter with only the listed disks and `SYS_RAWIO` instead of `privileged`.
+
 **Fixtures:** `backend/tests/integrations/builtin/fixtures/smartctl_exporter.prom`, hand-written and trimmed (fake serials).

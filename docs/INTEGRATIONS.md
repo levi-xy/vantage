@@ -589,3 +589,9 @@ Index of per-integration docs, in `type_id` order. `http_check`, `linux_host` an
 | `proxmox` | Proxmox VE | polled (HTTPS API) | [`integrations/proxmox.md`](integrations/proxmox.md) |
 | `smart_exporter` | SMART disk health (smartctl_exporter) | scrape-only | [`integrations/smart_exporter.md`](integrations/smart_exporter.md) |
 | `snmp_device` | SNMP device | polled (SNMP) | [`integrations/snmp_device.md`](integrations/snmp_device.md) |
+
+Exporter bundles that feed these integrations, run on the monitored machine:
+
+| Bundle | Feeds | Doc |
+|---|---|---|
+| NAS (node_exporter + smartctl_exporter) | `linux_host`, `smart_exporter` | [`exporters/nas.md`](exporters/nas.md), compose file in `deploy/exporters/nas/` |

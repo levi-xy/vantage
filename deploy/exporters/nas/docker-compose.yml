@@ -1,0 +1,81 @@
+# NAS exporter bundle for Vantage: node_exporter (host, RAID, ZFS, sensors) and
+# smartctl_exporter (disk health). Run this ON THE NAS, not on the Vantage host; it is
+# not part of the Vantage stack. Setup per NAS OS: docs/exporters/nas.md.
+#
+#   docker compose up -d          # from this directory, on the NAS
+#
+# Neither exporter has authentication: anyone who can reach ports 9100 and 9633 can
+# read the metrics (host names, disk models and serials, mount points). Bind them to
+# the NAS's LAN address and allow only the Vantage host in the NAS firewall (README).
+#
+# Optional settings, in a .env file next to this one or in the environment:
+#   NAS_LISTEN_ADDRESS   address both exporters listen on (default 0.0.0.0, every
+#                        interface); set it to the NAS's LAN address, e.g. 10.0.0.30
+
+name: vantage-nas-exporters
+
+services:
+  node-exporter:
+    # Prometheus project, Apache-2.0. v1.12.1 released 2026-07-14.
+    image: prom/node-exporter:v1.12.1
+    command:
+      # Every path the collectors read is taken under /host, the host's root.
+      - --path.rootfs=/host
+      - --path.udev.data=/host/run/udev/data
+      - --web.listen-address=${NAS_LISTEN_ADDRESS:-0.0.0.0}:9100
+      # mdadm, zfs, hwmon, filesystem, diskstats, netdev, thermal_zone are on by
+      # default; nothing the NAS dashboard needs is off, so no collector flags here.
+    # Host network: otherwise node_network_* would describe the container's own
+    # virtual interface, not the NAS's NICs. It also means the port is opened by
+    # --web.listen-address above, not by a "ports:" mapping.
+    network_mode: host
+    # Host PID namespace: process counts and /proc/<pid> data of the NAS, not of this
+    # container (upstream's documented container setup).
+    pid: host
+    volumes:
+      # The host root, read-only, so filesystem sizes, /proc/mdstat, md sysfs, ZFS
+      # kstats and hwmon sensors are the NAS's. rslave: mounts made later on the host
+      # (a pool imported after boot) become visible without a restart.
+      - /:/host:ro,rslave
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 128m
+    restart: unless-stopped
+
+  smartctl-exporter:
+    # Prometheus community, Apache-2.0. v0.15.0 released 2026-10-07.
+    image: prometheuscommunity/smartctl-exporter:v0.15.0
+    command:
+      - --web.listen-address=:9633
+    ports:
+      - "${NAS_LISTEN_ADDRESS:-0.0.0.0}:9633:9633"
+    # EDIT THIS LIST: only the disks this NAS has (see README, "Which disks"). The
+    # exporter sees nothing but these device nodes; a listed device that doesn't exist
+    # stops the container from starting. Stable alternative to sdX names:
+    #   - /dev/disk/by-id/ata-EXAMPLE_MODEL_EXAMPLE-SERIAL:/dev/sda
+    devices:
+      - /dev/sda:/dev/sda
+      - /dev/sdb:/dev/sdb
+      # NVMe: the controller character device, and see SYS_ADMIN below.
+      # - /dev/nvme0:/dev/nvme0
+    # smartctl must run as uid 0 to open the disk nodes (root:disk, 0660) without
+    # CAP_DAC_OVERRIDE. Every capability is dropped except SYS_RAWIO, which the kernel
+    # requires for the ATA/SCSI pass-through commands that read SMART data.
+    user: "0:0"
+    cap_drop: [ALL]
+    cap_add:
+      - SYS_RAWIO
+      # NVMe only: the kernel allows the NVMe "Get Log Page" admin command (the SMART
+      # log) only with CAP_SYS_ADMIN. Uncomment only if you list NVMe devices and
+      # accept the trade-off described in the README.
+      # - SYS_ADMIN
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 128m
+    restart: unless-stopped

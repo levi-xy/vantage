@@ -13,6 +13,7 @@ from typing import Any
 import httpcore
 import pytest
 from fastapi.testclient import TestClient
+from prometheus_client.parser import text_string_to_metric_families
 from pydantic import ValidationError
 from sqlalchemy import Engine
 
@@ -23,12 +24,17 @@ from app.integrations import instance_config as ic
 from app.integrations.base import TestResult
 from app.integrations.builtin.linux_host import LinuxHost, LinuxHostConfig
 from app.integrations.builtin.linux_host import integration as linux_host_module
-from app.integrations.builtin.linux_host.integration import describe_node_exporter
+from app.integrations.builtin.linux_host.integration import (
+    NodeExporterInfo,
+    describe_node_exporter,
+)
 from app.models import Instance
 from tests.integrations.netfake import FakeNetwork, fake_guards, hang, http_response, make_ctx
 from tests.test_auth import do_setup, make_client
 
 FIXTURE = (Path(__file__).parent / "fixtures" / "node_exporter.prom").read_bytes()
+# A NAS: md0 healthy RAID 1, md1 degraded RAID 5, ZFS pool "tank" online, 5 hwmon temps.
+NAS_FIXTURE = (Path(__file__).parent / "fixtures" / "node_exporter_nas.prom").read_bytes()
 ADDRESS = ("10.0.0.20", 9100)
 PROM_TOKEN = "example-prometheus-token-0123456789abcdef"
 
@@ -117,7 +123,93 @@ def test_scrape_only() -> None:
 
 
 def test_describe_node_exporter() -> None:
-    assert describe_node_exporter(FIXTURE.decode()) == ("1.8.2", "lab-host-1")
+    info = describe_node_exporter(FIXTURE.decode())
+    assert info == NodeExporterInfo("1.8.2", "lab-host-1")
+    assert info is not None and info.summary() == "node_exporter 1.8.2 on lab-host-1"
+
+
+def test_describe_nas_storage() -> None:
+    info = describe_node_exporter(NAS_FIXTURE.decode())
+    assert info == NodeExporterInfo(
+        version="1.12.1",
+        nodename="nas-example",
+        md_arrays=2,
+        zfs_pools=1,
+        temp_sensors=5,
+        unhealthy=("md1",),
+    )
+    assert info.summary() == (
+        "node_exporter 1.12.1 on nas-example: 2 md arrays, 1 ZFS pool, "
+        "5 temperature sensors; not healthy: md1"
+    )
+
+
+def test_nas_fixture_has_the_metrics_the_card_reads() -> None:
+    # What the linux-host card (M5.5) reads on a NAS; the fixture documents their shape.
+    families = {f.name: f for f in text_string_to_metric_families(NAS_FIXTURE.decode())}
+    for name in (
+        "node_md_state",
+        "node_md_disks",
+        "node_md_disks_required",
+        "node_zfs_zpool_state",
+        "node_hwmon_temp_celsius",
+        "node_hwmon_fan_rpm",
+        "node_filesystem_size_bytes",
+        "node_filesystem_avail_bytes",
+    ):
+        assert families[name].samples, name
+    assert {s.labels["state"] for s in families["node_md_disks"].samples} == {
+        "active",
+        "failed",
+        "spare",
+    }
+
+
+BUILD = 'node_exporter_build_info{version="1.12.1"} 1\n'
+MD2 = 'node_md_disks_required{device="md2"} 2\n'
+
+
+def zpool(name: str, current: str) -> str:
+    states = ("degraded", "faulted", "offline", "online", "removed", "suspended", "unavail")
+    return "".join(
+        f'node_zfs_zpool_state{{state="{s}",zpool="{name}"}} {int(s == current)}\n' for s in states
+    )
+
+
+@pytest.mark.parametrize(
+    ("metrics", "unhealthy"),
+    [
+        (zpool("tank", "online"), ()),
+        (zpool("tank", "degraded") + zpool("backup", "online"), ("tank",)),
+        (zpool("tank", "suspended"), ("tank",)),
+        (MD2 + 'node_md_degraded{device="md2"} 1\n', ("md2",)),
+        (MD2 + 'node_md_disks{device="md2",state="failed"} 1\n', ("md2",)),
+        (MD2 + 'node_md_state{device="md2",state="inactive"} 1\n', ("md2",)),
+        (
+            MD2 + 'node_md_state{device="md2",state="resync"} 1\n'
+            'node_md_disks{device="md2",state="spare"} 1\n'
+            'node_md_degraded{device="md2"} 0\n',
+            (),
+        ),
+    ],
+)
+def test_describe_unhealthy_storage(metrics: str, unhealthy: tuple[str, ...]) -> None:
+    info = describe_node_exporter(BUILD + metrics)
+    assert info is not None and info.unhealthy == unhealthy
+
+
+def test_summary_names_at_most_five_unhealthy() -> None:
+    info = describe_node_exporter(BUILD + "".join(zpool(f"pool{i}", "faulted") for i in range(7)))
+    assert info is not None and info.zfs_pools == 7
+    assert info.summary().endswith(
+        ": 7 ZFS pools; not healthy: pool0, pool1, pool2, pool3, pool4 and 2 more"
+    )
+
+
+def test_summary_singular() -> None:
+    info = describe_node_exporter(BUILD + 'node_hwmon_temp_celsius{chip="c",sensor="temp1"} 40\n')
+    assert info is not None
+    assert info.summary() == "node_exporter 1.12.1 on ?: 1 temperature sensor"
 
 
 @pytest.mark.parametrize(
@@ -137,11 +229,14 @@ def test_describe_sanitises_device_text() -> None:
     text = (
         f'node_exporter_build_info{{version="1.8.2\\n"}} 1\n'
         f'node_uname_info{{nodename="{weird}"}} 1\n'
+        f'node_zfs_zpool_state{{state="faulted",zpool="{weird}"}} 1\n'
     )
-    version, nodename = describe_node_exporter(text) or ("", "")
-    assert version == "1.8.2"
-    assert nodename.isascii() and nodename.isprintable()
-    assert len(nodename) == 64
+    info = describe_node_exporter(text)
+    assert info is not None
+    assert info.version == "1.8.2"
+    assert info.nodename.isascii() and info.nodename.isprintable()
+    assert len(info.nodename) == 64
+    assert info.unhealthy == (info.nodename,)  # pool names are cleaned the same way
 
 
 # --- test_connection -------------------------------------------------------------------
@@ -155,6 +250,18 @@ async def test_connection_ok(fake_net: FakeNetwork) -> None:
     assert fake_net.connects == [ADDRESS]  # the address the guard checked
     assert fake_net.requests[0].headers["host"] == "node.example.internal:9100"
     assert "authorization" not in fake_net.requests[0].headers
+    assert_read_only(fake_net)
+
+
+async def test_connection_nas_reports_storage(fake_net: FakeNetwork) -> None:
+    fake_net.serve(*ADDRESS, http_response(200, NAS_FIXTURE))
+    result = await run_test()
+    assert result.ok
+    assert result.message == (
+        "node_exporter 1.12.1 on nas-example: 2 md arrays, 1 ZFS pool, "
+        "5 temperature sensors; not healthy: md1"
+    )
+    assert result.hint is None
     assert_read_only(fake_net)
 
 

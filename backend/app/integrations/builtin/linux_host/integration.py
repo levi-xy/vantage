@@ -11,7 +11,9 @@ Because there is no ``poll()``, the collector reports the instance's status as
 
 ``test_connection()`` is the one place Vantage itself talks to the exporter: one ``GET``
 of the metrics page through the guarded client, to confirm it is node_exporter before
-the admin saves.
+the admin saves. On a NAS it also says what storage the exporter sees (md arrays, ZFS
+pools, temperature sensors) and names any array or pool that isn't healthy, so a missing
+mount in the exporter's container shows up before the admin relies on the dashboard.
 
 Prometheus' config is fixed (Contract 4), so a target can't carry per-device scrape
 credentials or TLS settings: node_exporter must answer without authentication, and over
@@ -19,7 +21,7 @@ https only with a certificate Prometheus trusts.
 """
 
 import asyncio
-from typing import ClassVar, Literal
+from typing import ClassVar, Literal, NamedTuple
 
 import httpx
 from prometheus_client.parser import text_string_to_metric_families
@@ -49,6 +51,8 @@ TIMEOUT_SECONDS = 10
 MAX_BODY_BYTES = 8 * 1024 * 1024
 # Longest device-supplied text (version, node name) quoted in a message.
 _MAX_QUOTED = 64
+# Most unhealthy arrays/pools named in a message; the rest are counted.
+_MAX_NAMED = 5
 
 
 class LinuxHostConfig(BaseModel):
@@ -87,25 +91,98 @@ def _quote(text: str) -> str:
     return cleaned[:_MAX_QUOTED] or "?"
 
 
-def describe_node_exporter(text: str) -> tuple[str, str] | None:
-    """``(version, nodename)`` from a node_exporter metrics page, or ``None`` if the page
-    isn't Prometheus text format or isn't node_exporter's.
+class NodeExporterInfo(NamedTuple):
+    """What a node_exporter page says about the host. Text fields are made safe to show."""
+
+    version: str
+    nodename: str
+    md_arrays: int = 0
+    zfs_pools: int = 0
+    temp_sensors: int = 0
+    unhealthy: tuple[str, ...] = ()  # md arrays and ZFS pools that aren't healthy
+
+    def summary(self) -> str:
+        """The connection test's message."""
+        text = f"node_exporter {self.version} on {self.nodename}"
+        found = [
+            _count(self.md_arrays, "md array"),
+            _count(self.zfs_pools, "ZFS pool"),
+            _count(self.temp_sensors, "temperature sensor"),
+        ]
+        found = [part for part in found if part]
+        if found:
+            text += ": " + ", ".join(found)
+        if self.unhealthy:
+            named = ", ".join(self.unhealthy[:_MAX_NAMED])
+            more = len(self.unhealthy) - _MAX_NAMED
+            text += f"; not healthy: {named}" + (f" and {more} more" if more > 0 else "")
+        return text
+
+
+def _count(n: int, noun: str) -> str:
+    return "" if n == 0 else f"{n} {noun}" + ("" if n == 1 else "s")
+
+
+def describe_node_exporter(text: str) -> NodeExporterInfo | None:
+    """What a node_exporter metrics page says, or ``None`` if the page isn't Prometheus
+    text format or isn't node_exporter's.
+
+    Storage, read from node_exporter's native metrics:
+
+    - md arrays: ``node_md_disks_required`` (one series per array). An array is not
+      healthy if ``node_md_degraded`` > 0, ``node_md_disks{state="failed"}`` > 0 or
+      ``node_md_state{state="inactive"}`` is 1.
+    - ZFS pools: ``node_zfs_zpool_state`` (one series per pool and state, ``1`` on the
+      current state). A pool is not healthy unless its current state is ``online``.
+    - temperature sensors: ``node_hwmon_temp_celsius`` series.
 
     ``ValueError`` from the parser (malformed exposition) counts as "not metrics".
     """
     version: str | None = None
     nodename = "?"
+    md_arrays: set[str] = set()
+    pools: set[str] = set()
+    sensors = 0
+    unhealthy: set[str] = set()
     try:
         for family in text_string_to_metric_families(text):
-            if family.name == "node_exporter_build_info" and family.samples:
+            name = family.name
+            if name == "node_exporter_build_info" and family.samples:
                 version = family.samples[0].labels.get("version", "?")
-            elif family.name == "node_uname_info" and family.samples:
+            elif name == "node_uname_info" and family.samples:
                 nodename = family.samples[0].labels.get("nodename", "?")
+            elif name == "node_md_disks_required":
+                md_arrays.update(s.labels.get("device", "?") for s in family.samples)
+            elif name in ("node_md_degraded", "node_md_disks", "node_md_state"):
+                for s in family.samples:
+                    state = s.labels.get("state")
+                    bad = (
+                        (name == "node_md_degraded" and s.value > 0)
+                        or (name == "node_md_disks" and state == "failed" and s.value > 0)
+                        or (name == "node_md_state" and state == "inactive" and s.value == 1)
+                    )
+                    if bad:
+                        unhealthy.add(s.labels.get("device", "?"))
+            elif name == "node_zfs_zpool_state":
+                for s in family.samples:
+                    pool = s.labels.get("zpool", "?")
+                    pools.add(pool)
+                    if s.value == 1 and s.labels.get("state") != "online":
+                        unhealthy.add(pool)
+            elif name == "node_hwmon_temp_celsius":
+                sensors += len(family.samples)
     except ValueError:
         return None
     if version is None:
         return None
-    return _quote(version), _quote(nodename)
+    return NodeExporterInfo(
+        version=_quote(version),
+        nodename=_quote(nodename),
+        md_arrays=len(md_arrays),
+        zfs_pools=len(pools),
+        temp_sensors=sensors,
+        unhealthy=tuple(sorted({_quote(n) for n in unhealthy})),
+    )
 
 
 async def _read_limited(response: httpx.Response) -> bytes | None:
@@ -122,7 +199,7 @@ class LinuxHost(Integration):
     type_id = "linux_host"
     display_name = "Linux host (node_exporter)"
     category: ClassVar[Category] = "host"
-    version = "0.1.0"
+    version = "0.2.0"
     config_schema = LinuxHostConfig
 
     def scrape_targets(self, ctx: InstanceContext) -> list[ScrapeTarget]:
@@ -158,8 +235,7 @@ class LinuxHost(Integration):
                 ok=False,
                 message=f"{cfg.address} answered, but not with node_exporter metrics",
             )
-        version, nodename = found
-        return TestResult(ok=True, message=f"node_exporter {version} on {nodename}")
+        return TestResult(ok=True, message=found.summary())
 
     def cards(self) -> list[CardSpec]:
         return [CardSpec(card_type="linux-host", title="Linux host", default_size=(4, 3))]
