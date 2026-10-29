@@ -1,0 +1,10 @@
+{
+  "ServerName": "example-emby",
+  "Version": "4.8.10.0",
+  "Id": "00000000000000000000000000000000",
+  "OperatingSystem": "Linux",
+  "LocalAddress": "http://10.0.0.60:8096",
+  "HasPendingRestart": false,
+  "HasUpdateAvailable": true,
+  "HttpServerPortNumber": 8096
+}

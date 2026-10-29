@@ -13,6 +13,7 @@ from typing import Any, TypedDict
 from app.integrations.base import Category, Integration
 from app.integrations.builtin.cloudflare import Cloudflare
 from app.integrations.builtin.cloudflared import Cloudflared
+from app.integrations.builtin.emby import Emby
 from app.integrations.builtin.http_check import HttpCheck
 from app.integrations.builtin.linux_host import LinuxHost
 from app.integrations.builtin.mikrotik_swos import MikroTikSwOS
@@ -27,6 +28,7 @@ from app.integrations.schema import config_json_schema
 BUILTIN_INTEGRATIONS: tuple[type[Integration], ...] = (
     Cloudflare,  # cloudflare
     Cloudflared,  # cloudflared
+    Emby,  # emby
     HttpCheck,  # http_check
     LinuxHost,  # linux_host
     MikroTikSwOS,  # mikrotik_swos

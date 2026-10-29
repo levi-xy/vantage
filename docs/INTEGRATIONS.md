@@ -584,6 +584,7 @@ Index of per-integration docs, in `type_id` order. `http_check`, `linux_host` an
 |---|---|---|---|
 | `cloudflare` | Cloudflare account | polled (cloud HTTPS API) | [`integrations/cloudflare.md`](integrations/cloudflare.md) |
 | `cloudflared` | Cloudflare Tunnel (cloudflared) | scrape-only | [`integrations/cloudflared.md`](integrations/cloudflared.md) |
+| `emby` | Emby Server | polled (HTTP/HTTPS API) | [`integrations/emby.md`](integrations/emby.md) |
 | `http_check` | HTTP check | polled | [`integrations/http_check.md`](integrations/http_check.md) |
 | `linux_host` | Linux host (node_exporter) | scrape-only | [`integrations/linux_host.md`](integrations/linux_host.md) |
 | `mikrotik_swos` | MikroTik SwOS switch | polled (SNMP) | [`integrations/mikrotik_swos.md`](integrations/mikrotik_swos.md) |

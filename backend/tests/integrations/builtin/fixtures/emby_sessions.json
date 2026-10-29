@@ -1,0 +1,26 @@
+[
+  {
+    "Id": "s1", "UserName": "example-alice", "Client": "Example Web", "DeviceName": "example-laptop",
+    "RemoteEndPoint": "192.0.2.10",
+    "NowPlayingItem": {"Name": "Example Movie", "Type": "Movie"},
+    "PlayState": {"PlayMethod": "Transcode", "IsPaused": false},
+    "TranscodingInfo": {"VideoCodec": "h264"}
+  },
+  {
+    "Id": "s2", "UserName": "example-bob", "Client": "Example TV", "DeviceName": "example-tv",
+    "RemoteEndPoint": "192.0.2.11",
+    "NowPlayingItem": {"Name": "Example Episode", "Type": "Episode"},
+    "PlayState": {"PlayMethod": "DirectPlay"}
+  },
+  {
+    "Id": "s3", "UserName": "example-carol", "Client": "Example Phone", "DeviceName": "example-phone",
+    "RemoteEndPoint": "192.0.2.12",
+    "NowPlayingItem": {"Name": "Example Song", "Type": "Audio"},
+    "PlayState": {"PlayMethod": "DirectStream"}
+  },
+  {
+    "Id": "s4", "UserName": "example-dave", "Client": "Example Web", "DeviceName": "example-desktop",
+    "RemoteEndPoint": "192.0.2.13",
+    "PlayState": {}
+  }
+]
