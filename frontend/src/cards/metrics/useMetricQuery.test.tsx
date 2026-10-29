@@ -41,6 +41,12 @@ describe("rangeWindow", () => {
   });
 });
 
+describe("rangeWindow minimum", () => {
+  it("never uses a step below the proxy's 15 s minimum", () => {
+    expect(rangeWindow(300, 1_700_000_000_000).step).toBe(15);
+  });
+});
+
 describe("query hooks", () => {
   it("send an instant query scoped to the instance", async () => {
     const { wrapper, sent } = setup();

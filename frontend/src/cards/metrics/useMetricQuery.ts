@@ -7,6 +7,8 @@ import type { Selector } from "./promql";
 export const INSTANT_REFETCH_MS = 15_000;
 export const RANGE_REFETCH_MS = 30_000;
 const TARGET_POINTS = 60;
+/** The query proxy's minimum step (M5.1). */
+const MIN_STEP_SECONDS = 15;
 
 /** The range hook's default window: the last hour. */
 export const DEFAULT_WINDOW_SECONDS = 3600;
@@ -19,7 +21,7 @@ export interface RangeWindow {
 
 /** A window ending now, with about 60 points. `end` is rounded to the step so refetches line up. */
 export function rangeWindow(windowSeconds: number, nowMs: number = Date.now()): RangeWindow {
-  const step = Math.max(1, Math.ceil(windowSeconds / TARGET_POINTS));
+  const step = Math.max(MIN_STEP_SECONDS, Math.ceil(windowSeconds / TARGET_POINTS));
   const end = Math.floor(nowMs / 1000 / step) * step;
   return { start: end - windowSeconds, end, step };
 }
@@ -51,5 +53,18 @@ export function useRangeQuery(
     queryKey: ["query", "range", expr, windowSeconds],
     queryFn: () => client.query({ query: expr, ...rangeWindow(windowSeconds) }),
     refetchInterval: RANGE_REFETCH_MS,
+  });
+}
+
+/**
+ * Instant query across all instances (overview row). Unlike the hooks above this is not scoped
+ * to one instance, so `expr` must be a fixed string written in code, never built from user input.
+ */
+export function useFleetQuery(expr: string) {
+  const client = useApiClient();
+  return useQuery<QueryResult>({
+    queryKey: ["query", "fleet", expr],
+    queryFn: () => client.query({ query: expr }),
+    refetchInterval: INSTANT_REFETCH_MS,
   });
 }
