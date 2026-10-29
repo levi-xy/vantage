@@ -186,7 +186,7 @@ All outbound traffic goes through `net_guard` (Hard rule 5, Contract 5). The con
 
 ```python
 ctx.http_client(*, verify=True, base_url="", headers=None) -> httpx.AsyncClient
-ctx.snmp_client(host, auth, *, port=161) -> GuardedSnmpClient    # auth: SnmpV2c | SnmpV3
+ctx.snmp_client(host, auth, *, port=161, timeout=5.0, retries=2) -> GuardedSnmpClient    # auth: SnmpV1 | SnmpV2c | SnmpV3; timeout/retries may only be lowered
 ctx.ping_client(host, *, count=3, reply_timeout=1.0) -> GuardedPingClient
 ```
 
@@ -200,7 +200,7 @@ ctx.ping_client(host, *, count=3, reply_timeout=1.0) -> GuardedPingClient
 
 ### SNMP
 
-`ctx.snmp_client(host, auth, port=161)` returns a `GuardedSnmpClient` (`net_guard.py`). `auth` is `SnmpV2c(community=SecretStr)` or `SnmpV3(username, auth_key, priv_key, auth_protocol, priv_protocol)`; both are importable from `app.core.net_guard`.
+`ctx.snmp_client(host, auth, port=161)` returns a `GuardedSnmpClient` (`net_guard.py`). `auth` is `SnmpV1(community=SecretStr)`, `SnmpV2c(community=SecretStr)` or `SnmpV3(username, auth_key, priv_key, auth_protocol, priv_protocol)`; all three are importable from `app.core.net_guard`.
 
 - **Read-only by construction.** The client exposes `get(oids)` and `walk(oid, max_rows=10_000)` and nothing else: no `set`. `test_snmp_is_read_only` in `tests/test_net_guard.py` fails if a write operation appears. `walk` stays inside the subtree you ask for.
 - **OIDs are numeric** (`"1.3.6.1.2.1.2.2.1.10"`; a leading dot is accepted). Symbolic names raise `ValueError`; there is no MIB lookup. Both calls return `SnmpVarBind(oid, value)` where `value` is an `int` (counters, gauges, ticks), a `str` (OIDs, IP addresses), `bytes` (octet strings) or `None` (noSuchObject, noSuchInstance, endOfMibView). Octet strings are device-supplied: decode defensively and bound what you put in a label.
@@ -216,13 +216,16 @@ ctx.ping_client(host, *, count=3, reply_timeout=1.0) -> GuardedPingClient
   ```
 
   An integration that supports several versions uses a version field and `SecretStr | None` for each secret, and builds `SnmpV2c` or `SnmpV3` from it. SNMPv3 privacy needs an auth key (the client raises `ValueError` otherwise): validate that combination in a `model_validator` so the admin sees it at save time, without echoing values. The v3 `username` is a plain `str` in `SnmpV3`, so it is stored in plaintext config.
-- **Limits.** 5 s per attempt, 2 retries, 15 s in total; `ctx.snmp_client()` passes no overrides. A timeout raises `SnmpError`; so does any other SNMP failure, with text that never contains the community or keys. `SnmpError` is not a `NetGuardError`, so in `poll()` it shows as `poll failed (SnmpError)`. In `test_connection()` catch it and return a `TestResult` yourself, with a UDP firewall hint.
+- **Limits.** 5 s per attempt, 2 retries, 15 s in total per `get()` or `walk()`. `ctx.snmp_client(..., timeout=, retries=)` may lower the first two (at most `MAX_SNMP_TIMEOUT` and `MAX_SNMP_RETRIES`, else `ValueError`); the 15 s total stays. `walk()` also refuses an answer whose OID does not increase (`SnmpBadResponse`, a subclass of `SnmpError`), so a broken agent can't make a walk loop, and never returns more than `max_rows` rows. No answer in time raises `SnmpTimeout`, a subclass of `SnmpError`; any other SNMP failure (an error report such as an unknown v3 user, an error status) raises plain `SnmpError`. Neither message contains the community or keys. `SnmpError` is not a `NetGuardError`, so uncaught in `poll()` it shows as `poll failed (SnmpTimeout)` / `poll failed (SnmpError)`: raise a `PollFailure` with a fixed message instead, as `snmp_device` does. In `test_connection()` catch them and return a `TestResult` yourself, with a UDP firewall hint for `SnmpTimeout` only (an error report means the agent answered).
+- **IF-MIB.** `builtin/ifmib.py` reads the system group and the interface tables (filter, cap, 64-bit counters with 32-bit fallback, cleaned labels) and builds the samples under a metric prefix you pass. A device profile reuses it with `IfMibOptions(extra_columns=..., port_name=...)` rather than writing its own walks.
 - **Private addresses only.** SNMP never gets the cloud exemption.
 - **Close the client** (`client.close()`, in `try/finally`) when you are done.
 - **Firewall:** `FirewallHint(protocol="udp", port=port, destination=host, reason=...)`.
 - **State which OIDs you read**, and why each is read-only, in the integration's doc file and PR.
 
-**Testing SNMP.** `netfake.py` has no SNMP fake (SNMP is UDP through pysnmp, not the HTTP socket layer). Do what `tests/test_net_guard.py` (`SnmpRecorder`) and `tests/integrations/test_base.py` do: monkeypatch `net_guard.get_cmd` and `net_guard.walk_cmd` with async stand-ins that record their arguments and return rows built from pysnmp types (`ObjectName`, `OctetString`, `Counter32`, `Integer32`, `IpAddress`, `NoSuchInstance`), so the real guard and client code still run. Assert that the recorded target is the checked address (use `fake_guards` and `netfake.DNS`), that a denied host is refused with no call recorded, that only the OIDs you intend are requested, and that the community or keys never appear in a message, label, log or response. `SnmpRecorder` is defined inside `test_net_guard.py` and cannot be imported: copy the few lines you need.
+**Several SNMP calls add up.** Each `get()`/`walk()` may take up to 15 s, but the collector cuts a whole poll off at `min(interval, 60)` s with a generic `poll timed out`. If calls x 15 s can exceed that, wrap the poll in your own shorter `asyncio.timeout` and raise a `PollFailure` that says so (`snmp_device`: `POLL_BUDGET_SECONDS`, `SnmpPollTooSlow`).
+
+**Testing SNMP.** SNMP is UDP through pysnmp, not the HTTP socket layer, so `fake_net` doesn't cover it. Use `fake_snmp` (`tests/integrations/snmpfake.py`, available to tests under `builtin/`): it monkeypatches `net_guard.get_cmd` and `net_guard.walk_cmd` with a fake agent, so the real guard and client code still run. Load an agent's MIB from a hand-written `fixtures/<name>.snmpwalk` file (`snmpwalk -On` format) with `load_walk()`, and serve it on the checked address with `fake_snmp.agent(address, mib, community=...)` (or `v3_user=`, `v3_auth_key=`, `v3_priv_key=`; `port=`; `answer_limit=` to go silent partway, `delay=` per answer, `broken_walk=` for an agent whose OIDs repeat or go backwards). The fixture also traps pysnmp's SET paths at runtime: reaching one fails the test. It emulates v1 (no Counter64, `noSuchName`), a wrong community (silence) and v3 error reports. `fake_snmp.calls` records every request: op, OIDs, checked address, port, timeout, retries, version. Assert that the target is the checked address (use `fake_guards` and `netfake.DNS`), that a denied host is refused with no call recorded, that only the OIDs you intend are requested, and that the community or keys never appear in a message, label, log or response. `test_snmp_device.py` is the template.
 
 **`poll()` and `test_connection()` must `await` all their I/O.** The scheduler cuts a poll off with `asyncio.timeout`, which can only interrupt code that is waiting at an `await`. A blocking call (`requests`, `time.sleep`, a synchronous SNMP or file read, a CPU-heavy loop) cannot be interrupted, and because everything runs on one event loop it stalls the polling of every instance and the API with it. Use `await asyncio.sleep`, not `time.sleep`, and the async clients above.
 
@@ -291,7 +294,7 @@ Contract 1 is the rule; the checks below are what `collectors/store.py` enforces
 
 - **Name**: `vantage_<type_id>_<metric>` and valid Prometheus syntax (`[a-zA-Z_][a-zA-Z0-9_]*`). Put the unit in the name (`_seconds`, `_bytes`, `_ratio`). Define them as constants, as the references do (`METRIC_SUCCESS = f"vantage_{TYPE_ID}_success"`). Names that belong to Vantage itself (`vantage_instance_up`, `vantage_poll_*`) are refused.
 - **Type**: `gauge` or `counter`. A counter is exposed with a `_total` suffix and must be finite and non-negative. Don't define a gauge `x_total` next to a counter `x`: the later family is dropped to keep the exposition valid.
-- **Labels**: add your own (`{"disk": "sda"}`) but never the four standard ones, any label starting with `__`, or an invalid label name. At most 32 labels per sample, each value at most 1024 characters. **Never put a secret, URL or free-form device text in a label value.**
+- **Labels**: add your own (`{"disk": "sda"}`) but never the four standard ones, any label starting with `__`, or an invalid label name. At most 32 labels per sample, each value at most 1024 characters. **Never put a secret, URL or free-form device text in a label value.** One exception, approved by the maintainer on 2026-10-28: exactly these four device-supplied text labels, `sys_name`, `sys_descr`, `if_descr` and `if_alias`, may carry free-form device text, and only on an **info series**: a gauge named `vantage_<type_id>_*_info` whose value is always 1. The text must be cleaned and capped first (`ifmib.clean_text`: decoded, non-printable characters replaced, whitespace collapsed, at most 128 characters, 256 for a system description). It must never appear on a value series (counters, statuses, speeds): those carry stable identifiers only (an index, or the device's short interface name `ifName`, cleaned and capped, falling back to the index, never a description), and dashboards join the info series on the identifier. A secret or URL is never allowed, info series included. `test_free_text_labels_only_on_info_series` in `test_snmp_device.py` is the template test.
 - **Limits**: at most 10 000 samples per instance per poll; a duplicate (same name and labels) is dropped. Keep label cardinality bounded.
 - **Standard labels**: the collector adds `vantage_instance_id`, `vantage_instance`, `vantage_integration` and `vantage_site` to every sample, and `/sd/targets` adds the same four to scrape targets. An instance with no site gets `vantage_site=""`; Prometheus treats an empty label as absent, so those series carry three labels. This is intended: never substitute a placeholder such as `"none"`; the UI shows "No site".
 - **Scraped exporters** keep their native metric names (`node_cpu_seconds_total`); only polled metrics use the `vantage_<type_id>_` prefix.
@@ -521,7 +524,7 @@ Copy this into the PR description and tick it.
 
 **Behaviour**
 - [ ] `poll()` raises on "no answer" with a distinctly named exception, and returns samples for "answered, but bad"
-- [ ] Metric names are `vantage_<type_id>_*` constants with units; labels bounded; no standard label, secret, URL or free text in a label
+- [ ] Metric names are `vantage_<type_id>_*` constants with units; labels bounded; no standard label, secret or URL in a label; free-form device text only on `*_info` series (value 1), cleaned and capped, and tested to be absent from every other series (section 9)
 - [ ] `scrape_targets()` is synchronous and network-free; targets are plain `host:port`
 - [ ] `test_connection()` returns a secret-free, URL-free, exception-text-free message; firewall hint on timeout and refused/unreachable
 - [ ] `firewall_hints()` names who connects and the right protocol (`icmp` has `port=None`)
@@ -583,3 +586,4 @@ Index of per-integration docs, in `type_id` order. `http_check`, `linux_host` an
 | `pfsense` | pfSense (Telegraf) | scrape-only | [`integrations/pfsense.md`](integrations/pfsense.md) |
 | `ping_check` | Ping check | polled over ICMP | [`integrations/ping_check.md`](integrations/ping_check.md) |
 | `smart_exporter` | SMART disk health (smartctl_exporter) | scrape-only | [`integrations/smart_exporter.md`](integrations/smart_exporter.md) |
+| `snmp_device` | SNMP device | polled (SNMP) | [`integrations/snmp_device.md`](integrations/snmp_device.md) |

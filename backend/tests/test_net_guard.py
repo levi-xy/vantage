@@ -19,6 +19,8 @@ import httpcore
 import httpx
 import pytest
 from pydantic import SecretStr
+from pysnmp.hlapi.v3arch.asyncio import cmdgen as hlapi_cmdgen
+from pysnmp.proto import errind
 from pysnmp.proto.rfc1902 import Counter32, Integer32, IpAddress, ObjectName, OctetString
 from pysnmp.proto.rfc1905 import NoSuchInstance
 
@@ -37,7 +39,10 @@ from app.core.net_guard import (
     NetGuardError,
     NetPolicy,
     PingError,
+    SnmpBadResponse,
     SnmpError,
+    SnmpTimeout,
+    SnmpV1,
     SnmpV2c,
     SnmpV3,
     check_address,
@@ -850,10 +855,134 @@ async def test_snmp_total_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
         NetGuard(resolver=no_resolver), "10.0.0.20", v2c(), total_timeout=0.1
     )
     try:
-        with pytest.raises(SnmpError):
+        with pytest.raises(SnmpTimeout):
             await asyncio.wait_for(client.get(["1.3.6.1.2.1.1.1.0"]), 5)
     finally:
         client.close()
+
+
+async def test_snmp_request_timed_out_is_a_timeout(snmp: SnmpRecorder) -> None:
+    # pysnmp reports "no response after the retries" as an error indication.
+    snmp.error = errind.RequestTimedOut()
+    client = GuardedSnmpClient(NetGuard(resolver=no_resolver), "10.0.0.20", v2c())
+    try:
+        with pytest.raises(SnmpTimeout) as info:
+            await client.get(["1.3.6.1.2.1.1.1.0"])
+    finally:
+        client.close()
+    assert isinstance(info.value, SnmpError)  # callers catching SnmpError still do
+    assert FAKE_COMMUNITY not in str(info.value)
+
+
+async def test_snmp_walk_timeout_partway(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def walk_cmd(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        yield None, 0, 0, ((ObjectName("1.3.6.1.2.1.2.2.1.2.1"), OctetString(b"eth0")),)
+        yield errind.RequestTimedOut(), 0, 0, ()
+
+    monkeypatch.setattr(net_guard, "walk_cmd", walk_cmd)
+    client = GuardedSnmpClient(NetGuard(resolver=no_resolver), "10.0.0.20", v2c())
+    try:
+        with pytest.raises(SnmpTimeout):
+            await client.walk("1.3.6.1.2.1.2.2.1.2")
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize(
+    "answers",
+    [
+        # The same OID again and again (pysnmp's own walk loop would keep going).
+        ["1.3.6.1.2.1.2.2.1.2.1", "1.3.6.1.2.1.2.2.1.2.1"],
+        # Going backwards inside the subtree.
+        ["1.3.6.1.2.1.2.2.1.2.5", "1.3.6.1.2.1.2.2.1.2.3"],
+        # Not past the starting OID at all.
+        ["1.3.6.1.2.1.2.2.1.2"],
+    ],
+)
+async def test_snmp_walk_refuses_non_increasing_oids(
+    monkeypatch: pytest.MonkeyPatch, answers: list[str]
+) -> None:
+    """pysnmp's real walk_cmd, fed by a broken agent through its next_cmd: the client
+    stops at the first OID that doesn't increase, quickly and with a clean error."""
+    calls = 0
+
+    async def next_cmd(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        oid = answers[min(calls - 1, len(answers) - 1)]  # then repeats the last forever
+        return None, 0, 0, [(ObjectName(oid), OctetString(b"eth0"))]
+
+    monkeypatch.setattr(hlapi_cmdgen, "next_cmd", next_cmd)
+    client = GuardedSnmpClient(NetGuard(resolver=no_resolver), "10.0.0.20", v2c())
+    try:
+        with pytest.raises(SnmpBadResponse) as info:
+            await asyncio.wait_for(client.walk("1.3.6.1.2.1.2.2.1.2", max_rows=10_000), 5)
+    finally:
+        client.close()
+    assert calls == len(answers)  # stopped at the first bad row
+    assert isinstance(info.value, SnmpError)
+    assert FAKE_COMMUNITY not in str(info.value)
+
+
+async def test_snmp_walk_enforces_max_rows_itself(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Even if the walk generator yielded more than asked, the client keeps max_rows.
+    async def walk_cmd(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        for i in range(1, 100):
+            yield None, 0, 0, ((ObjectName(f"1.3.6.1.2.1.2.2.1.2.{i}"), OctetString(b"x")),)
+
+    monkeypatch.setattr(net_guard, "walk_cmd", walk_cmd)
+    client = GuardedSnmpClient(NetGuard(resolver=no_resolver), "10.0.0.20", v2c())
+    try:
+        rows = await client.walk("1.3.6.1.2.1.2.2.1.2", max_rows=3)
+        with pytest.raises(ValueError):
+            await client.walk("1.3.6.1.2.1.2.2.1.2", max_rows=0)
+    finally:
+        client.close()
+    assert [r.oid for r in rows] == [f"1.3.6.1.2.1.2.2.1.2.{i}" for i in (1, 2, 3)]
+
+
+def test_snmp_client_defaults_match_the_context_caps() -> None:
+    # ctx.snmp_client may only lower these: its defaults are the client's own.
+    defaults = inspect.signature(GuardedSnmpClient.__init__).parameters
+    assert defaults["timeout"].default == DEFAULT_CONNECT_TIMEOUT == net_guard.MAX_SNMP_TIMEOUT
+    assert defaults["retries"].default == 2 == net_guard.MAX_SNMP_RETRIES
+    assert defaults["total_timeout"].default == DEFAULT_TOTAL_TIMEOUT
+
+
+async def test_snmp_other_errors_are_not_timeouts(snmp: SnmpRecorder) -> None:
+    snmp.error = errind.UnknownUserName()
+    client = GuardedSnmpClient(NetGuard(resolver=no_resolver), "10.0.0.20", v2c())
+    try:
+        with pytest.raises(SnmpError) as info:
+            await client.get(["1.3.6.1.2.1.1.1.0"])
+    finally:
+        client.close()
+    assert not isinstance(info.value, SnmpTimeout)
+
+
+@pytest.mark.parametrize(("auth", "mp_model"), [(SnmpV1, 0), (SnmpV2c, 1)])
+async def test_snmp_v1_and_v2c_auth(
+    snmp: SnmpRecorder, auth: type[SnmpV1 | SnmpV2c], mp_model: int
+) -> None:
+    client = GuardedSnmpClient(
+        NetGuard(resolver=no_resolver), "10.0.0.20", auth(community=SecretStr(FAKE_COMMUNITY))
+    )
+    try:
+        await client.get(["1.3.6.1.2.1.1.1.0"])
+    finally:
+        client.close()
+    data = snmp.calls[0][1]
+    assert data.message_processing_model == mp_model
+    assert snmp.calls[0][2].transport_address == ("10.0.0.20", 161)
+    assert FAKE_COMMUNITY not in repr(client.__dict__)
+
+
+async def test_snmp_v1_denied_hosts(snmp: SnmpRecorder) -> None:
+    auth = SnmpV1(community=SecretStr(FAKE_COMMUNITY))
+    client = GuardedSnmpClient(NetGuard(resolver=no_resolver), "169.254.169.254", auth)
+    with pytest.raises(NetGuardError):
+        await client.walk("1.3.6.1.2.1.2.2")
+    assert snmp.calls == []
 
 
 def test_snmp_v3_auth() -> None:

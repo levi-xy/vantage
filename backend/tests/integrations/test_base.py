@@ -7,7 +7,15 @@ import pytest
 from pydantic import SecretStr, ValidationError
 
 from app.core import net_guard
-from app.core.net_guard import GuardedTransport, NetGuard, NetGuardError, SnmpV2c
+from app.core.net_guard import (
+    MAX_SNMP_RETRIES,
+    MAX_SNMP_TIMEOUT,
+    GuardedTransport,
+    NetGuard,
+    NetGuardError,
+    SnmpV1,
+    SnmpV2c,
+)
 from app.integrations.base import (
     CardSpec,
     Category,
@@ -148,3 +156,33 @@ async def test_snmp_client_goes_through_net_guard(monkeypatch: pytest.MonkeyPatc
         await client.get(["1.3.6.1.2.1.1.1.0"])
     assert FAKE_COMMUNITY not in str(exc.value)
     assert calls == []
+
+
+async def test_snmp_client_timeouts_are_capped(monkeypatch: pytest.MonkeyPatch) -> None:
+    targets: list[Any] = []
+
+    async def get_cmd(*args: Any, **kwargs: Any) -> Any:
+        targets.append(args[2])
+        return None, 0, 0, []
+
+    async def private_resolver(host: str, port: int) -> list[str]:
+        return ["10.0.0.20"]
+
+    monkeypatch.setattr(net_guard, "get_cmd", get_cmd)
+    ctx = make_ctx(net_guard=NetGuard(resolver=private_resolver))
+    auth = SnmpV1(community=SecretStr(FAKE_COMMUNITY))
+    client = ctx.snmp_client("10.0.0.20", auth, port=1161, timeout=1.5, retries=0)
+    try:
+        await client.get(["1.3.6.1.2.1.1.1.0"])
+    finally:
+        client.close()
+    assert (targets[0].timeout, targets[0].retries) == (1.5, 0)
+    assert targets[0].transport_address == ("10.0.0.20", 1161)
+    for bad in (
+        {"timeout": MAX_SNMP_TIMEOUT + 0.1},
+        {"timeout": 0},
+        {"retries": MAX_SNMP_RETRIES + 1},
+        {"retries": -1},
+    ):
+        with pytest.raises(ValueError):
+            ctx.snmp_client("10.0.0.20", auth, **bad)
