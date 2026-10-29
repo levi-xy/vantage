@@ -210,8 +210,13 @@ class Interface:
 
 
 def default_port_name(interface: Interface) -> str:
-    """ifName, else ifDescr, else ``if<ifIndex>``."""
-    return interface.name or interface.descr or f"if{interface.index}"
+    """ifName (cleaned and capped), else ``if<ifIndex>``.
+
+    Never ifDescr: the port name is a label on every value series, and free-form device
+    text may only be a label on ``*_info`` series (maintainer decision, 2026-10-28).
+    ifDescr is on ``if_info`` as ``if_descr``.
+    """
+    return interface.name or f"if{interface.index}"
 
 
 @dataclass(frozen=True)

@@ -482,18 +482,19 @@ async def test_poll_routeros(fake_snmp: FakeSnmp) -> None:
 async def test_poll_without_ifxtable(fake_snmp: FakeSnmp) -> None:
     serve(fake_snmp, "snmp_no_ifxtable")
     got = by_name(await run_poll(v2c()))
-    # No ifName: the port is named by ifDescr (NUL padding dropped). 32-bit counters.
-    assert got[("if_in_bytes", "port 1")].value == 4_294_967_000.0
-    assert got[("if_counters_64bit", "port 1")].value == 0.0
-    assert got[("if_info", "port 2")].labels == {
+    # No ifName: the port is named by its index; ifDescr (NUL padding dropped) is
+    # only on if_info. 32-bit counters.
+    assert got[("if_in_bytes", "if1")].value == 4_294_967_000.0
+    assert got[("if_counters_64bit", "if1")].value == 0.0
+    assert got[("if_info", "if2")].labels == {
         "if_index": "2",
-        "if_name": "port 2",
+        "if_name": "if2",
         "if_descr": "port 2",
         "if_alias": "",
     }
     # ifSpeed, including a link under 1 Mbit/s.
-    assert got[("if_speed_bits_per_second", "port 1")].value == 100e6
-    assert got[("if_speed_bits_per_second", "port 2")].value == 64000.0
+    assert got[("if_speed_bits_per_second", "if1")].value == 100e6
+    assert got[("if_speed_bits_per_second", "if2")].value == 64000.0
     # ifName came back empty, so no other ifXTable column was walked.
     walked = fake_snmp.walked()
     assert ifmib.IF_X_TABLE["name"] in walked
@@ -670,6 +671,21 @@ async def test_poll_device_text_is_cleaned_and_bounded(fake_snmp: FakeSnmp) -> N
     assert got[("info", "")].labels["sys_name"] == ""
 
 
+async def test_no_ifxtable_keeps_ifdescr_off_value_series(fake_snmp: FakeSnmp) -> None:
+    """Without ifName the port name falls back to the index, never to ifDescr: the
+    description text appears only on if_info (free text on *_info series only)."""
+    serve(fake_snmp, "snmp_no_ifxtable")
+    samples = await run_poll(v2c())
+    descrs = {"port 1", "port 2"}
+    value_series = [s for s in samples if not s.name.endswith("_info")]
+    assert value_series
+    for sample in value_series:
+        assert not descrs & set(sample.labels.values()), (sample.name, sample.labels)
+    info = [s for s in samples if s.name == f"{PREFIX}_if_info"]
+    assert {s.labels["if_descr"] for s in info} == descrs
+    assert {s.labels["if_name"] for s in info} == {"if1", "if2"}
+
+
 async def test_poll_ignores_malformed_rows(fake_snmp: FakeSnmp) -> None:
     mib = load_walk("snmp_no_ifxtable")
     mib[f"{ifmib.IF_TABLE['descr']}.3.1"] = OctetString(b"two-part index")  # not an ifIndex
@@ -677,8 +693,8 @@ async def test_poll_ignores_malformed_rows(fake_snmp: FakeSnmp) -> None:
     fake_snmp.agent(ADDRESS, mib, community=COMMUNITY)
     got = by_name(await run_poll(v2c()))
     assert got[("interfaces", "")].value == 2.0
-    assert ("if_in_bytes", "port 2") not in got  # a non-numeric counter is skipped
-    assert ("if_out_bytes", "port 2") in got
+    assert ("if_in_bytes", "if2") not in got  # a non-numeric counter is skipped
+    assert ("if_out_bytes", "if2") in got
 
 
 async def test_poll_system_only_agent(fake_snmp: FakeSnmp) -> None:
