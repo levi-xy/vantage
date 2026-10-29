@@ -1,4 +1,4 @@
-import type { InstanceStatus } from "../api";
+import type { Instance, InstanceStatus } from "../api";
 import type { CardProps } from "./registry";
 
 const STATE_LABELS: Record<InstanceStatus["state"], string> = {
@@ -15,15 +15,11 @@ const STATE_STYLES: Record<InstanceStatus["state"], string> = {
   unknown: "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
 };
 
-/** Shown for card types that have no component yet: the instance, its status, the title. */
-export function PlaceholderCard({ title, instance }: CardProps) {
+/** The instance's status as a coloured badge, with the collector's short error if any. */
+export function StatusBadge({ instance }: { instance: Instance | undefined }) {
   const state = instance?.status.state ?? "unknown";
   return (
-    <div className="flex h-full flex-col gap-1 overflow-hidden p-4">
-      <span className="text-xs tracking-wide text-slate-500 uppercase dark:text-slate-400">
-        {title}
-      </span>
-      <span className="font-medium break-all">{instance?.name ?? "Unknown device"}</span>
+    <>
       <span
         className={`inline-flex w-fit rounded px-2 py-0.5 text-xs font-medium ${STATE_STYLES[state]}`}
       >
@@ -33,6 +29,19 @@ export function PlaceholderCard({ title, instance }: CardProps) {
       {instance?.status.error && (
         <span className="text-xs text-red-700 dark:text-red-400">{instance.status.error}</span>
       )}
+    </>
+  );
+}
+
+/** Shown for card types that have no component yet: the instance, its status, the title. */
+export function PlaceholderCard({ title, instance }: CardProps) {
+  return (
+    <div className="flex h-full flex-col gap-1 overflow-hidden p-4">
+      <span className="text-xs tracking-wide text-slate-500 uppercase dark:text-slate-400">
+        {title}
+      </span>
+      <span className="font-medium break-all">{instance?.name ?? "Unknown device"}</span>
+      <StatusBadge instance={instance} />
     </div>
   );
 }

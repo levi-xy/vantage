@@ -1,6 +1,10 @@
 import type { ComponentType } from "react";
 import type { Instance } from "../api";
+import { HttpCheckCard } from "./http-check/HttpCheckCard";
+import { LinuxHostCard } from "./linux-host/LinuxHostCard";
+import { PingCheckCard } from "./ping-check/PingCheckCard";
 import { PlaceholderCard } from "./PlaceholderCard";
+import { SmartDisksCard } from "./smart-disks/SmartDisksCard";
 
 /** What every card receives. Cards fetch their data only through the typed API client. */
 export interface CardProps {
@@ -16,7 +20,12 @@ export interface CardProps {
  * Card components by `card_type` (the name the integration declares in its `CardSpec`).
  * Card types without an entry render `PlaceholderCard`. Register a card by adding it here.
  */
-const CARD_COMPONENTS: Readonly<Record<string, ComponentType<CardProps>>> = {};
+const CARD_COMPONENTS: Readonly<Record<string, ComponentType<CardProps>>> = {
+  "http-check": HttpCheckCard,
+  "linux-host": LinuxHostCard,
+  "ping-check": PingCheckCard,
+  "smart-disks": SmartDisksCard,
+};
 
 export function cardComponent(cardType: string): ComponentType<CardProps> {
   return Object.hasOwn(CARD_COMPONENTS, cardType)
