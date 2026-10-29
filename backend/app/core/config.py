@@ -8,10 +8,13 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import lru_cache
+from urllib.parse import urlsplit
 
 from app.core.client_address import IPNetwork, TrustedProxiesError, parse_trusted_proxies
 
 DEFAULT_DATABASE_URL = "sqlite:///./vantage.db"
+# The bundled Prometheus on the compose network (deploy/docker-compose.yml).
+DEFAULT_PROMETHEUS_URL = "http://prometheus:9090"
 
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off", ""}
@@ -35,6 +38,9 @@ class Settings:
     # Reverse proxies whose X-Real-IP header names the real client (VANTAGE_TRUSTED_PROXIES).
     # Empty = trust nobody: the client address is always the TCP peer.
     trusted_proxies: tuple[IPNetwork, ...] = ()
+    # Where the /query proxy reaches Prometheus (VANTAGE_PROMETHEUS_URL). Server config only:
+    # no request can change it.
+    prometheus_url: str = DEFAULT_PROMETHEUS_URL
 
 
 def _parse_bool(name: str, raw: str) -> bool:
@@ -78,6 +84,24 @@ def _validate_database_url(url: str) -> str:
     return url
 
 
+def _validate_prometheus_url(raw: str) -> str:
+    url = raw.strip().rstrip("/") or DEFAULT_PROMETHEUS_URL
+    parts = urlsplit(url)
+    if (
+        parts.scheme not in ("http", "https")
+        or not parts.hostname
+        or parts.username is not None
+        or parts.password is not None
+        or parts.query
+        or parts.fragment
+    ):
+        # Don't echo the URL: a mistyped one may carry credentials.
+        raise ConfigError(
+            "VANTAGE_PROMETHEUS_URL must be an http:// or https:// URL without credentials"
+        )
+    return url
+
+
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     env = os.environ if env is None else env
     database_url = _validate_database_url(
@@ -97,6 +121,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         trusted_proxies = parse_trusted_proxies(env.get("VANTAGE_TRUSTED_PROXIES", ""))
     except TrustedProxiesError as exc:
         raise ConfigError(str(exc)) from None
+    prometheus_url = _validate_prometheus_url(env.get("VANTAGE_PROMETHEUS_URL", ""))
     return Settings(
         database_url=database_url,
         api_docs=api_docs,
@@ -104,6 +129,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         session_max_hours=session_max_hours,
         session_idle_minutes=session_idle_minutes,
         trusted_proxies=trusted_proxies,
+        prometheus_url=prometheus_url,
     )
 
 

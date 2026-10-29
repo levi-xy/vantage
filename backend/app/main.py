@@ -20,9 +20,11 @@ from app.core.config import Settings, get_settings
 from app.core.crypto import SecretBox, load_master_key
 from app.core.db import make_engine, make_session_factory
 from app.core.login_failures import UserLoginFailures
+from app.core.net_guard import NetGuard, NetPolicy
 from app.core.prometheus_auth import PrometheusToken, load_prometheus_token
 from app.integrations.instance_config import NetGuardFactory, default_net_guard_factory
 from app.integrations.registry import Registry, builtin_registry
+from app.query.proxy import PrometheusClient
 from app.sd.targets import router as sd_router
 
 
@@ -34,6 +36,7 @@ def create_app(
     registry: Registry | None = None,
     net_guard_factory: NetGuardFactory | None = None,
     prometheus_token: PrometheusToken | None = None,
+    prometheus_client: PrometheusClient | None = None,
 ) -> FastAPI:
     """Build the app. Run with ``uvicorn --factory app.main:create_app``.
 
@@ -54,6 +57,7 @@ def create_app(
             yield
         finally:
             await poller.stop()
+            await app.state.prometheus.aclose()
             engine.dispose()
 
     # Interactive API docs are off unless VANTAGE_API_DOCS is set (development only).
@@ -81,6 +85,11 @@ def create_app(
     # Tests inject a guard with a fake resolver; production uses the default policy.
     app.state.net_guard_factory = net_guard_factory or default_net_guard_factory
     app.state.prometheus_token = prometheus_token
+    # PromQL proxy (M5.1): the URL comes from server config only, never from a request.
+    # Through net_guard with the default policy, like every outbound connection.
+    app.state.prometheus = prometheus_client or PrometheusClient.guarded(
+        settings.prometheus_url, NetGuard(NetPolicy())
+    )
     # Poll collector (M2.4): results kept in memory, served on /metrics.
     app.state.metrics_store = MetricsStore()
     app.state.metrics_registry = make_registry(app.state.metrics_store)
