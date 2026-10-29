@@ -12,7 +12,8 @@ nothing else: no SET, ever (Hard rule 2). Every OID read is listed in
 
 Uptime: sysUpTime is the SNMP agent's uptime, not the device's (VyOS, for one, restarts
 snmpd on every config commit). hrSystemUptime (HOST-RESOURCES-MIB) is the host's, so it
-is read in the same GET and preferred where the agent has it; switches often don't.
+is read in the same GET (a second GET on v1) and preferred where the agent has it;
+switches often don't.
 
 How a poll reads the interfaces, and why:
 
@@ -203,7 +204,9 @@ async def read_system(client: GuardedSnmpClient, *, v1: bool = False) -> SystemI
     except SnmpTimeout:
         raise
     except SnmpError:
-        pass  # noSuchName: the agent has no hrSystemUptime
+        # The first GET already proved the agent answers with these credentials, so an
+        # error answer here is the v1 noSuchName for hrSystemUptime: treat it as absent.
+        pass
     return parse_system(rows)
 
 

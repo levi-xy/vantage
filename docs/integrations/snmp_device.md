@@ -53,6 +53,8 @@ A poll is one GET (two on v1) and up to 15 walks, one per column. `ifDescr` read
 | `if_oper_status`, `if_admin_status` | gauge | `if_index`, `if_name` | the raw IF-MIB value: 1 up, 2 down, 3 testing, 4 unknown, 5 dormant, 6 notPresent, 7 lowerLayerDown |
 | `if_speed_bits_per_second` | gauge | `if_index`, `if_name` | ifHighSpeed × 10⁶ when it isn't 0; otherwise ifSpeed |
 
+Because of its `source` label, `uptime_seconds` starts a new series if an agent's hrSystemUptime comes and goes. A reboot alert should therefore use `agent_uptime_seconds` or `sum without(source) (vantage_snmp_device_uptime_seconds)`, so a flapping hrSystemUptime doesn't split the series and fire a false alert.
+
 `if_name` is the device's `ifName`, cleaned and capped; without one (no ifXTable, or an empty ifName) it is `if<ifIndex>`, never ifDescr. Free-form device text (`if_descr`, `if_alias`, `sys_name`, `sys_descr`) appears only on the `info` and `if_info` series (value 1), under the exception the maintainer approved on 2026-10-28 (INTEGRATIONS.md section 9). It never appears on a value series, so renaming a port on the device doesn't split its counter series. Join on `if_index` to show them. All device text is cleaned before it becomes a label: decoded as UTF-8, NULs dropped, control and other non-printable characters replaced, whitespace collapsed, at most 128 characters. Counter wrap and agent restarts are left to Prometheus (`rate()` handles resets). An interface switching between 32-bit and 64-bit counters looks like a reset.
 
 **Status and failures:** the instance goes `down` with:

@@ -556,6 +556,17 @@ async def test_poll_v1_without_hr_mib_falls_back(fake_snmp: FakeSnmp) -> None:
     assert got[("agent_uptime_seconds", "")].value == 3600.0
 
 
+async def test_poll_v1_timeout_on_hr_uptime_get_fails(fake_snmp: FakeSnmp) -> None:
+    # Only an error answer counts as "absent": silence on the second v1 GET fails the poll.
+    serve(fake_snmp)
+    fake_snmp.agents[ADDRESS].answer_limit = 1  # answers the MIB-II GET, then silence
+    with pytest.raises(SnmpNoResponse):
+        await run_poll(v2c(version="1"))
+    gets = [c.oids for c in fake_snmp.calls if c.op == "get"]
+    assert gets == [ifmib.MIB2_SYSTEM_OIDS, (ifmib.HR_SYSTEM_UPTIME,)]
+    assert fake_snmp.walked() == []
+
+
 @pytest.mark.parametrize("value", [TimeTicks(0), OctetString(b"12345"), Integer32(-1)])
 async def test_poll_invalid_hr_uptime_falls_back(fake_snmp: FakeSnmp, value: Any) -> None:
     mib = load_walk("snmp_netsnmp_linux")
@@ -713,8 +724,9 @@ async def test_poll_stops_a_walk_whose_oids_do_not_increase(fake_snmp: FakeSnmp,
 
 
 def test_poll_budget_fits_the_collector_timeout() -> None:
-    # Worst case without a budget: one GET and 15 walks, each up to the client's 15 s.
-    unbudgeted = (1 + 15) * DEFAULT_TOTAL_TIMEOUT
+    # Worst case without a budget: two GETs (v1 reads hrSystemUptime on its own) and 15
+    # walks, each up to the client's 15 s.
+    unbudgeted = (2 + 15) * DEFAULT_TOTAL_TIMEOUT
     assert unbudgeted > MAX_POLL_TIMEOUT_SECONDS  # which is why the budget exists
     # The budget ends the poll first, with its own message, inside the collector's
     # cut-off of min(interval, 60) s.
