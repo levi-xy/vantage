@@ -80,6 +80,7 @@ from pysnmp.hlapi.v3arch.asyncio import (
     get_cmd,
     walk_cmd,
 )
+from pysnmp.proto import errind
 from pysnmp.proto.rfc1902 import IpAddress
 
 IPAddress = IPv4Address | IPv6Address
@@ -603,6 +604,23 @@ class SnmpError(Exception):
     """An SNMP request failed. The message never contains the community or keys."""
 
 
+class SnmpTimeout(SnmpError):
+    """No SNMP response in time: the per-request retries ran out, or the total limit
+    was reached. Usually a firewall, a wrong port, or (v1/v2c) a wrong community, which
+    agents answer with silence."""
+
+
+# Caps for the per-attempt timeout and retries a caller may ask for. Whatever is asked,
+# one get() or walk() also stops after the client's total limit (15 s by default).
+MAX_SNMP_TIMEOUT = DEFAULT_CONNECT_TIMEOUT
+MAX_SNMP_RETRIES = 2
+
+
+@dataclass(frozen=True)
+class SnmpV1:
+    community: SecretStr
+
+
 @dataclass(frozen=True)
 class SnmpV2c:
     community: SecretStr
@@ -687,7 +705,7 @@ class GuardedSnmpClient:
         self,
         guard: NetGuard,
         host: str,
-        auth: SnmpV2c | SnmpV3,
+        auth: SnmpV1 | SnmpV2c | SnmpV3,
         *,
         port: int = 161,
         timeout: float = DEFAULT_CONNECT_TIMEOUT,
@@ -707,6 +725,8 @@ class GuardedSnmpClient:
 
     def _auth_data(self) -> Any:
         auth = self._auth
+        if isinstance(auth, SnmpV1):
+            return CommunityData(auth.community.get_secret_value(), mpModel=0)  # noqa: S508 - for devices that offer nothing newer; v3 is supported
         if isinstance(auth, SnmpV2c):
             return CommunityData(auth.community.get_secret_value(), mpModel=1)  # noqa: S508 - v2c is what most devices offer; v3 is supported
         auth_key = auth.auth_key.get_secret_value() if auth.auth_key else None
@@ -754,7 +774,7 @@ class GuardedSnmpClient:
                     lookupMib=False,
                 )
         except TimeoutError:
-            raise SnmpError("SNMP request timed out") from None
+            raise SnmpTimeout("SNMP request timed out") from None
         _raise_for_errors(error_indication, error_status)
         return [SnmpVarBind(str(name), _convert(value)) for name, value in result]
 
@@ -778,7 +798,7 @@ class GuardedSnmpClient:
                     _raise_for_errors(error_indication, error_status)
                     rows.extend(SnmpVarBind(str(n), _convert(v)) for n, v in result)
         except TimeoutError:
-            raise SnmpError("SNMP walk timed out") from None
+            raise SnmpTimeout("SNMP walk timed out") from None
         return rows
 
     def close(self) -> None:
@@ -788,6 +808,8 @@ class GuardedSnmpClient:
 
 
 def _raise_for_errors(error_indication: Any, error_status: Any) -> None:
+    if isinstance(error_indication, errind.RequestTimedOut):
+        raise SnmpTimeout("SNMP request timed out (no response after retries)")
     if error_indication:
         raise SnmpError(f"SNMP error: {error_indication}")
     if error_status:

@@ -186,7 +186,7 @@ All outbound traffic goes through `net_guard` (Hard rule 5, Contract 5). The con
 
 ```python
 ctx.http_client(*, verify=True, base_url="", headers=None) -> httpx.AsyncClient
-ctx.snmp_client(host, auth, *, port=161) -> GuardedSnmpClient    # auth: SnmpV2c | SnmpV3
+ctx.snmp_client(host, auth, *, port=161, timeout=5.0, retries=2) -> GuardedSnmpClient    # auth: SnmpV1 | SnmpV2c | SnmpV3
 ctx.ping_client(host, *, count=3, reply_timeout=1.0) -> GuardedPingClient
 ```
 
@@ -200,7 +200,7 @@ ctx.ping_client(host, *, count=3, reply_timeout=1.0) -> GuardedPingClient
 
 ### SNMP
 
-`ctx.snmp_client(host, auth, port=161)` returns a `GuardedSnmpClient` (`net_guard.py`). `auth` is `SnmpV2c(community=SecretStr)` or `SnmpV3(username, auth_key, priv_key, auth_protocol, priv_protocol)`; both are importable from `app.core.net_guard`.
+`ctx.snmp_client(host, auth, port=161)` returns a `GuardedSnmpClient` (`net_guard.py`). `auth` is `SnmpV1(community=SecretStr)`, `SnmpV2c(community=SecretStr)` or `SnmpV3(username, auth_key, priv_key, auth_protocol, priv_protocol)`; all three are importable from `app.core.net_guard`.
 
 - **Read-only by construction.** The client exposes `get(oids)` and `walk(oid, max_rows=10_000)` and nothing else: no `set`. `test_snmp_is_read_only` in `tests/test_net_guard.py` fails if a write operation appears. `walk` stays inside the subtree you ask for.
 - **OIDs are numeric** (`"1.3.6.1.2.1.2.2.1.10"`; a leading dot is accepted). Symbolic names raise `ValueError`; there is no MIB lookup. Both calls return `SnmpVarBind(oid, value)` where `value` is an `int` (counters, gauges, ticks), a `str` (OIDs, IP addresses), `bytes` (octet strings) or `None` (noSuchObject, noSuchInstance, endOfMibView). Octet strings are device-supplied: decode defensively and bound what you put in a label.
@@ -216,13 +216,14 @@ ctx.ping_client(host, *, count=3, reply_timeout=1.0) -> GuardedPingClient
   ```
 
   An integration that supports several versions uses a version field and `SecretStr | None` for each secret, and builds `SnmpV2c` or `SnmpV3` from it. SNMPv3 privacy needs an auth key (the client raises `ValueError` otherwise): validate that combination in a `model_validator` so the admin sees it at save time, without echoing values. The v3 `username` is a plain `str` in `SnmpV3`, so it is stored in plaintext config.
-- **Limits.** 5 s per attempt, 2 retries, 15 s in total; `ctx.snmp_client()` passes no overrides. A timeout raises `SnmpError`; so does any other SNMP failure, with text that never contains the community or keys. `SnmpError` is not a `NetGuardError`, so in `poll()` it shows as `poll failed (SnmpError)`. In `test_connection()` catch it and return a `TestResult` yourself, with a UDP firewall hint.
+- **Limits.** 5 s per attempt, 2 retries, 15 s in total per `get()` or `walk()`. `ctx.snmp_client(..., timeout=, retries=)` may lower the first two (at most `MAX_SNMP_TIMEOUT` and `MAX_SNMP_RETRIES`, else `ValueError`); the 15 s total stays. No answer in time raises `SnmpTimeout`, a subclass of `SnmpError`; any other SNMP failure (an error report such as an unknown v3 user, an error status) raises plain `SnmpError`. Neither message contains the community or keys. `SnmpError` is not a `NetGuardError`, so uncaught in `poll()` it shows as `poll failed (SnmpTimeout)` / `poll failed (SnmpError)`: raise a `PollFailure` with a fixed message instead, as `snmp_device` does. In `test_connection()` catch them and return a `TestResult` yourself, with a UDP firewall hint for `SnmpTimeout` only (an error report means the agent answered).
+- **IF-MIB.** `builtin/ifmib.py` reads the system group and the interface tables (filter, cap, 64-bit counters with 32-bit fallback, cleaned labels) and builds the samples under a metric prefix you pass. A device profile reuses it with `IfMibOptions(extra_columns=..., port_name=...)` rather than writing its own walks.
 - **Private addresses only.** SNMP never gets the cloud exemption.
 - **Close the client** (`client.close()`, in `try/finally`) when you are done.
 - **Firewall:** `FirewallHint(protocol="udp", port=port, destination=host, reason=...)`.
 - **State which OIDs you read**, and why each is read-only, in the integration's doc file and PR.
 
-**Testing SNMP.** `netfake.py` has no SNMP fake (SNMP is UDP through pysnmp, not the HTTP socket layer). Do what `tests/test_net_guard.py` (`SnmpRecorder`) and `tests/integrations/test_base.py` do: monkeypatch `net_guard.get_cmd` and `net_guard.walk_cmd` with async stand-ins that record their arguments and return rows built from pysnmp types (`ObjectName`, `OctetString`, `Counter32`, `Integer32`, `IpAddress`, `NoSuchInstance`), so the real guard and client code still run. Assert that the recorded target is the checked address (use `fake_guards` and `netfake.DNS`), that a denied host is refused with no call recorded, that only the OIDs you intend are requested, and that the community or keys never appear in a message, label, log or response. `SnmpRecorder` is defined inside `test_net_guard.py` and cannot be imported: copy the few lines you need.
+**Testing SNMP.** SNMP is UDP through pysnmp, not the HTTP socket layer, so `fake_net` doesn't cover it. Use `fake_snmp` (`tests/integrations/snmpfake.py`, available to tests under `builtin/`): it monkeypatches `net_guard.get_cmd` and `net_guard.walk_cmd` with a fake agent, so the real guard and client code still run. Load an agent's MIB from a hand-written `fixtures/<name>.snmpwalk` file (`snmpwalk -On` format) with `load_walk()`, and serve it on the checked address with `fake_snmp.agent(address, mib, community=...)` (or `v3_user=`, `v3_auth_key=`, `v3_priv_key=`; `port=`; `answer_limit=` to go silent partway). It emulates v1 (no Counter64, `noSuchName`), a wrong community (silence) and v3 error reports. `fake_snmp.calls` records every request: op, OIDs, checked address, port, timeout, retries, version. Assert that the target is the checked address (use `fake_guards` and `netfake.DNS`), that a denied host is refused with no call recorded, that only the OIDs you intend are requested, and that the community or keys never appear in a message, label, log or response. `test_snmp_device.py` is the template.
 
 **`poll()` and `test_connection()` must `await` all their I/O.** The scheduler cuts a poll off with `asyncio.timeout`, which can only interrupt code that is waiting at an `await`. A blocking call (`requests`, `time.sleep`, a synchronous SNMP or file read, a CPU-heavy loop) cannot be interrupted, and because everything runs on one event loop it stalls the polling of every instance and the API with it. Use `await asyncio.sleep`, not `time.sleep`, and the async clients above.
 
@@ -583,3 +584,4 @@ Index of per-integration docs, in `type_id` order. `http_check`, `linux_host` an
 | `pfsense` | pfSense (Telegraf) | scrape-only | [`integrations/pfsense.md`](integrations/pfsense.md) |
 | `ping_check` | Ping check | polled over ICMP | [`integrations/ping_check.md`](integrations/ping_check.md) |
 | `smart_exporter` | SMART disk health (smartctl_exporter) | scrape-only | [`integrations/smart_exporter.md`](integrations/smart_exporter.md) |
+| `snmp_device` | SNMP device | polled (SNMP) | [`integrations/snmp_device.md`](integrations/snmp_device.md) |

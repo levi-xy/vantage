@@ -15,10 +15,14 @@ import httpx
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from app.core.net_guard import (
+    DEFAULT_CONNECT_TIMEOUT,
+    MAX_SNMP_RETRIES,
+    MAX_SNMP_TIMEOUT,
     PING_INTERVAL,
     GuardedPingClient,
     GuardedSnmpClient,
     NetGuard,
+    SnmpV1,
     SnmpV2c,
     SnmpV3,
     guarded_http_client,
@@ -127,10 +131,28 @@ class InstanceContext:
         )
 
     def snmp_client(
-        self, host: str, auth: SnmpV2c | SnmpV3, *, port: int = 161
+        self,
+        host: str,
+        auth: SnmpV1 | SnmpV2c | SnmpV3,
+        *,
+        port: int = 161,
+        timeout: float = DEFAULT_CONNECT_TIMEOUT,
+        retries: int = 2,
     ) -> GuardedSnmpClient:
-        """A guarded, read-only (GET/WALK) SNMP client."""
-        return GuardedSnmpClient(self.net_guard, host, auth, port=port)
+        """A guarded, read-only (GET/WALK) SNMP client.
+
+        ``timeout`` (seconds per attempt, at most ``MAX_SNMP_TIMEOUT``) and ``retries``
+        (at most ``MAX_SNMP_RETRIES``) may only be lowered; every get() or walk() still
+        stops after the client's 15 s total limit.
+        """
+        if not 0 < timeout <= MAX_SNMP_TIMEOUT or not 0 <= retries <= MAX_SNMP_RETRIES:
+            raise ValueError(
+                f"SNMP timeout must be in (0, {MAX_SNMP_TIMEOUT:g}] s and retries in "
+                f"[0, {MAX_SNMP_RETRIES}]"
+            )
+        return GuardedSnmpClient(
+            self.net_guard, host, auth, port=port, timeout=timeout, retries=retries
+        )
 
     def ping_client(
         self, host: str, *, count: int = 3, reply_timeout: float = 1.0

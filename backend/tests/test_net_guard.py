@@ -19,6 +19,7 @@ import httpcore
 import httpx
 import pytest
 from pydantic import SecretStr
+from pysnmp.proto import errind
 from pysnmp.proto.rfc1902 import Counter32, Integer32, IpAddress, ObjectName, OctetString
 from pysnmp.proto.rfc1905 import NoSuchInstance
 
@@ -38,6 +39,8 @@ from app.core.net_guard import (
     NetPolicy,
     PingError,
     SnmpError,
+    SnmpTimeout,
+    SnmpV1,
     SnmpV2c,
     SnmpV3,
     check_address,
@@ -850,10 +853,73 @@ async def test_snmp_total_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
         NetGuard(resolver=no_resolver), "10.0.0.20", v2c(), total_timeout=0.1
     )
     try:
-        with pytest.raises(SnmpError):
+        with pytest.raises(SnmpTimeout):
             await asyncio.wait_for(client.get(["1.3.6.1.2.1.1.1.0"]), 5)
     finally:
         client.close()
+
+
+async def test_snmp_request_timed_out_is_a_timeout(snmp: SnmpRecorder) -> None:
+    # pysnmp reports "no response after the retries" as an error indication.
+    snmp.error = errind.RequestTimedOut()
+    client = GuardedSnmpClient(NetGuard(resolver=no_resolver), "10.0.0.20", v2c())
+    try:
+        with pytest.raises(SnmpTimeout) as info:
+            await client.get(["1.3.6.1.2.1.1.1.0"])
+    finally:
+        client.close()
+    assert isinstance(info.value, SnmpError)  # callers catching SnmpError still do
+    assert FAKE_COMMUNITY not in str(info.value)
+
+
+async def test_snmp_walk_timeout_partway(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def walk_cmd(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        yield None, 0, 0, ((ObjectName("1.3.6.1.2.1.2.2.1.2.1"), OctetString(b"eth0")),)
+        yield errind.RequestTimedOut(), 0, 0, ()
+
+    monkeypatch.setattr(net_guard, "walk_cmd", walk_cmd)
+    client = GuardedSnmpClient(NetGuard(resolver=no_resolver), "10.0.0.20", v2c())
+    try:
+        with pytest.raises(SnmpTimeout):
+            await client.walk("1.3.6.1.2.1.2.2.1.2")
+    finally:
+        client.close()
+
+
+async def test_snmp_other_errors_are_not_timeouts(snmp: SnmpRecorder) -> None:
+    snmp.error = errind.UnknownUserName()
+    client = GuardedSnmpClient(NetGuard(resolver=no_resolver), "10.0.0.20", v2c())
+    try:
+        with pytest.raises(SnmpError) as info:
+            await client.get(["1.3.6.1.2.1.1.1.0"])
+    finally:
+        client.close()
+    assert not isinstance(info.value, SnmpTimeout)
+
+
+@pytest.mark.parametrize(("auth", "mp_model"), [(SnmpV1, 0), (SnmpV2c, 1)])
+async def test_snmp_v1_and_v2c_auth(
+    snmp: SnmpRecorder, auth: type[SnmpV1 | SnmpV2c], mp_model: int
+) -> None:
+    client = GuardedSnmpClient(
+        NetGuard(resolver=no_resolver), "10.0.0.20", auth(community=SecretStr(FAKE_COMMUNITY))
+    )
+    try:
+        await client.get(["1.3.6.1.2.1.1.1.0"])
+    finally:
+        client.close()
+    data = snmp.calls[0][1]
+    assert data.message_processing_model == mp_model
+    assert snmp.calls[0][2].transport_address == ("10.0.0.20", 161)
+    assert FAKE_COMMUNITY not in repr(client.__dict__)
+
+
+async def test_snmp_v1_denied_hosts(snmp: SnmpRecorder) -> None:
+    auth = SnmpV1(community=SecretStr(FAKE_COMMUNITY))
+    client = GuardedSnmpClient(NetGuard(resolver=no_resolver), "169.254.169.254", auth)
+    with pytest.raises(NetGuardError):
+        await client.walk("1.3.6.1.2.1.2.2")
+    assert snmp.calls == []
 
 
 def test_snmp_v3_auth() -> None:
