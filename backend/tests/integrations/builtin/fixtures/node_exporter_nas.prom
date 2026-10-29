@@ -1,0 +1,99 @@
+# Hand-written node_exporter 1.12 output for a NAS with mdadm RAID and a ZFS pool.
+# Fake host name, example values only. md0 is a healthy RAID 1 (system), md1 a RAID 5
+# with one failed disk (degraded, not rebuilding), tank a healthy ZFS mirror.
+# HELP node_exporter_build_info A metric with a constant '1' value labeled by version, revision, branch, goversion from which node_exporter was built, and the goos and goarch for the build.
+# TYPE node_exporter_build_info gauge
+node_exporter_build_info{branch="HEAD",goarch="amd64",goos="linux",goversion="go1.25.0",revision="0000000000000000000000000000000000000000",tags="unknown",version="1.12.1"} 1
+# HELP node_uname_info Labeled system information as provided by the uname system call.
+# TYPE node_uname_info gauge
+node_uname_info{domainname="(none)",machine="x86_64",nodename="nas-example",release="6.12.0-example",sysname="Linux",version="#1 SMP"} 1
+# HELP node_load1 1m load average.
+# TYPE node_load1 gauge
+node_load1 0.37
+# HELP node_memory_MemAvailable_bytes Memory information field MemAvailable_bytes.
+# TYPE node_memory_MemAvailable_bytes gauge
+node_memory_MemAvailable_bytes 9.1e+09
+# HELP node_memory_MemTotal_bytes Memory information field MemTotal_bytes.
+# TYPE node_memory_MemTotal_bytes gauge
+node_memory_MemTotal_bytes 1.6e+10
+# HELP node_filesystem_avail_bytes Filesystem space available to non-root users in bytes.
+# TYPE node_filesystem_avail_bytes gauge
+node_filesystem_avail_bytes{device="/dev/md0",device_error="",fstype="ext4",mountpoint="/"} 2.2e+10
+node_filesystem_avail_bytes{device="/dev/mapper/vg1-volume_1",device_error="",fstype="btrfs",mountpoint="/volume1"} 3.4e+12
+node_filesystem_avail_bytes{device="tank",device_error="",fstype="zfs",mountpoint="/mnt/tank"} 2.9e+12
+# HELP node_filesystem_readonly Filesystem read-only status.
+# TYPE node_filesystem_readonly gauge
+node_filesystem_readonly{device="/dev/md0",device_error="",fstype="ext4",mountpoint="/"} 0
+node_filesystem_readonly{device="/dev/mapper/vg1-volume_1",device_error="",fstype="btrfs",mountpoint="/volume1"} 0
+node_filesystem_readonly{device="tank",device_error="",fstype="zfs",mountpoint="/mnt/tank"} 0
+# HELP node_filesystem_size_bytes Filesystem size in bytes.
+# TYPE node_filesystem_size_bytes gauge
+node_filesystem_size_bytes{device="/dev/md0",device_error="",fstype="ext4",mountpoint="/"} 3.1e+10
+node_filesystem_size_bytes{device="/dev/mapper/vg1-volume_1",device_error="",fstype="btrfs",mountpoint="/volume1"} 7.9e+12
+node_filesystem_size_bytes{device="tank",device_error="",fstype="zfs",mountpoint="/mnt/tank"} 3.8e+12
+# HELP node_hwmon_fan_rpm Hardware monitor for fan revolutions per minute (input)
+# TYPE node_hwmon_fan_rpm gauge
+node_hwmon_fan_rpm{chip="platform_it87_2608",sensor="fan1"} 1150
+node_hwmon_fan_rpm{chip="platform_it87_2608",sensor="fan2"} 0
+# HELP node_hwmon_sensor_label Label for given chip and sensor
+# TYPE node_hwmon_sensor_label gauge
+node_hwmon_sensor_label{chip="platform_coretemp_0",label="Package id 0",sensor="temp1"} 1
+node_hwmon_sensor_label{chip="platform_coretemp_0",label="Core 0",sensor="temp2"} 1
+node_hwmon_sensor_label{chip="platform_coretemp_0",label="Core 1",sensor="temp3"} 1
+node_hwmon_sensor_label{chip="pci0000:00_0000:00:1c_0_0000:01:00_0",label="Composite",sensor="temp1"} 1
+# HELP node_hwmon_temp_celsius Hardware monitor for temperature (input)
+# TYPE node_hwmon_temp_celsius gauge
+node_hwmon_temp_celsius{chip="platform_coretemp_0",sensor="temp1"} 48
+node_hwmon_temp_celsius{chip="platform_coretemp_0",sensor="temp2"} 46
+node_hwmon_temp_celsius{chip="platform_coretemp_0",sensor="temp3"} 47
+node_hwmon_temp_celsius{chip="platform_it87_2608",sensor="temp1"} 39
+node_hwmon_temp_celsius{chip="pci0000:00_0000:00:1c_0_0000:01:00_0",sensor="temp1"} 41
+# HELP node_md_blocks Total number of blocks on device.
+# TYPE node_md_blocks gauge
+node_md_blocks{device="md0"} 3.0408704e+07
+node_md_blocks{device="md1"} 7.81156352e+09
+# HELP node_md_blocks_synced Number of blocks synced on device.
+# TYPE node_md_blocks_synced gauge
+node_md_blocks_synced{device="md0"} 3.0408704e+07
+node_md_blocks_synced{device="md1"} 7.81156352e+09
+# HELP node_md_degraded Number of degraded disks on device.
+# TYPE node_md_degraded gauge
+node_md_degraded{device="md0"} 0
+node_md_degraded{device="md1"} 1
+# HELP node_md_disks Number of active/failed/spare disks of device.
+# TYPE node_md_disks gauge
+node_md_disks{device="md0",state="active"} 2
+node_md_disks{device="md0",state="failed"} 0
+node_md_disks{device="md0",state="spare"} 0
+node_md_disks{device="md1",state="active"} 2
+node_md_disks{device="md1",state="failed"} 1
+node_md_disks{device="md1",state="spare"} 0
+# HELP node_md_disks_required Total number of disks of device.
+# TYPE node_md_disks_required gauge
+node_md_disks_required{device="md0"} 2
+node_md_disks_required{device="md1"} 3
+# HELP node_md_raid_disks Number of raid disks on device.
+# TYPE node_md_raid_disks gauge
+node_md_raid_disks{device="md0"} 2
+node_md_raid_disks{device="md1"} 3
+# HELP node_md_state Indicates the state of md-device.
+# TYPE node_md_state gauge
+node_md_state{device="md0",state="active"} 1
+node_md_state{device="md0",state="check"} 0
+node_md_state{device="md0",state="inactive"} 0
+node_md_state{device="md0",state="recovering"} 0
+node_md_state{device="md0",state="resync"} 0
+node_md_state{device="md1",state="active"} 1
+node_md_state{device="md1",state="check"} 0
+node_md_state{device="md1",state="inactive"} 0
+node_md_state{device="md1",state="recovering"} 0
+node_md_state{device="md1",state="resync"} 0
+# HELP node_zfs_zpool_state kstat.zfs.misc.state
+# TYPE node_zfs_zpool_state gauge
+node_zfs_zpool_state{state="degraded",zpool="tank"} 0
+node_zfs_zpool_state{state="faulted",zpool="tank"} 0
+node_zfs_zpool_state{state="offline",zpool="tank"} 0
+node_zfs_zpool_state{state="online",zpool="tank"} 1
+node_zfs_zpool_state{state="removed",zpool="tank"} 0
+node_zfs_zpool_state{state="suspended",zpool="tank"} 0
+node_zfs_zpool_state{state="unavail",zpool="tank"} 0
