@@ -12,6 +12,7 @@ from pydantic import BaseModel, SecretStr
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.collectors.hub import EventHub
 from app.collectors.scheduler import (
     MAX_FAILURE_TEXT,
     MAX_POLL_INTERVAL_SECONDS,
@@ -621,3 +622,40 @@ async def test_sync_restarts_a_task_that_stopped(
         await wait_for(lambda: len(Poller.seen) > before)
     finally:
         await scheduler.stop()
+
+
+async def test_status_change_and_refresh_hint_are_published(
+    factory: sessionmaker[Session], box: SecretBox, store: MetricsStore
+) -> None:
+    hub = EventHub()
+    sub = hub.subscribe()
+    assert sub is not None
+    sched = PollScheduler(
+        session_factory=factory,
+        registry=REGISTRY,
+        secret_box=box,
+        net_guard_factory=fake_guards,
+        store=store,
+        hub=hub,
+        refresh_seconds=INTERVAL,
+        min_interval_seconds=INTERVAL,
+    )
+    good = add(factory, box, "poller", "nas-1")
+    bad = add(factory, box, "raiser", "nas-2")
+    try:
+        await sched.sync()
+        await wait_for(lambda: sub.queue.qsize() >= 3)
+    finally:
+        await sched.stop()
+    messages = []
+    while not sub.queue.empty():
+        messages.append(sub.queue.get_nowait())
+    kinds = {(m["type"], m["instance_id"]) for m in messages}
+    assert ("instance_status", str(good)) in kinds
+    assert ("refresh", str(good)) in kinds
+    assert ("instance_status", str(bad)) in kinds
+    assert ("refresh", str(bad)) not in kinds
+    down = next(m for m in messages if m["instance_id"] == str(bad) and m["type"] != "refresh")
+    assert set(down["status"]) == {"state", "checked_at", "last_success_at", "error"}
+    assert down["status"]["state"] == "down"
+    assert TOKEN not in str(messages)

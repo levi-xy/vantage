@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from app.api import audit, auth, dashboards, instances, integrations, users
+from app.api import audit, auth, dashboards, instances, integrations, users, ws
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(auth.router)
@@ -11,5 +11,6 @@ api_router.include_router(dashboards.router)
 api_router.include_router(integrations.router)
 api_router.include_router(instances.router)
 api_router.include_router(users.router)
+api_router.include_router(ws.router)
 
 __all__ = ["api_router"]

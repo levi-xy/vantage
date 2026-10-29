@@ -119,11 +119,41 @@ export function fakeBackend(options: FakeBackendOptions = {}) {
 
 export type FakeBackend = ReturnType<typeof fakeBackend>;
 
+/** A WebSocket stand-in; tests drive it through `FakeWebSocket.instances`. */
+export class FakeWebSocket {
+  static instances: FakeWebSocket[] = [];
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: unknown }) => void) | null = null;
+  onclose: (() => void) | null = null;
+  sent: string[] = [];
+  closed = false;
+  constructor(public url: string) {
+    FakeWebSocket.instances.push(this);
+  }
+  send(data: string) {
+    this.sent.push(data);
+  }
+  close() {
+    this.closed = true;
+  }
+  open() {
+    this.onopen?.();
+  }
+  push(message: unknown) {
+    this.onmessage?.({ data: JSON.stringify(message) });
+  }
+  drop() {
+    this.onclose?.();
+  }
+}
+
 /** Render the whole app at `path`. By default the browser holds an admin's session. */
 export function renderApp(
   path = "/",
   backend: FakeBackend = fakeBackend({ session: exampleMe() }),
 ) {
+  FakeWebSocket.instances = [];
+  vi.stubGlobal("WebSocket", FakeWebSocket);
   const router = createMemoryRouter(routes, { initialEntries: [path] });
   const client = new ApiClient({ fetch: backend.fetch });
   const queryClient = createQueryClient();

@@ -11,8 +11,8 @@ export function errorText(error: unknown): string {
   return "Something went wrong. Try again.";
 }
 
-// Status comes from the poll collector; refresh it until /ws pushes changes (later milestone).
-const STATUS_REFRESH_MS = 30_000;
+// /ws pushes status changes (app/live.ts); this slow refetch is the fallback if it's down.
+const STATUS_REFRESH_MS = 60_000;
 
 export const INSTANCES_KEY = ["instances"] as const;
 export const INTEGRATIONS_KEY = ["integrations"] as const;

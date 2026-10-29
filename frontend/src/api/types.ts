@@ -188,3 +188,12 @@ export interface Dashboard {
   name: string;
   layout: DashboardLayout;
 }
+
+/** Pushes on `WS /api/v1/ws`. Server to client only; never carries config or secrets. */
+export type LiveMessage =
+  | { type: "instance_status"; instance_id: string; status: InstanceStatus }
+  /** Sent after each successful poll: refetch what you show for this instance. */
+  | { type: "refresh"; instance_id: string }
+  /** Reserved for M6 (alert events); nothing sends it yet. */
+  | { type: "alert_event" }
+  | { type: "pong" };
