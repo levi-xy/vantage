@@ -81,20 +81,27 @@ _CANONICAL_KIND = {"sfp+": "sfpplus", "sfp-sfpplus": "sfpplus", "qsfp+": "qsfppl
 
 
 def swos_port_name(interface: ifmib.Interface) -> str:
-    """A stable label for a port: ``port1``, ``sfp9``, ``sfpplus1``, ...
+    """A stable, unique label for a port: ``port1``, ``sfp9``, ``sfpplus1``, ...
 
     SwOS lets the admin rename every port, and the name comes back in ifDescr (and
     possibly ifName). Free-form text must not become the label of every value series
     (maintainer decision, 2026-10-28), and renaming must not split a port's counters. So
-    a name that is a default one (kind plus number) is normalised (lowercase, no
-    spaces); any other name falls back to ``port<ifIndex>``. The admin's own text stays
-    on ``if_info`` as ``if_descr`` / ``if_alias``.
+    a name is used only when it is a default one (kind plus number, normalised to
+    lowercase without spaces) **and its number is the port's ifIndex**; any other name
+    falls back to ``port<ifIndex>``. Requiring number == ifIndex keeps ``if_name``
+    unique per device: a port renamed to another port's default name ("Port1" on ifIndex
+    5) can't clash with the real one, and every name embeds its own ifIndex. The admin's
+    own text stays on ``if_info`` as ``if_descr`` / ``if_alias``.
+
+    TODO(maintainer): lab checkpoint. This assumes SwOS numbers ports ifIndex 1..N in
+    the same order as their default names. If SFP ports are numbered separately ("SFP1"
+    at ifIndex 9), they fall back to ``port9`` until the mapping is known.
     """
     for raw in (interface.name, interface.descr):
         match = _PORT_NAME.fullmatch(raw.strip())
-        if match:
+        if match and int(match.group(2)) == interface.index:
             kind = match.group(1).lower()
-            return f"{_CANONICAL_KIND.get(kind, kind)}{int(match.group(2))}"
+            return f"{_CANONICAL_KIND.get(kind, kind)}{interface.index}"
     return f"port{interface.index}"
 
 

@@ -21,7 +21,7 @@ Each health object is a GET of its own, because on v1 one missing object fails a
 
 **Secrets:** `community` only, a write-only `SecretStr`. It goes into the SNMP request and nowhere else; messages, statuses and metrics name only the host and port. v1 and v2c send it unencrypted on the wire: keep the switch's management network private and the community read-only.
 
-**Port names.** `if_name` is a label on every value series, so it must be a stable identifier, not free text. SwOS lets the admin rename each port, and (as far as the public documentation says) the name is what the switch reports in `ifDescr`. So the profile takes `ifName`, else `ifDescr`, and uses it only when it is a default-style name: `Port1`, `ether3`, `SFP2`, `SFP+9`, `sfp-sfpplus1`, `QSFP+1`, normalised to lowercase without spaces (`port1`, `ether3`, `sfp2`, `sfpplus9`, `sfpplus1`, `qsfpplus1`). Any other name (a renamed port) becomes `port<ifIndex>`. The admin's own text is still available on `if_info` as `if_descr` and `if_alias`; join on `if_index` to show it. Renaming a port therefore never splits its counter series.
+**Port names.** `if_name` is a label on every value series, so it must be a stable, unique identifier, not free text. SwOS lets the admin rename each port, and (as far as the public documentation says) the name is what the switch reports in `ifDescr`. So the profile takes `ifName`, else `ifDescr`, and uses it only when it is a default-style name (`Port1`, `ether3`, `SFP2`, `SFP+9`, `sfp-sfpplus1`, `QSFP+1`) **whose number equals the port's `ifIndex`**; it is normalised to lowercase without spaces (`port1`, `ether3`, `sfp2`, `sfpplus9`, `qsfpplus1`). Any other name falls back to `port<ifIndex>`. That includes a port renamed to another port's default name (ifIndex 5 renamed "Port1" is `port5`, so it can't clash with the real port 1) and, until the mapping is verified, SFP ports numbered separately from the copper ports. Every name embeds its own ifIndex, so `if_name` is unique per device. The admin's own text is still available on `if_info` as `if_descr` and `if_alias`; join on `if_index` to show it. Renaming a port therefore never splits its counter series.
 
 **Metrics:** prefix `vantage_mikrotik_swos_`. The same `info`, `uptime_seconds`, `agent_uptime_seconds`, `interfaces*` and `if_*` series as [`snmp_device`](snmp_device.md), with the port naming above, plus:
 
@@ -43,7 +43,7 @@ Free-form text (`sys_name`, `sys_descr`, `if_descr`, `if_alias`) is on the `*_in
 **TODO(maintainer): lab checkpoint** (everything below is a guess until a real SwOS switch is walked):
 
 1. Does SwOS answer `ifXTable` (ifName, ifAlias, ifHighSpeed, 64-bit counters)? Both shapes are handled and tested.
-2. What does it return as `ifDescr`/`ifName` for default and renamed ports, and are there non-port interfaces (CPU, bridge)? The naming rule above assumes default-style names.
+2. Is ifIndex N the port with default name number N (including the SFP+ ports)? What does it return as `ifDescr`/`ifName` for default and renamed ports, and are there non-port interfaces (CPU, bridge)? The naming rule above assumes default-style names.
 3. Does it answer `mtxrHlVoltage.0` / `mtxrHlTemperature.0`, and in which units (RouterOS uses tenths)? Model-dependent, if at all.
 4. `sysDescr` and `sysObjectID` (the fixtures assume the model name and `1.3.6.1.4.1.14988.2`).
 5. Is PoE (`mtxrPOE`) exposed on PoE models? If so, a follow-up could add it.

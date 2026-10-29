@@ -171,24 +171,50 @@ def test_auth_per_version() -> None:
 
 
 @pytest.mark.parametrize(
-    ("name", "descr", "expected"),
+    ("index", "name", "descr", "expected"),
     [
-        ("", "Port1", "port1"),
-        ("", "Port 12", "port12"),
-        ("", "SFP+9", "sfpplus9"),
-        ("", "sfp-sfpplus1", "sfpplus1"),
-        ("", "SFP2", "sfp2"),
-        ("ether3", "something else", "ether3"),  # ifName wins
-        ("", "QSFP+1", "qsfpplus1"),
-        ("", "Uplink to core (10G)", "port7"),  # a renamed port: never free text
-        ("", "Port1; drop table", "port7"),
-        ("", "", "port7"),
-        ("Port9999", "", "port7"),  # not a plausible port number
+        (1, "", "Port1", "port1"),
+        (12, "", "Port 12", "port12"),
+        (9, "", "SFP+9", "sfpplus9"),
+        (1, "", "sfp-sfpplus1", "sfpplus1"),
+        (2, "", "SFP2", "sfp2"),
+        (3, "ether3", "something else", "ether3"),  # ifName wins
+        (1, "", "QSFP+1", "qsfpplus1"),
+        (7, "", "Uplink to core (10G)", "port7"),  # a renamed port: never free text
+        (7, "", "Port7; drop table", "port7"),
+        (7, "", "", "port7"),
+        (7, "Port9999", "", "port7"),  # not a plausible port number
+        (5, "", "Port1", "port5"),  # renamed to another port's default name
+        (9, "", "SFP1", "port9"),  # number is not the ifIndex (mapping unverified)
     ],
 )
-def test_port_name(name: str, descr: str, expected: str) -> None:
-    port = ifmib.Interface(index=7, name=name, descr=descr)
+def test_port_name(index: int, name: str, descr: str, expected: str) -> None:
+    port = ifmib.Interface(index=index, name=name, descr=descr)
     assert swos_module.swos_port_name(port) == expected
+
+
+def test_port_names_are_unique_per_device() -> None:
+    # Port 5 renamed "Port1", port 6 renamed "port 5", port 7 renamed "SFP+9" ...
+    descrs = {1: "Port1", 2: "Port2", 5: "Port1", 6: "port 5", 7: "SFP+9", 9: "SFP+9", 10: "x"}
+    names = [
+        swos_module.swos_port_name(ifmib.Interface(index=i, descr=d)) for i, d in descrs.items()
+    ]
+    assert len(set(names)) == len(names)
+
+
+async def test_poll_renamed_to_a_default_name_does_not_clash(fake_snmp: FakeSnmp) -> None:
+    mib = load_walk(FULL)
+    for key in list(mib):
+        if key == "1.3.6.1.2.1.2.2.1.2.4":
+            mib[key] = type(mib[key])("Port1")  # ifIndex 4 renamed to port 1's name
+        if key == "1.3.6.1.2.1.31.1.1.1.1.4":
+            mib[key] = type(mib[key])("Port1")
+    fake_snmp.agent(ADDRESS, mib, community=COMMUNITY)
+    samples = await run_poll(cfg())
+    in_bytes = [s for s in samples if s.name == f"{PREFIX}_if_in_bytes"]
+    names = [s.labels["if_name"] for s in in_bytes]
+    assert len(set(names)) == len(names) == 6
+    assert {s.labels["if_index"]: s.labels["if_name"] for s in in_bytes}["4"] == "port4"
 
 
 # --- test_connection -------------------------------------------------------------------
