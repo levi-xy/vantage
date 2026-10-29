@@ -19,6 +19,7 @@ separate, explicit, clearly labelled opt-in; the two can't be combined.
 """
 
 import asyncio
+import functools
 import json
 import logging
 import math
@@ -98,7 +99,8 @@ MAX_TIMEOUT_SECONDS = 15
 # Proxmox supports clusters of up to a few dozen nodes; more than this is not a PVE answer.
 MAX_NODES = 32
 # Per-poll caps on what is reported, so one instance stays well inside the collector's
-# 10 000 samples per poll: 12 per guest, 3 per storage, 10 per node.
+# 10 000 samples per poll: up to 13 per guest (12 values and guest_info), 3 per
+# storage, 11 per node.
 MAX_GUESTS = 500
 MAX_STORAGES = 200
 # Real answers are tens to hundreds of KB (a few hundred bytes per guest).
@@ -326,7 +328,7 @@ class ProxmoxConfig(BaseModel):
             return False
         if self.tls_ca_certificate is None:
             return True
-        return pinned_context(self.tls_ca_certificate)
+        return _cached_pinned_context(self.tls_ca_certificate)
 
 
 def _normalise_pem(value: str) -> str:
@@ -393,6 +395,15 @@ def pinned_context(pem: str) -> ssl.SSLContext:
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
     return context
+
+
+@functools.lru_cache(maxsize=32)
+def _cached_pinned_context(pem: str) -> ssl.SSLContext:
+    """:func:`pinned_context`, built once per distinct PEM. The config is validated
+    again on every poll, so without this each poll would rebuild the context. The
+    context isn't changed after it is built, so clients can share it. Validation
+    calls :func:`pinned_context` directly (a failure is never cached)."""
+    return pinned_context(pem)
 
 
 # --- requests --------------------------------------------------------------------------

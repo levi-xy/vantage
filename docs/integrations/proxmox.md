@@ -49,7 +49,7 @@ Verification is **on** by default, against the system's CA store. Proxmox nodes 
 3. If the node has a certificate from a public CA (for example ACME), leave both TLS fields alone.
 4. **Last resort:** **INSECURE: don't verify the TLS certificate**. The token is then sent to whatever answers on that address, so anyone who can intercept the traffic gets a read-only token. Only on a network you control.
 
-The field is at most 16 KiB (a PVE CA is about 2 KB) and is parsed line by line, so hostile input can't make the check slow. It accepts only `-----BEGIN CERTIFICATE-----` blocks (at most 8) and refuses anything else, so a pasted private key is never stored. Certificates are public; the field is stored in plaintext and shown to every user. Pinning by SHA-256 fingerprint is not offered yet (see the PR for the open question).
+The field is at most 16 KiB (a PVE CA is about 2 KB) and is parsed line by line, so hostile input can't make the check slow. It accepts only `-----BEGIN CERTIFICATE-----` blocks (at most 8) and refuses anything else, so a pasted private key is never stored. Certificates are public; the field is stored in plaintext and shown to every user. SHA-256 fingerprint pinning isn't supported: paste the CA or the node certificate instead.
 
 **Metrics:** prefix `vantage_proxmox_`. Constants at the top of `integration.py`. Counters are exposed with `_total`.
 

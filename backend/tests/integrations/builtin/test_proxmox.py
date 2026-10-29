@@ -341,6 +341,17 @@ def test_ca_field_is_capped() -> None:
     assert time.perf_counter() - started < 0.2
 
 
+def test_pinned_context_is_reused_across_validations() -> None:
+    # The collector validates the stored config on every poll.
+    pem = make_ca_pem()
+    first = ProxmoxConfig.model_validate(cfg(tls_ca_certificate=pem)).tls_verify()
+    again = ProxmoxConfig.model_validate(cfg(tls_ca_certificate=pem)).tls_verify()
+    other = ProxmoxConfig.model_validate(cfg(tls_ca_certificate=make_ca_pem())).tls_verify()
+    assert isinstance(first, ssl.SSLContext)
+    assert first is again
+    assert other is not first
+
+
 def test_ca_field_takes_several_certificates() -> None:
     both = make_ca_pem("Example CA 1") + make_ca_pem("Example CA 2")
     context = ProxmoxConfig.model_validate(cfg(tls_ca_certificate=both)).tls_verify()

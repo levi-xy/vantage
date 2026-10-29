@@ -185,7 +185,7 @@ An integration may do both (scrape an exporter and poll an API); the rules for e
 All outbound traffic goes through `net_guard` (Hard rule 5, Contract 5). The context gives you three guarded clients:
 
 ```python
-ctx.http_client(*, verify=True, base_url="", headers=None) -> httpx.AsyncClient   # verify: bool | ssl.SSLContext
+ctx.http_client(*, verify: bool | ssl.SSLContext = True, base_url="", headers=None) -> httpx.AsyncClient
 ctx.snmp_client(host, auth, *, port=161, timeout=5.0, retries=2) -> GuardedSnmpClient    # auth: SnmpV1 | SnmpV2c | SnmpV3; timeout/retries may only be lowered
 ctx.ping_client(host, *, count=3, reply_timeout=1.0) -> GuardedPingClient
 ```
