@@ -98,6 +98,9 @@ export function fakeBackend(options: FakeBackendOptions = {}) {
         return new Response(null, { status: 204 });
       case "GET /me":
         return state.session ? json(state.session) : unauthorized();
+      case "GET /dashboards/1":
+        if (!state.session) return unauthorized();
+        return json({ id: 1, name: "Default", layout: { cards: [] } });
       default:
         if (!state.session) return unauthorized();
         return json(method === "GET" ? [] : {});

@@ -157,3 +157,34 @@ export interface TestResult {
   message: string;
   hint: FirewallHint | null;
 }
+
+/** One card type an instance offers (`GET /instances/{id}/cards`). */
+export interface CardSpec {
+  /** Matches a card component registered in `cards/registry.ts`. */
+  card_type: string;
+  title: string;
+  /** Grid width and height, in cells of a 12-column grid. */
+  default_size: [number, number];
+}
+
+/** One card on a dashboard: which instance and card type, where it sits, and its settings. */
+export interface CardPlacement {
+  instance_id: string;
+  card_type: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  settings: Record<string, string | number | boolean | null>;
+}
+
+export interface DashboardLayout {
+  cards: CardPlacement[];
+}
+
+/** `GET/PUT /dashboards/{id}`. */
+export interface Dashboard {
+  id: number;
+  name: string;
+  layout: DashboardLayout;
+}
