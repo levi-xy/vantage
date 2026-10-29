@@ -14,6 +14,7 @@ from app.integrations.base import Category, Integration
 from app.integrations.builtin.cloudflared import Cloudflared
 from app.integrations.builtin.http_check import HttpCheck
 from app.integrations.builtin.linux_host import LinuxHost
+from app.integrations.builtin.mikrotik_swos import MikroTikSwOS
 from app.integrations.builtin.pfsense import PfSense
 from app.integrations.builtin.ping_check import PingCheck
 from app.integrations.builtin.proxmox import Proxmox
@@ -26,6 +27,7 @@ BUILTIN_INTEGRATIONS: tuple[type[Integration], ...] = (
     Cloudflared,  # cloudflared
     HttpCheck,  # http_check
     LinuxHost,  # linux_host
+    MikroTikSwOS,  # mikrotik_swos
     PfSense,  # pfsense
     PingCheck,  # ping_check
     Proxmox,  # proxmox
