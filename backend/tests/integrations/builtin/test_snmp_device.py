@@ -8,8 +8,10 @@ client and replaces only pysnmp's request functions with a fake agent loaded fro
 hand-written ``fixtures/*.snmpwalk`` files.
 """
 
+import asyncio
 import inspect
 import logging
+import time
 import uuid
 from collections.abc import Iterator
 from typing import Any
@@ -21,18 +23,26 @@ from pydantic import ValidationError
 from pysnmp.proto.rfc1902 import Counter32, OctetString
 from sqlalchemy import Engine
 
-from app.collectors.scheduler import PollScheduler, PollSpec
+from app.collectors.scheduler import MAX_POLL_TIMEOUT_SECONDS, PollScheduler, PollSpec
 from app.collectors.store import MetricsStore, make_registry
 from app.core.crypto import SecretBox
 from app.core.db import make_session_factory, utcnow
-from app.core.net_guard import SnmpV1, SnmpV2c, SnmpV3
+from app.core.net_guard import (
+    DEFAULT_TOTAL_TIMEOUT,
+    GuardedSnmpClient,
+    SnmpV1,
+    SnmpV2c,
+    SnmpV3,
+)
 from app.integrations import instance_config as ic
 from app.integrations.base import Sample, TestResult
 from app.integrations.builtin import ifmib
 from app.integrations.builtin.snmp_device import (
+    SnmpBadWalk,
     SnmpDevice,
     SnmpDeviceConfig,
     SnmpNoResponse,
+    SnmpPollTooSlow,
     SnmpRequestFailed,
     SnmpWalkTimedOut,
 )
@@ -109,6 +119,7 @@ def assert_read_only(fake: FakeSnmp) -> None:
     """Only GET and WALK (the guarded client has nothing else), only documented OIDs,
     only to the checked address."""
     assert fake.calls
+    assert fake.set_attempts == []  # the SET trap was never reached
     for call in fake.calls:
         assert call.op in {"get", "walk"}
         assert call.address == ADDRESS
@@ -430,7 +441,7 @@ async def test_poll_reads_exactly_the_documented_oids(fake_snmp: FakeSnmp) -> No
     assert set(fake_snmp.walked()) == set(ifmib.IF_TABLE.values()) | set(ifmib.IF_X_TABLE.values())
     # Every walk is bounded: the first by the hard cap, the rest by the rows it found.
     walks = [c for c in fake_snmp.calls if c.op == "walk"]
-    assert walks[0].max_rows == ifmib.MAX_WALK_ROWS
+    assert walks[0].max_rows == ifmib.MAX_WALK_ROWS + 1  # one more, to detect truncation
     assert {c.max_rows for c in walks[1:]} == {5}
 
 
@@ -518,21 +529,93 @@ async def test_poll_interface_cap(fake_snmp: FakeSnmp) -> None:
     assert {s.labels["if_index"] for s in samples if "if_index" in s.labels} == {"1", "10001"}
 
 
-async def test_poll_walk_cap_bounds_a_huge_table(fake_snmp: FakeSnmp) -> None:
-    mib = {
-        f"{ifmib.IF_TABLE['descr']}.{i}": OctetString(f"port{i}".encode()) for i in range(1, 1500)
+def big_table(rows: int) -> dict[str, Any]:
+    mib: dict[str, Any] = {
+        f"{ifmib.IF_TABLE['descr']}.{i}": OctetString(f"port{i}".encode())
+        for i in range(1, rows + 1)
     }
-    mib.update({f"{ifmib.IF_TABLE['in_octets']}.{i}": Counter32(i) for i in range(1, 1500)})
+    mib.update({f"{ifmib.IF_TABLE['in_octets']}.{i}": Counter32(i) for i in range(1, rows + 1)})
     mib[ifmib.SYS_NAME] = OctetString(b"example-switch")
-    fake_snmp.agent(ADDRESS, mib, community=COMMUNITY)
-    samples = await run_poll(v2c(max_interfaces=ifmib.MAX_INTERFACES))
+    return mib
+
+
+async def test_poll_walk_cap_bounds_a_huge_table(
+    fake_snmp: FakeSnmp, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.WARNING)
+    fake_snmp.agent(ADDRESS, big_table(1500), community=COMMUNITY)
+    ctx = make_ctx(SnmpDevice, v2c(max_interfaces=ifmib.MAX_INTERFACES))
+    samples = await SnmpDevice().poll(ctx)
     got = by_name(samples)
     assert got[("interfaces", "")].value == ifmib.MAX_WALK_ROWS
+    assert got[("interfaces_truncated", "")].value == 1.0  # marked, not silent
     assert got[("interfaces_polled", "")].value == ifmib.MAX_INTERFACES
-    assert all(
-        c.max_rows and c.max_rows <= ifmib.MAX_WALK_ROWS for c in fake_snmp.calls if c.op == "walk"
-    )
+    walks = [c for c in fake_snmp.calls if c.op == "walk"]
+    assert walks[0].max_rows == ifmib.MAX_WALK_ROWS + 1
+    assert all(c.max_rows and c.max_rows <= ifmib.MAX_WALK_ROWS for c in walks[1:])
     assert len(samples) < 10_000  # the collector's per-poll limit
+    # The truncation is logged once, by instance id only.
+    [record] = [r for r in caplog.records if "more than" in r.getMessage()]
+    assert record.levelno == logging.WARNING
+    assert record.getMessage() == (
+        f"snmp_device instance {ctx.instance_id}: the ifTable has more than "
+        f"{ifmib.MAX_WALK_ROWS} rows; only the first {ifmib.MAX_WALK_ROWS} were read"
+    )
+    assert_no_secret(caplog.text)
+
+
+async def test_poll_table_exactly_at_the_walk_cap_is_not_truncated(
+    fake_snmp: FakeSnmp, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.WARNING)
+    fake_snmp.agent(ADDRESS, big_table(ifmib.MAX_WALK_ROWS), community=COMMUNITY)
+    got = by_name(await run_poll(v2c(max_interfaces=4)))
+    assert got[("interfaces", "")].value == ifmib.MAX_WALK_ROWS
+    assert got[("interfaces_truncated", "")].value == 0.0
+    assert "more than" not in caplog.text
+
+
+@pytest.mark.parametrize("mode", ["repeat", "backwards"])
+async def test_poll_stops_a_walk_whose_oids_do_not_increase(fake_snmp: FakeSnmp, mode: Any) -> None:
+    # A buggy agent that repeats (or goes back to) an OID, ignoring maxRows, would loop
+    # a walk until the time limit; the client stops at the first such row.
+    serve(fake_snmp)
+    fake_snmp.agents[ADDRESS].broken_walk = mode
+    started = time.monotonic()
+    with pytest.raises(SnmpBadWalk) as info:
+        await asyncio.wait_for(run_poll(v2c()), 5)
+    assert time.monotonic() - started < 2
+    assert fake_snmp.rows_sent == 2  # one good row, one bad: then the walk is closed
+    assert str(info.value) == (
+        f"SNMP agent at {HOST}:161 sent walk answers whose OIDs do not increase (an agent "
+        "bug; the walk was stopped)"
+    )
+    assert_no_secret(info.value)
+
+
+def test_poll_budget_fits_the_collector_timeout() -> None:
+    # Worst case without a budget: one GET and 15 walks, each up to the client's 15 s.
+    unbudgeted = (1 + 15) * DEFAULT_TOTAL_TIMEOUT
+    assert unbudgeted > MAX_POLL_TIMEOUT_SECONDS  # which is why the budget exists
+    # The budget ends the poll first, with its own message, inside the collector's
+    # cut-off of min(interval, 60) s.
+    assert snmp_module.POLL_BUDGET_SECONDS < min(
+        SnmpDevice().poll_interval_seconds(), MAX_POLL_TIMEOUT_SECONDS
+    )
+
+
+async def test_poll_budget_ends_a_slow_poll(
+    fake_snmp: FakeSnmp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(snmp_module, "POLL_BUDGET_SECONDS", 0.3)
+    serve(fake_snmp)
+    fake_snmp.agents[ADDRESS].delay = 0.05  # each answer is slow; no single call times out
+    started = time.monotonic()
+    with pytest.raises(SnmpPollTooSlow) as info:
+        await asyncio.wait_for(run_poll(v2c()), 5)
+    assert time.monotonic() - started < 2
+    assert str(info.value).startswith(f"SNMP poll of {HOST}:161 took longer than 0.3 s")
+    assert_no_secret(info.value)
 
 
 @pytest.mark.parametrize(
@@ -892,6 +975,60 @@ def test_firewall_hints_cards_and_interval() -> None:
     assert SnmpDevice().poll_interval_seconds() == 60
     assert [c.card_type for c in SnmpDevice().cards()] == ["snmp-overview", "snmp-ports"]
     assert (SnmpDevice.type_id, SnmpDevice.category) == ("snmp_device", "switch")
+
+
+async def test_set_trap_catches_a_set(fake_snmp: FakeSnmp) -> None:
+    """The runtime half of the no-SET check: if anything reaches pysnmp's SET paths
+    during a test, the fake fails it (and the fixture's teardown fails it again)."""
+    import pysnmp.hlapi.v3arch.asyncio as hlapi
+    from pysnmp.entity.rfc3413 import cmdgen
+
+    with pytest.raises(AssertionError, match="SNMP SET reached"):
+        await hlapi.set_cmd()
+    with pytest.raises(AssertionError, match="SNMP SET reached"):
+        cmdgen.SetCommandGenerator().send_varbinds()
+    assert fake_snmp.set_attempts == ["hlapi set_cmd", "SetCommandGenerator"]
+    fake_snmp.set_attempts.clear()  # this test made them on purpose
+
+
+async def test_full_poll_and_test_never_reach_set(fake_snmp: FakeSnmp) -> None:
+    serve(fake_snmp, "snmp_cisco_ios")
+    await run_test(v2c())
+    await run_poll(v2c())
+    serve_v3(fake_snmp)
+    await run_test(v3())
+    await run_poll(v3())
+    assert fake_snmp.set_attempts == []
+    assert {c.op for c in fake_snmp.calls} == {"get", "walk"}
+    # The guarded client the integration gets offers nothing but reads.
+    assert {n for n in dir(GuardedSnmpClient) if not n.startswith("_")} == {
+        "get",
+        "walk",
+        "close",
+    }
+
+
+FREE_TEXT_LABELS = {"if_alias", "if_descr", "sys_name", "sys_descr"}
+
+
+@pytest.mark.parametrize(
+    "walk", ["snmp_netsnmp_linux", "snmp_cisco_ios", "snmp_routeros", "snmp_no_ifxtable"]
+)
+async def test_free_text_labels_only_on_info_series(fake_snmp: FakeSnmp, walk: str) -> None:
+    """Maintainer exception (2026-10-28): cleaned, capped device text may be a label
+    value on *_info series only, never on a value series."""
+    serve(fake_snmp, walk)
+    samples = await run_poll(v2c())
+    for sample in samples:
+        if sample.name.endswith("_info"):
+            assert sample.value == 1.0 and sample.type == "gauge"
+        else:
+            assert not FREE_TEXT_LABELS & sample.labels.keys(), sample.name
+    info_labels: set[str] = set()
+    for sample in samples:
+        if sample.name.endswith("_info"):
+            info_labels |= sample.labels.keys()
+    assert FREE_TEXT_LABELS <= info_labels
 
 
 def test_no_write_operation_in_snmp_code() -> None:

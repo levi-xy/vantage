@@ -18,18 +18,28 @@ It behaves like a real agent where the tests need it to:
   ``noSuchName`` on GET, which fails the whole PDU as on a real v1 agent);
 - a missing object: ``noSuchObject`` on v2c/v3 GET; a walk stops at its subtree's end.
 
-Every request is recorded in :attr:`FakeSnmp.calls`. There is no SET to fake: the
-guarded client has none (Hard rule 2).
+Faults: ``answer_limit`` (silence after N requests), ``delay`` (seconds per answer) and
+``broken_walk`` (``"repeat"``: the first row again, forever; ``"backwards"``: rows in
+decreasing order), the last ignoring ``maxRows`` as a buggy agent would.
+
+Every request is recorded in :attr:`FakeSnmp.calls`. The fixture also traps every way
+pysnmp could send a SET (``set_cmd`` and the SET command generator): reaching one fails
+the test, at the call and again at teardown, even if the caller swallowed the error
+(Hard rule 2).
 """
 
+import asyncio
 import re
 from collections.abc import AsyncIterator, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+import pysnmp.hlapi.v3arch.asyncio as hlapi_asyncio
 import pytest
 from pyasn1.type.base import Asn1Item
+from pysnmp.entity.rfc3413 import cmdgen as rfc3413_cmdgen
+from pysnmp.hlapi.v3arch.asyncio import cmdgen as hlapi_cmdgen
 from pysnmp.proto import errind
 from pysnmp.proto.rfc1902 import (
     Counter32,
@@ -106,6 +116,8 @@ class FakeAgent:
     # After this many answered requests, the agent goes silent (a timeout mid-poll).
     answer_limit: int | None = None
     answered: int = 0
+    delay: float = 0.0
+    broken_walk: Literal["repeat", "backwards"] | None = None
 
 
 @dataclass(frozen=True)
@@ -144,6 +156,8 @@ def _requested(var_bind: Any) -> str:
 class FakeSnmp:
     agents: dict[str, FakeAgent] = field(default_factory=dict)
     calls: list[SnmpCall] = field(default_factory=list)
+    rows_sent: int = 0  # walk rows handed to the client
+    set_attempts: list[str] = field(default_factory=list)
 
     def agent(self, address: str, mib: Mapping[str, Asn1Item], **creds: Any) -> FakeAgent:
         agent = FakeAgent(mib=dict(mib), **creds)
@@ -207,6 +221,7 @@ class FakeSnmp:
         agent, error = self._check(auth, target)
         if agent is None:
             return error, 0, 0, []
+        await asyncio.sleep(agent.delay)
         v1 = auth.message_processing_model == 0
         result = []
         for oid in oids:
@@ -234,6 +249,16 @@ class FakeSnmp:
             for oid in sorted(mib, key=_key)
             if _key(oid)[: len(prefix)] == prefix and self._visible(mib[oid], v1)
         ]
+        if agent is not None and agent.broken_walk is not None and oids:
+            # A buggy agent: maxRows doesn't stop it, only the client can.
+            order = oids[::-1] if agent.broken_walk == "backwards" else oids[:1]
+            i = 0
+            while True:
+                oid = order[i % len(order)] if agent.broken_walk == "repeat" else order[i]
+                self.rows_sent += 1
+                yield None, 0, 0, ((ObjectName(oid), mib[oid]),)
+                await asyncio.sleep(0)
+                i = i + 1 if agent.broken_walk == "repeat" else min(i + 1, len(order) - 1)
         # One GETNEXT per row, plus the one that runs off the subtree's end; the agent
         # may stop answering at any of them.
         for i in range(len(oids) + 1):
@@ -241,8 +266,10 @@ class FakeSnmp:
             if answering is None:
                 yield error, 0, 0, ()
                 return
+            await asyncio.sleep(answering.delay)
             if i == len(oids):
                 return
+            self.rows_sent += 1
             yield None, 0, 0, ((ObjectName(oids[i]), answering.mib[oids[i]]),)
             if max_rows and i + 1 >= max_rows:
                 return
@@ -257,9 +284,28 @@ class FakeSnmp:
             yield from call.oids
 
 
+def trap_snmp_set(monkeypatch: pytest.MonkeyPatch, attempts: list[str]) -> None:
+    """Make every SET path in pysnmp fail loudly and record the attempt."""
+
+    def trapped(where: str) -> Any:
+        def fail(*args: Any, **kwargs: Any) -> Any:
+            attempts.append(where)
+            raise AssertionError(f"SNMP SET reached ({where}): Hard rule 2")
+
+        return fail
+
+    monkeypatch.setattr(hlapi_asyncio, "set_cmd", trapped("hlapi set_cmd"))
+    monkeypatch.setattr(hlapi_cmdgen, "set_cmd", trapped("hlapi cmdgen.set_cmd"))
+    monkeypatch.setattr(
+        rfc3413_cmdgen.SetCommandGenerator, "send_varbinds", trapped("SetCommandGenerator")
+    )
+
+
 @pytest.fixture
-def fake_snmp(monkeypatch: pytest.MonkeyPatch) -> FakeSnmp:
+def fake_snmp(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeSnmp]:
     fake = FakeSnmp()
     monkeypatch.setattr(net_guard, "get_cmd", fake.get_cmd)
     monkeypatch.setattr(net_guard, "walk_cmd", fake.walk_cmd)
-    return fake
+    trap_snmp_set(monkeypatch, fake.set_attempts)
+    yield fake
+    assert fake.set_attempts == [], "an SNMP SET was attempted"

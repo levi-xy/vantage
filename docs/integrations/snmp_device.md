@@ -21,7 +21,7 @@
 | ifHCInOctets, ifHCOutOctets | `1.3.6.1.2.1.31.1.1.1.6`, `.10` | walk | if ifXTable exists; never on v1 |
 | ifInOctets, ifOutOctets | `1.3.6.1.2.1.2.2.1.10`, `.16` | walk | only if a selected interface has no 64-bit counter |
 
-A poll is one GET and up to 15 walks, one per column. Each walk reads at most as many rows as `ifDescr` returned, and `ifDescr` reads at most `MAX_WALK_ROWS` rows. The connection test is a single GET of sysDescr and sysName.
+A poll is one GET and up to 15 walks, one per column. `ifDescr` reads at most `MAX_WALK_ROWS` (1024) rows, plus one to tell whether there are more; every other walk reads at most as many rows as `ifDescr` kept. The guarded client stops a walk at the first OID that doesn't increase. The connection test is a single GET of sysDescr and sysName.
 
 **Config:** see `SnmpDeviceConfig`.
 
@@ -43,6 +43,7 @@ A poll is one GET and up to 15 walks, one per column. Each walk reads at most as
 | `uptime_seconds` | gauge | none | sysUpTime: the SNMP agent's uptime, which is not always the device's |
 | `interfaces` | gauge | none | ifTable rows seen (at most the walk cap) |
 | `interfaces_polled` | gauge | none | rows reported after the filter and the cap |
+| `interfaces_truncated` | gauge | none | 1 if the agent has more than `MAX_WALK_ROWS` ifTable rows and only the first were read (also logged as a warning with the instance id) |
 | `if_info` | gauge, 1 | `if_index`, `if_name`, `if_descr`, `if_alias` | one per polled interface |
 | `if_in_bytes`, `if_out_bytes` | counter | `if_index`, `if_name` | ifHC*Octets, or ifIn/OutOctets where the agent has no 64-bit counter |
 | `if_counters_64bit` | gauge | `if_index`, `if_name` | 1 if both octet counters are 64-bit |
@@ -50,7 +51,7 @@ A poll is one GET and up to 15 walks, one per column. Each walk reads at most as
 | `if_oper_status`, `if_admin_status` | gauge | `if_index`, `if_name` | the raw IF-MIB value: 1 up, 2 down, 3 testing, 4 unknown, 5 dormant, 6 notPresent, 7 lowerLayerDown |
 | `if_speed_bits_per_second` | gauge | `if_index`, `if_name` | ifHighSpeed × 10⁶ when it isn't 0; otherwise ifSpeed |
 
-`if_name` is `ifName`, or `ifDescr` without an ifXTable, or `if<ifIndex>`. The free-text `ifDescr` and `ifAlias` appear only on `if_info`, so renaming a port on the device doesn't split its counter series. Join on `if_index` to show them. All device text is cleaned before it becomes a label: decoded as UTF-8, NULs dropped, control and other non-printable characters replaced, whitespace collapsed, at most 128 characters. Counter wrap and agent restarts are left to Prometheus (`rate()` handles resets). An interface switching between 32-bit and 64-bit counters looks like a reset.
+`if_name` is `ifName`, or `ifDescr` without an ifXTable, or `if<ifIndex>`. Free-form device text (`if_descr`, `if_alias`, `sys_name`, `sys_descr`) appears only on the `info` and `if_info` series (value 1), under the exception the maintainer approved on 2026-10-28 (INTEGRATIONS.md section 9). It never appears on a value series, so renaming a port on the device doesn't split its counter series. Join on `if_index` to show them. All device text is cleaned before it becomes a label: decoded as UTF-8, NULs dropped, control and other non-printable characters replaced, whitespace collapsed, at most 128 characters. Counter wrap and agent restarts are left to Prometheus (`rate()` handles resets). An interface switching between 32-bit and 64-bit counters looks like a reset.
 
 **Status and failures:** the instance goes `down` with:
 
@@ -58,7 +59,8 @@ A poll is one GET and up to 15 walks, one per column. Each walk reads at most as
 - `SNMP request to <host>:<port> was answered with an error (...)`: for example an unknown v3 user, a wrong passphrase or protocol, or a v1 `noSuchName` on the system GET. pysnmp's own text is never shown.
 - `SNMP walk of <host>:<port> stopped answering partway (...)`: the agent answered, then went silent, or a walk ran past the 15 s limit. Usually a slow agent or a very large interface table.
 - `refused by the network guard: ...`: the host resolves to an address the guard denies.
-- `poll timed out`: the whole poll took longer than 60 s.
+- `SNMP agent at <host>:<port> sent walk answers whose OIDs do not increase (...)`: a buggy agent that repeats or goes back; the walk is stopped at that row.
+- `SNMP poll of <host>:<port> took longer than 50 s (...)`: the poll's own budget (`POLL_BUDGET_SECONDS`). One GET and up to 15 walks at 15 s each could take 240 s, far past the collector's 60 s cut-off, so the integration ends the poll itself at 50 s with this message.
 
 An agent that hides sysDescr and sysName fails the connection test with a "not readable" message. A poll still reports what it can read.
 
@@ -68,6 +70,7 @@ An agent that hides sysDescr and sysName fails the connection test with a "not r
 
 **Limits and caveats:**
 
+- Poll time: at most 50 s (`POLL_BUDGET_SECONDS`), inside the collector's `min(interval, 60)` s. Each single request is bounded by `timeout_seconds` x (`retries` + 1), at most 15 s.
 - Walks use GETNEXT, one request per row and column. A switch with hundreds of interfaces needs thousands of requests per poll, and filtering doesn't reduce the walking, only what's reported. GETBULK isn't used yet.
 - `aes192`/`aes256`: vendors disagree on key localisation for these (Blumenthal vs. Reeder). pysnmp uses the Blumenthal draft, so Cisco's variant may fail with a decryption error. `aes128` is interoperable.
 - `sysUpTime` is a 32-bit TimeTicks and wraps after about 497 days.

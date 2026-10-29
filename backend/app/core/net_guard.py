@@ -610,6 +610,11 @@ class SnmpTimeout(SnmpError):
     agents answer with silence."""
 
 
+class SnmpBadResponse(SnmpError):
+    """The agent answered with something a walk can't use, such as an OID that does not
+    increase (a broken agent would otherwise make a walk loop)."""
+
+
 # Caps for the per-attempt timeout and retries a caller may ask for. Whatever is asked,
 # one get() or walk() also stops after the client's total limit (15 s by default).
 MAX_SNMP_TIMEOUT = DEFAULT_CONNECT_TIMEOUT
@@ -779,24 +784,44 @@ class GuardedSnmpClient:
         return [SnmpVarBind(str(name), _convert(value)) for name, value in result]
 
     async def walk(self, oid: str, *, max_rows: int = 10_000) -> list[SnmpVarBind]:
-        """Walk the subtree under ``oid`` (stops at the end of the subtree)."""
+        """Walk the subtree under ``oid`` (stops at the end of the subtree).
+
+        At most ``max_rows`` rows. Every returned OID must be greater than the one
+        before it (and than ``oid``); otherwise :class:`SnmpBadResponse`, so an agent
+        that repeats or goes back can't make the walk loop until the time limit.
+        """
+        if max_rows < 1:
+            raise ValueError("max_rows must be at least 1")
         start = _oid(oid)
+        last = _oid_key(oid)
         target = await self._target()
         rows: list[SnmpVarBind] = []
         try:
-            async with asyncio.timeout(self._total_timeout):
-                async for error_indication, error_status, _, result in walk_cmd(
-                    self._snmp_engine(),
-                    self._auth_data(),
-                    target,
-                    ContextData(),
-                    start,
-                    lookupMib=False,
-                    lexicographicMode=False,
-                    maxRows=max_rows,
-                ):
+            async with (
+                asyncio.timeout(self._total_timeout),
+                contextlib.aclosing(
+                    walk_cmd(
+                        self._snmp_engine(),
+                        self._auth_data(),
+                        target,
+                        ContextData(),
+                        start,
+                        lookupMib=False,
+                        lexicographicMode=False,
+                        maxRows=max_rows,
+                    )
+                ) as responses,
+            ):
+                async for error_indication, error_status, _, result in responses:
                     _raise_for_errors(error_indication, error_status)
-                    rows.extend(SnmpVarBind(str(n), _convert(v)) for n, v in result)
+                    for name, value in result:
+                        key = _oid_key(str(name))
+                        if key <= last:
+                            raise SnmpBadResponse("SNMP walk got an OID that does not increase")
+                        last = key
+                        rows.append(SnmpVarBind(str(name), _convert(value)))
+                        if len(rows) >= max_rows:
+                            return rows
         except TimeoutError:
             raise SnmpTimeout("SNMP walk timed out") from None
         return rows
@@ -805,6 +830,11 @@ class GuardedSnmpClient:
         if self._engine is not None:
             self._engine.close_dispatcher()
             self._engine = None
+
+
+def _oid_key(text: str) -> tuple[int, ...]:
+    """An OID as a tuple of ints, which orders as SNMP does (lexicographic by arc)."""
+    return tuple(int(arc) for arc in text.strip(".").split("."))
 
 
 def _raise_for_errors(error_indication: Any, error_status: Any) -> None:

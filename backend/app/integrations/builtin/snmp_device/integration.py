@@ -14,6 +14,8 @@ the USM keys, which never leave the backend in clear) and nowhere else: messages
 only the host and port as configured.
 """
 
+import asyncio
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Annotated, ClassVar, Literal, Self
@@ -32,6 +34,7 @@ from app.core.net_guard import (
     MAX_SNMP_TIMEOUT,
     GuardedSnmpClient,
     NetGuardError,
+    SnmpBadResponse,
     SnmpError,
     SnmpTimeout,
     SnmpV1,
@@ -58,6 +61,14 @@ METRIC_PREFIX = f"vantage_{TYPE_ID}"
 MAX_FILTER_PATTERNS = 32
 _TEST_DESCR_CHARS = 80
 
+# A poll is one GET and up to 15 walks, each allowed up to the guarded client's 15 s:
+# 240 s in the worst case, far past the collector's cut-off of min(interval, 60) s. So a
+# poll has its own, shorter budget and fails with a clear message when it runs out,
+# instead of the collector's generic "poll timed out".
+POLL_BUDGET_SECONDS = 50.0
+
+logger = logging.getLogger(__name__)
+
 FilterPattern = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)
 ]
@@ -73,6 +84,14 @@ class SnmpWalkTimedOut(PollFailure):
 
 class SnmpRequestFailed(PollFailure):
     """The agent answered with an error (v3 user or key mismatch, an error status)."""
+
+
+class SnmpBadWalk(PollFailure):
+    """The agent's walk answers were unusable (an OID that doesn't increase)."""
+
+
+class SnmpPollTooSlow(PollFailure):
+    """The whole poll took longer than :data:`POLL_BUDGET_SECONDS`."""
 
 
 class SnmpDeviceConfig(BaseModel):
@@ -316,18 +335,36 @@ class SnmpDevice(Integration):
 
         No answer to the first request raises :class:`SnmpNoResponse`; an error answer
         :class:`SnmpRequestFailed`; silence partway through the walks
-        :class:`SnmpWalkTimedOut`. Each marks the instance ``down`` with its message.
+        :class:`SnmpWalkTimedOut`; a walk whose OIDs don't increase :class:`SnmpBadWalk`;
+        more than :data:`POLL_BUDGET_SECONDS` in all :class:`SnmpPollTooSlow`. Each marks
+        the instance ``down`` with its message.
         """
         cfg = ctx.config_as(SnmpDeviceConfig)
         where = host_port(cfg.host, cfg.port)
         client = self._client(ctx, cfg)
         try:
-            with _failures(where, timeout=SnmpNoResponse(_no_response(where))):
-                system = await ifmib.read_system(client)
-            with _failures(where, timeout=SnmpWalkTimedOut(_walk_timed_out(where))):
-                table = await ifmib.read_interfaces(client, cfg.ifmib_options())
+            async with asyncio.timeout(POLL_BUDGET_SECONDS):
+                with _failures(where, timeout=SnmpNoResponse(_no_response(where))):
+                    system = await ifmib.read_system(client)
+                with _failures(where, timeout=SnmpWalkTimedOut(_walk_timed_out(where))):
+                    table = await ifmib.read_interfaces(client, cfg.ifmib_options())
+        except TimeoutError:
+            raise SnmpPollTooSlow(
+                f"SNMP poll of {where} took longer than {POLL_BUDGET_SECONDS:g} s (the "
+                "device may be slow or have too many interfaces; a filter doesn't shorten "
+                "the walks)"
+            ) from None
         finally:
             client.close()
+        if table.truncated:
+            # The instance id only: no config value, no device text.
+            logger.warning(
+                "snmp_device instance %s: the ifTable has more than %d rows; only the "
+                "first %d were read",
+                ctx.instance_id,
+                ifmib.MAX_WALK_ROWS,
+                ifmib.MAX_WALK_ROWS,
+            )
         return ifmib.system_samples(system, METRIC_PREFIX) + ifmib.interface_samples(
             table, METRIC_PREFIX
         )
@@ -368,5 +405,10 @@ def _failures(where: str, *, timeout: PollFailure) -> Iterator[None]:
         yield
     except SnmpTimeout:
         raise timeout from None
+    except SnmpBadResponse:
+        raise SnmpBadWalk(
+            f"SNMP agent at {where} sent walk answers whose OIDs do not increase (an agent "
+            "bug; the walk was stopped)"
+        ) from None
     except SnmpError:
         raise SnmpRequestFailed(_request_failed(where)) from None

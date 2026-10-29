@@ -13,7 +13,8 @@ nothing else: no SET, ever (Hard rule 2). Every OID read is listed in
 How a poll reads the interfaces, and why:
 
 1. Walk ``ifDescr`` (every ``ifTable`` row has one) to learn the interfaces, at most
-   :data:`MAX_WALK_ROWS` rows. Then ``ifName`` and ``ifAlias`` from ``ifXTable``; if
+   :data:`MAX_WALK_ROWS` rows (one more is read to tell whether there are more:
+   :attr:`InterfaceTable.truncated`). Then ``ifName`` and ``ifAlias`` from ``ifXTable``; if
    ``ifName`` comes back empty the agent has no ``ifXTable`` (old or v1-only agents), and
    no other ``ifXTable`` column is walked.
 2. Apply the include/exclude filter and the interface cap, so a large switch cannot
@@ -236,6 +237,8 @@ class InterfaceTable:
     seen: int  # ifTable rows read (at most MAX_WALK_ROWS)
     matched: int  # of those, how many the filter kept (before the cap)
     interfaces: list[Interface]  # what the poll reports: filtered, capped, by ifIndex
+    # The agent has more than MAX_WALK_ROWS ifTable rows; only the first were read.
+    truncated: bool = False
 
 
 async def _walk(client: GuardedSnmpClient, column: str, rows: int) -> dict[int, SnmpValue]:
@@ -244,7 +247,11 @@ async def _walk(client: GuardedSnmpClient, column: str, rows: int) -> dict[int, 
 
 async def read_interfaces(client: GuardedSnmpClient, options: IfMibOptions) -> InterfaceTable:
     """Walk the IF-MIB columns and return the filtered, capped interfaces."""
-    descrs = await _walk(client, IF_TABLE["descr"], MAX_WALK_ROWS)
+    # One row past the cap tells "exactly at the cap" from "more than the cap".
+    descrs = await _walk(client, IF_TABLE["descr"], MAX_WALK_ROWS + 1)
+    truncated = len(descrs) > MAX_WALK_ROWS
+    if truncated:
+        descrs = dict(sorted(descrs.items())[:MAX_WALK_ROWS])
     if not descrs:  # no ifTable visible (or a view hides it): nothing more to walk
         return InterfaceTable(seen=0, matched=0, interfaces=[])
     # Every later walk covers at most as many rows as ifTable has: the columns are in
@@ -266,7 +273,9 @@ async def read_interfaces(client: GuardedSnmpClient, options: IfMibOptions) -> I
         if options.filter.keeps(interface.name, interface.descr):
             candidates.append(interface)
     selected = candidates[: options.max_interfaces]
-    table = InterfaceTable(seen=len(descrs), matched=len(candidates), interfaces=selected)
+    table = InterfaceTable(
+        seen=len(descrs), matched=len(candidates), interfaces=selected, truncated=truncated
+    )
     if not selected:
         return table
 
@@ -365,6 +374,11 @@ def interface_samples(table: InterfaceTable, prefix: str) -> list[Sample]:
         Sample(name=f"{prefix}_interfaces", value=float(table.seen), type="gauge"),
         Sample(
             name=f"{prefix}_interfaces_polled", value=float(len(table.interfaces)), type="gauge"
+        ),
+        Sample(
+            name=f"{prefix}_interfaces_truncated",
+            value=1.0 if table.truncated else 0.0,
+            type="gauge",
         ),
     ]
     for interface in table.interfaces:
