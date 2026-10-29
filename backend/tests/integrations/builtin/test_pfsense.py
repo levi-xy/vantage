@@ -24,6 +24,7 @@ from tests.integrations.netfake import FakeNetwork, fake_guards, hang, http_resp
 from tests.test_auth import do_setup, make_client
 
 FIXTURE = (Path(__file__).parent / "fixtures" / "telegraf_pfsense.prom").read_bytes()
+LIVE_FIXTURE = (Path(__file__).parent / "fixtures" / "telegraf_pfsense_live.prom").read_bytes()
 ADDRESS = ("10.0.0.1", 9273)
 PROM_TOKEN = "example-prometheus-token-0123456789abcdef"
 
@@ -99,6 +100,38 @@ def test_describe_telegraf() -> None:
     assert describe_telegraf(FIXTURE.decode()) == (2, 2)
 
 
+def test_describe_live_capture_counts_down_gateway() -> None:
+    # 3 ping targets, one with 100% loss and therefore no RTT series.
+    down = [line for line in LIVE_FIXTURE.decode().splitlines() if "192.0.2.254" in line]
+    assert down and not any(line.startswith("ping_average_response_ms") for line in down)
+    assert describe_telegraf(LIVE_FIXTURE.decode()) == (1, 3)
+
+
+# Telegraf's ping input for a target that never answered: no RTT families, no ping_ttl.
+DOWN_GATEWAY_ONLY = (
+    "# TYPE ping_packets_received untyped\n"
+    'ping_packets_received{host="fw-example",url="192.0.2.254"} 0\n'
+    "# TYPE ping_packets_transmitted untyped\n"
+    'ping_packets_transmitted{host="fw-example",url="192.0.2.254"} 3\n'
+    "# TYPE ping_percent_packet_loss untyped\n"
+    'ping_percent_packet_loss{host="fw-example",url="192.0.2.254"} 100\n'
+    "# TYPE ping_result_code untyped\n"
+    'ping_result_code{host="fw-example",url="192.0.2.254"} 2\n'
+)
+
+
+def test_describe_only_down_gateway() -> None:
+    assert describe_telegraf(DOWN_GATEWAY_ONLY) == (0, 1)
+
+
+@pytest.mark.parametrize(
+    "family", ["ping_percent_packet_loss", "ping_packets_transmitted", "ping_result_code"]
+)
+def test_describe_gateway_from_any_always_present_family(family: str) -> None:
+    page = f'# TYPE {family} untyped\n{family}{{url="192.0.2.254"}} 1\n'
+    assert describe_telegraf(page) == (0, 1)
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -122,6 +155,22 @@ async def test_connection_ok(fake_net: FakeNetwork) -> None:
     assert fake_net.connects == [ADDRESS]
     assert "authorization" not in fake_net.requests[0].headers
     assert_read_only(fake_net)
+
+
+async def test_connection_live_capture(fake_net: FakeNetwork) -> None:
+    fake_net.serve(*ADDRESS, http_response(200, LIVE_FIXTURE))
+    result = await run_test()
+    assert result.ok
+    assert result.message == "Telegraf metrics: 1 interfaces, 3 gateways"
+    assert "192.0.2" not in result.message and "vtnet0" not in result.message
+    assert_read_only(fake_net)
+
+
+async def test_connection_single_down_gateway(fake_net: FakeNetwork) -> None:
+    fake_net.serve(*ADDRESS, http_response(200, DOWN_GATEWAY_ONLY.encode()))
+    result = await run_test()
+    assert result.ok
+    assert result.message == "Telegraf metrics: 0 interfaces, 1 gateways"
 
 
 async def test_connection_never_quotes_device_text(fake_net: FakeNetwork) -> None:

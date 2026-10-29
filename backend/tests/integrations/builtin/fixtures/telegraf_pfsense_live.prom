@@ -1,0 +1,535 @@
+# Live capture, scrubbed (2026-10-28): pfSense, Telegraf package, prometheus_client output.
+# Host renamed to pfsense.example; ping targets are 127.0.0.1 and documentation addresses.
+# 192.0.2.254 is a gateway with 100% loss: no RTT or ttl series, only loss/packets/result.
+# HELP disk_free Telegraf collected metric
+# TYPE disk_free gauge
+disk_free{device="pfSense",fstype="zfs",host="pfsense.example",mode="rw",path="/pfSense"} 2.71008256e+10
+disk_free{device="pfSense/ROOT/default",fstype="zfs",host="pfsense.example",mode="rw",path="/"} 2.71008256e+10
+disk_free{device="pfSense/ROOT/default/cf",fstype="zfs",host="pfsense.example",mode="rw",path="/cf"} 2.71008256e+10
+disk_free{device="pfSense/ROOT/default/var_cache_pkg",fstype="zfs",host="pfsense.example",mode="rw",path="/var/cache/pkg"} 2.71008256e+10
+disk_free{device="pfSense/ROOT/default/var_db_pkg",fstype="zfs",host="pfsense.example",mode="rw",path="/var/db/pkg"} 2.71008256e+10
+disk_free{device="pfSense/cf",fstype="zfs",host="pfsense.example",mode="rw",path="/cf"} 2.71008256e+10
+disk_free{device="pfSense/cf/conf",fstype="zfs",host="pfsense.example",mode="rw",path="/cf/conf"} 2.71008256e+10
+disk_free{device="pfSense/home",fstype="zfs",host="pfsense.example",mode="rw",path="/home"} 2.71008256e+10
+disk_free{device="pfSense/reservation",fstype="zfs",host="pfsense.example",mode="rw",path="/pfSense/reservation"} 3.0273265664e+10
+disk_free{device="pfSense/tmp",fstype="zfs",host="pfsense.example",mode="rw",path="/tmp"} 2.71008256e+10
+disk_free{device="pfSense/var",fstype="zfs",host="pfsense.example",mode="rw",path="/var"} 2.71008256e+10
+disk_free{device="pfSense/var/cache",fstype="zfs",host="pfsense.example",mode="rw",path="/var/cache"} 2.71008256e+10
+disk_free{device="pfSense/var/db",fstype="zfs",host="pfsense.example",mode="rw",path="/var/db"} 2.71008256e+10
+disk_free{device="pfSense/var/empty",fstype="zfs",host="pfsense.example",mode="rw",path="/var/empty"} 2.71008256e+10
+disk_free{device="pfSense/var/log",fstype="zfs",host="pfsense.example",mode="rw",path="/var/log"} 2.71008256e+10
+disk_free{device="pfSense/var/tmp",fstype="zfs",host="pfsense.example",mode="rw",path="/var/tmp"} 2.71008256e+10
+# HELP disk_inodes_free Telegraf collected metric
+# TYPE disk_inodes_free gauge
+disk_inodes_free{device="pfSense",fstype="zfs",host="pfsense.example",mode="rw",path="/pfSense"} 5.29313e+07
+disk_inodes_free{device="pfSense/ROOT/default",fstype="zfs",host="pfsense.example",mode="rw",path="/"} 5.29313e+07
+disk_inodes_free{device="pfSense/ROOT/default/cf",fstype="zfs",host="pfsense.example",mode="rw",path="/cf"} 5.29313e+07
+disk_inodes_free{device="pfSense/ROOT/default/var_cache_pkg",fstype="zfs",host="pfsense.example",mode="rw",path="/var/cache/pkg"} 5.29313e+07
+disk_inodes_free{device="pfSense/ROOT/default/var_db_pkg",fstype="zfs",host="pfsense.example",mode="rw",path="/var/db/pkg"} 5.29313e+07
+disk_inodes_free{device="pfSense/cf",fstype="zfs",host="pfsense.example",mode="rw",path="/cf"} 5.29313e+07
+disk_inodes_free{device="pfSense/cf/conf",fstype="zfs",host="pfsense.example",mode="rw",path="/cf/conf"} 5.29313e+07
+disk_inodes_free{device="pfSense/home",fstype="zfs",host="pfsense.example",mode="rw",path="/home"} 5.29313e+07
+disk_inodes_free{device="pfSense/reservation",fstype="zfs",host="pfsense.example",mode="rw",path="/pfSense/reservation"} 5.9127472e+07
+disk_inodes_free{device="pfSense/tmp",fstype="zfs",host="pfsense.example",mode="rw",path="/tmp"} 5.29313e+07
+disk_inodes_free{device="pfSense/var",fstype="zfs",host="pfsense.example",mode="rw",path="/var"} 5.29313e+07
+disk_inodes_free{device="pfSense/var/cache",fstype="zfs",host="pfsense.example",mode="rw",path="/var/cache"} 5.29313e+07
+disk_inodes_free{device="pfSense/var/db",fstype="zfs",host="pfsense.example",mode="rw",path="/var/db"} 5.29313e+07
+disk_inodes_free{device="pfSense/var/empty",fstype="zfs",host="pfsense.example",mode="rw",path="/var/empty"} 5.29313e+07
+disk_inodes_free{device="pfSense/var/log",fstype="zfs",host="pfsense.example",mode="rw",path="/var/log"} 5.29313e+07
+disk_inodes_free{device="pfSense/var/tmp",fstype="zfs",host="pfsense.example",mode="rw",path="/var/tmp"} 5.29313e+07
+# HELP disk_inodes_total Telegraf collected metric
+# TYPE disk_inodes_total gauge
+disk_inodes_total{device="pfSense",fstype="zfs",host="pfsense.example",mode="rw",path="/pfSense"} 5.2931308e+07
+disk_inodes_total{device="pfSense/ROOT/default",fstype="zfs",host="pfsense.example",mode="rw",path="/"} 5.2984636e+07
+disk_inodes_total{device="pfSense/ROOT/default/cf",fstype="zfs",host="pfsense.example",mode="rw",path="/cf"} 5.2931348e+07
+disk_inodes_total{device="pfSense/ROOT/default/var_cache_pkg",fstype="zfs",host="pfsense.example",mode="rw",path="/var/cache/pkg"} 5.2931311e+07
+disk_inodes_total{device="pfSense/ROOT/default/var_db_pkg",fstype="zfs",host="pfsense.example",mode="rw",path="/var/db/pkg"} 5.2931327e+07
+disk_inodes_total{device="pfSense/cf",fstype="zfs",host="pfsense.example",mode="rw",path="/cf"} 5.2931348e+07
+disk_inodes_total{device="pfSense/cf/conf",fstype="zfs",host="pfsense.example",mode="rw",path="/cf/conf"} 5.2931348e+07
+disk_inodes_total{device="pfSense/home",fstype="zfs",host="pfsense.example",mode="rw",path="/home"} 5.2931307e+07
+disk_inodes_total{device="pfSense/reservation",fstype="zfs",host="pfsense.example",mode="rw",path="/pfSense/reservation"} 5.9127479e+07
+disk_inodes_total{device="pfSense/tmp",fstype="zfs",host="pfsense.example",mode="rw",path="/tmp"} 5.293141e+07
+disk_inodes_total{device="pfSense/var",fstype="zfs",host="pfsense.example",mode="rw",path="/var"} 5.2931408e+07
+disk_inodes_total{device="pfSense/var/cache",fstype="zfs",host="pfsense.example",mode="rw",path="/var/cache"} 5.2931308e+07
+disk_inodes_total{device="pfSense/var/db",fstype="zfs",host="pfsense.example",mode="rw",path="/var/db"} 5.2931346e+07
+disk_inodes_total{device="pfSense/var/empty",fstype="zfs",host="pfsense.example",mode="rw",path="/var/empty"} 5.2931307e+07
+disk_inodes_total{device="pfSense/var/log",fstype="zfs",host="pfsense.example",mode="rw",path="/var/log"} 5.2931335e+07
+disk_inodes_total{device="pfSense/var/tmp",fstype="zfs",host="pfsense.example",mode="rw",path="/var/tmp"} 5.2931314e+07
+# HELP disk_inodes_used Telegraf collected metric
+# TYPE disk_inodes_used gauge
+disk_inodes_used{device="pfSense",fstype="zfs",host="pfsense.example",mode="rw",path="/pfSense"} 8
+disk_inodes_used{device="pfSense/ROOT/default",fstype="zfs",host="pfsense.example",mode="rw",path="/"} 53336
+disk_inodes_used{device="pfSense/ROOT/default/cf",fstype="zfs",host="pfsense.example",mode="rw",path="/cf"} 48
+disk_inodes_used{device="pfSense/ROOT/default/var_cache_pkg",fstype="zfs",host="pfsense.example",mode="rw",path="/var/cache/pkg"} 11
+disk_inodes_used{device="pfSense/ROOT/default/var_db_pkg",fstype="zfs",host="pfsense.example",mode="rw",path="/var/db/pkg"} 27
+disk_inodes_used{device="pfSense/cf",fstype="zfs",host="pfsense.example",mode="rw",path="/cf"} 48
+disk_inodes_used{device="pfSense/cf/conf",fstype="zfs",host="pfsense.example",mode="rw",path="/cf/conf"} 48
+disk_inodes_used{device="pfSense/home",fstype="zfs",host="pfsense.example",mode="rw",path="/home"} 7
+disk_inodes_used{device="pfSense/reservation",fstype="zfs",host="pfsense.example",mode="rw",path="/pfSense/reservation"} 7
+disk_inodes_used{device="pfSense/tmp",fstype="zfs",host="pfsense.example",mode="rw",path="/tmp"} 110
+disk_inodes_used{device="pfSense/var",fstype="zfs",host="pfsense.example",mode="rw",path="/var"} 108
+disk_inodes_used{device="pfSense/var/cache",fstype="zfs",host="pfsense.example",mode="rw",path="/var/cache"} 8
+disk_inodes_used{device="pfSense/var/db",fstype="zfs",host="pfsense.example",mode="rw",path="/var/db"} 46
+disk_inodes_used{device="pfSense/var/empty",fstype="zfs",host="pfsense.example",mode="rw",path="/var/empty"} 7
+disk_inodes_used{device="pfSense/var/log",fstype="zfs",host="pfsense.example",mode="rw",path="/var/log"} 35
+disk_inodes_used{device="pfSense/var/tmp",fstype="zfs",host="pfsense.example",mode="rw",path="/var/tmp"} 14
+# HELP disk_inodes_used_percent Telegraf collected metric
+# TYPE disk_inodes_used_percent gauge
+disk_inodes_used_percent{device="pfSense",fstype="zfs",host="pfsense.example",mode="rw",path="/pfSense"} 1.5113928414540597e-05
+disk_inodes_used_percent{device="pfSense/ROOT/default",fstype="zfs",host="pfsense.example",mode="rw",path="/"} 0.10066314317984558
+disk_inodes_used_percent{device="pfSense/ROOT/default/cf",fstype="zfs",host="pfsense.example",mode="rw",path="/cf"} 9.068350195804573e-05
+disk_inodes_used_percent{device="pfSense/ROOT/default/var_cache_pkg",fstype="zfs",host="pfsense.example",mode="rw",path="/var/cache/pkg"} 2.078165039214691e-05
+disk_inodes_used_percent{device="pfSense/ROOT/default/var_db_pkg",fstype="zfs",host="pfsense.example",mode="rw",path="/var/db/pkg"} 5.1009490088922196e-05
+disk_inodes_used_percent{device="pfSense/cf",fstype="zfs",host="pfsense.example",mode="rw",path="/cf"} 9.068350195804573e-05
+disk_inodes_used_percent{device="pfSense/cf/conf",fstype="zfs",host="pfsense.example",mode="rw",path="/cf/conf"} 9.068350195804573e-05
+disk_inodes_used_percent{device="pfSense/home",fstype="zfs",host="pfsense.example",mode="rw",path="/home"} 1.322468761256925e-05
+disk_inodes_used_percent{device="pfSense/reservation",fstype="zfs",host="pfsense.example",mode="rw",path="/pfSense/reservation"} 1.1838827087486682e-05
+disk_inodes_used_percent{device="pfSense/tmp",fstype="zfs",host="pfsense.example",mode="rw",path="/tmp"} 0.00020781611523290237
+disk_inodes_used_percent{device="pfSense/var",fstype="zfs",host="pfsense.example",mode="rw",path="/var"} 0.0002040376481199971
+disk_inodes_used_percent{device="pfSense/var/cache",fstype="zfs",host="pfsense.example",mode="rw",path="/var/cache"} 1.5113928414540597e-05
+disk_inodes_used_percent{device="pfSense/var/db",fstype="zfs",host="pfsense.example",mode="rw",path="/var/db"} 8.690502599348221e-05
+disk_inodes_used_percent{device="pfSense/var/empty",fstype="zfs",host="pfsense.example",mode="rw",path="/var/empty"} 1.322468761256925e-05
+disk_inodes_used_percent{device="pfSense/var/log",fstype="zfs",host="pfsense.example",mode="rw",path="/var/log"} 6.612340308439227e-05
+disk_inodes_used_percent{device="pfSense/var/tmp",fstype="zfs",host="pfsense.example",mode="rw",path="/var/tmp"} 2.6449371727291713e-05
+# HELP disk_total Telegraf collected metric
+# TYPE disk_total gauge
+disk_total{device="pfSense",fstype="zfs",host="pfsense.example",mode="rw",path="/pfSense"} 2.7100923904e+10
+disk_total{device="pfSense/ROOT/default",fstype="zfs",host="pfsense.example",mode="rw",path="/"} 2.8457490432e+10
+disk_total{device="pfSense/ROOT/default/cf",fstype="zfs",host="pfsense.example",mode="rw",path="/cf"} 2.71013376e+10
+disk_total{device="pfSense/ROOT/default/var_cache_pkg",fstype="zfs",host="pfsense.example",mode="rw",path="/var/cache/pkg"} 2.7180734464e+10
+disk_total{device="pfSense/ROOT/default/var_db_pkg",fstype="zfs",host="pfsense.example",mode="rw",path="/var/db/pkg"} 2.710735872e+10
+disk_total{device="pfSense/cf",fstype="zfs",host="pfsense.example",mode="rw",path="/cf"} 2.71013376e+10
+disk_total{device="pfSense/cf/conf",fstype="zfs",host="pfsense.example",mode="rw",path="/cf/conf"} 2.71013376e+10
+disk_total{device="pfSense/home",fstype="zfs",host="pfsense.example",mode="rw",path="/home"} 2.7100923904e+10
+disk_total{device="pfSense/reservation",fstype="zfs",host="pfsense.example",mode="rw",path="/pfSense/reservation"} 3.0273363968e+10
+disk_total{device="pfSense/tmp",fstype="zfs",host="pfsense.example",mode="rw",path="/tmp"} 2.7101075456e+10
+disk_total{device="pfSense/var",fstype="zfs",host="pfsense.example",mode="rw",path="/var"} 2.7104172032e+10
+disk_total{device="pfSense/var/cache",fstype="zfs",host="pfsense.example",mode="rw",path="/var/cache"} 2.7100923904e+10
+disk_total{device="pfSense/var/db",fstype="zfs",host="pfsense.example",mode="rw",path="/var/db"} 2.7101513728e+10
+disk_total{device="pfSense/var/empty",fstype="zfs",host="pfsense.example",mode="rw",path="/var/empty"} 2.7100923904e+10
+disk_total{device="pfSense/var/log",fstype="zfs",host="pfsense.example",mode="rw",path="/var/log"} 2.7101063168e+10
+disk_total{device="pfSense/var/tmp",fstype="zfs",host="pfsense.example",mode="rw",path="/var/tmp"} 2.7100932096e+10
+# HELP disk_used Telegraf collected metric
+# TYPE disk_used gauge
+disk_used{device="pfSense",fstype="zfs",host="pfsense.example",mode="rw",path="/pfSense"} 98304
+disk_used{device="pfSense/ROOT/default",fstype="zfs",host="pfsense.example",mode="rw",path="/"} 1.356664832e+09
+disk_used{device="pfSense/ROOT/default/cf",fstype="zfs",host="pfsense.example",mode="rw",path="/cf"} 512000
+disk_used{device="pfSense/ROOT/default/var_cache_pkg",fstype="zfs",host="pfsense.example",mode="rw",path="/var/cache/pkg"} 7.9908864e+07
+disk_used{device="pfSense/ROOT/default/var_db_pkg",fstype="zfs",host="pfsense.example",mode="rw",path="/var/db/pkg"} 6.53312e+06
+disk_used{device="pfSense/cf",fstype="zfs",host="pfsense.example",mode="rw",path="/cf"} 512000
+disk_used{device="pfSense/cf/conf",fstype="zfs",host="pfsense.example",mode="rw",path="/cf/conf"} 512000
+disk_used{device="pfSense/home",fstype="zfs",host="pfsense.example",mode="rw",path="/home"} 98304
+disk_used{device="pfSense/reservation",fstype="zfs",host="pfsense.example",mode="rw",path="/pfSense/reservation"} 98304
+disk_used{device="pfSense/tmp",fstype="zfs",host="pfsense.example",mode="rw",path="/tmp"} 249856
+disk_used{device="pfSense/var",fstype="zfs",host="pfsense.example",mode="rw",path="/var"} 3.346432e+06
+disk_used{device="pfSense/var/cache",fstype="zfs",host="pfsense.example",mode="rw",path="/var/cache"} 98304
+disk_used{device="pfSense/var/db",fstype="zfs",host="pfsense.example",mode="rw",path="/var/db"} 688128
+disk_used{device="pfSense/var/empty",fstype="zfs",host="pfsense.example",mode="rw",path="/var/empty"} 98304
+disk_used{device="pfSense/var/log",fstype="zfs",host="pfsense.example",mode="rw",path="/var/log"} 237568
+disk_used{device="pfSense/var/tmp",fstype="zfs",host="pfsense.example",mode="rw",path="/var/tmp"} 106496
+# HELP disk_used_percent Telegraf collected metric
+# TYPE disk_used_percent gauge
+disk_used_percent{device="pfSense",fstype="zfs",host="pfsense.example",mode="rw",path="/pfSense"} 0.0003627330210151643
+disk_used_percent{device="pfSense/ROOT/default",fstype="zfs",host="pfsense.example",mode="rw",path="/"} 4.767338269837216
+disk_used_percent{device="pfSense/ROOT/default/cf",fstype="zfs",host="pfsense.example",mode="rw",path="/cf"} 0.0018892056457021516
+disk_used_percent{device="pfSense/ROOT/default/var_cache_pkg",fstype="zfs",host="pfsense.example",mode="rw",path="/var/cache/pkg"} 0.29399081951165335
+disk_used_percent{device="pfSense/ROOT/default/var_db_pkg",fstype="zfs",host="pfsense.example",mode="rw",path="/var/db/pkg"} 0.024100909526016706
+disk_used_percent{device="pfSense/cf",fstype="zfs",host="pfsense.example",mode="rw",path="/cf"} 0.0018892056457021516
+disk_used_percent{device="pfSense/cf/conf",fstype="zfs",host="pfsense.example",mode="rw",path="/cf/conf"} 0.0018892056457021516
+disk_used_percent{device="pfSense/home",fstype="zfs",host="pfsense.example",mode="rw",path="/home"} 0.0003627330210151643
+disk_used_percent{device="pfSense/reservation",fstype="zfs",host="pfsense.example",mode="rw",path="/pfSense/reservation"} 0.0003247210984015875
+disk_used_percent{device="pfSense/tmp",fstype="zfs",host="pfsense.example",mode="rw",path="/tmp"} 0.0009219412727943367
+disk_used_percent{device="pfSense/var",fstype="zfs",host="pfsense.example",mode="rw",path="/var"} 0.012346556818076206
+disk_used_percent{device="pfSense/var/cache",fstype="zfs",host="pfsense.example",mode="rw",path="/var/cache"} 0.0003627330210151643
+disk_used_percent{device="pfSense/var/db",fstype="zfs",host="pfsense.example",mode="rw",path="/var/db"} 0.0025390758867061317
+disk_used_percent{device="pfSense/var/empty",fstype="zfs",host="pfsense.example",mode="rw",path="/var/empty"} 0.0003627330210151643
+disk_used_percent{device="pfSense/var/log",fstype="zfs",host="pfsense.example",mode="rw",path="/var/log"} 0.0008766002961851035
+disk_used_percent{device="pfSense/var/tmp",fstype="zfs",host="pfsense.example",mode="rw",path="/var/tmp"} 0.00039296065398325707
+# HELP diskio_io_time Telegraf collected metric
+# TYPE diskio_io_time counter
+diskio_io_time{host="pfsense.example",name="cd0"} 60
+diskio_io_time{host="pfsense.example",name="da0"} 8194
+diskio_io_time{host="pfsense.example",name="pass0"} 0
+diskio_io_time{host="pfsense.example",name="pass1"} 0
+# HELP diskio_iops_in_progress Telegraf collected metric
+# TYPE diskio_iops_in_progress counter
+diskio_iops_in_progress{host="pfsense.example",name="cd0"} 0
+diskio_iops_in_progress{host="pfsense.example",name="da0"} 0
+diskio_iops_in_progress{host="pfsense.example",name="pass0"} 0
+diskio_iops_in_progress{host="pfsense.example",name="pass1"} 0
+# HELP diskio_merged_reads Telegraf collected metric
+# TYPE diskio_merged_reads counter
+diskio_merged_reads{host="pfsense.example",name="cd0"} 0
+diskio_merged_reads{host="pfsense.example",name="da0"} 0
+diskio_merged_reads{host="pfsense.example",name="pass0"} 0
+diskio_merged_reads{host="pfsense.example",name="pass1"} 0
+# HELP diskio_merged_writes Telegraf collected metric
+# TYPE diskio_merged_writes counter
+diskio_merged_writes{host="pfsense.example",name="cd0"} 0
+diskio_merged_writes{host="pfsense.example",name="da0"} 0
+diskio_merged_writes{host="pfsense.example",name="pass0"} 0
+diskio_merged_writes{host="pfsense.example",name="pass1"} 0
+# HELP diskio_read_bytes Telegraf collected metric
+# TYPE diskio_read_bytes counter
+diskio_read_bytes{host="pfsense.example",name="cd0"} 1.419284e+06
+diskio_read_bytes{host="pfsense.example",name="da0"} 1.28451072e+08
+diskio_read_bytes{host="pfsense.example",name="pass0"} 0
+diskio_read_bytes{host="pfsense.example",name="pass1"} 0
+# HELP diskio_read_time Telegraf collected metric
+# TYPE diskio_read_time counter
+diskio_read_time{host="pfsense.example",name="cd0"} 54
+diskio_read_time{host="pfsense.example",name="da0"} 2225
+diskio_read_time{host="pfsense.example",name="pass0"} 0
+diskio_read_time{host="pfsense.example",name="pass1"} 0
+# HELP diskio_reads Telegraf collected metric
+# TYPE diskio_reads counter
+diskio_reads{host="pfsense.example",name="cd0"} 148
+diskio_reads{host="pfsense.example",name="da0"} 3914
+diskio_reads{host="pfsense.example",name="pass0"} 0
+diskio_reads{host="pfsense.example",name="pass1"} 0
+# HELP diskio_weighted_io_time Telegraf collected metric
+# TYPE diskio_weighted_io_time counter
+diskio_weighted_io_time{host="pfsense.example",name="cd0"} 0
+diskio_weighted_io_time{host="pfsense.example",name="da0"} 0
+diskio_weighted_io_time{host="pfsense.example",name="pass0"} 0
+diskio_weighted_io_time{host="pfsense.example",name="pass1"} 0
+# HELP diskio_write_bytes Telegraf collected metric
+# TYPE diskio_write_bytes counter
+diskio_write_bytes{host="pfsense.example",name="cd0"} 0
+diskio_write_bytes{host="pfsense.example",name="da0"} 3.21974272e+08
+diskio_write_bytes{host="pfsense.example",name="pass0"} 0
+diskio_write_bytes{host="pfsense.example",name="pass1"} 0
+# HELP diskio_write_time Telegraf collected metric
+# TYPE diskio_write_time counter
+diskio_write_time{host="pfsense.example",name="cd0"} 0
+diskio_write_time{host="pfsense.example",name="da0"} 6398
+diskio_write_time{host="pfsense.example",name="pass0"} 0
+diskio_write_time{host="pfsense.example",name="pass1"} 0
+# HELP diskio_writes Telegraf collected metric
+# TYPE diskio_writes counter
+diskio_writes{host="pfsense.example",name="cd0"} 0
+diskio_writes{host="pfsense.example",name="da0"} 12115
+diskio_writes{host="pfsense.example",name="pass0"} 0
+diskio_writes{host="pfsense.example",name="pass1"} 0
+# HELP go_gc_duration_seconds A summary of the wall-time pause (stop-the-world) duration in garbage collection cycles.
+# TYPE go_gc_duration_seconds summary
+go_gc_duration_seconds{quantile="0"} 1.466e-05
+go_gc_duration_seconds{quantile="0.25"} 1.466e-05
+go_gc_duration_seconds{quantile="0.5"} 3.4592e-05
+go_gc_duration_seconds{quantile="0.75"} 3.4592e-05
+go_gc_duration_seconds{quantile="1"} 3.4592e-05
+go_gc_duration_seconds_sum 4.9252e-05
+go_gc_duration_seconds_count 2
+# HELP go_gc_gogc_percent Heap size target percentage configured by the user, otherwise 100. This value is set by the GOGC environment variable, and the runtime/debug.SetGCPercent function. Sourced from /gc/gogc:percent.
+# TYPE go_gc_gogc_percent gauge
+go_gc_gogc_percent 100
+# HELP go_gc_gomemlimit_bytes Go runtime memory limit configured by the user, otherwise math.MaxInt64. This value is set by the GOMEMLIMIT environment variable, and the runtime/debug.SetMemoryLimit function. Sourced from /gc/gomemlimit:bytes.
+# TYPE go_gc_gomemlimit_bytes gauge
+go_gc_gomemlimit_bytes 9.223372036854776e+18
+# HELP go_goroutines Number of goroutines that currently exist.
+# TYPE go_goroutines gauge
+go_goroutines 43
+# HELP go_info Information about the Go environment.
+# TYPE go_info gauge
+go_info{version="go1.26.4"} 1
+# HELP go_memstats_alloc_bytes Number of bytes allocated in heap and currently in use. Equals to /memory/classes/heap/objects:bytes.
+# TYPE go_memstats_alloc_bytes gauge
+go_memstats_alloc_bytes 1.5155776e+07
+# HELP go_memstats_alloc_bytes_total Total number of bytes allocated in heap until now, even if released already. Equals to /gc/heap/allocs:bytes.
+# TYPE go_memstats_alloc_bytes_total counter
+go_memstats_alloc_bytes_total 2.1450632e+07
+# HELP go_memstats_buck_hash_sys_bytes Number of bytes used by the profiling bucket hash table. Equals to /memory/classes/profiling/buckets:bytes.
+# TYPE go_memstats_buck_hash_sys_bytes gauge
+go_memstats_buck_hash_sys_bytes 1.564202e+06
+# HELP go_memstats_frees_total Total number of heap objects frees. Equals to /gc/heap/frees:objects + /gc/heap/tiny/allocs:objects.
+# TYPE go_memstats_frees_total counter
+go_memstats_frees_total 52883
+# HELP go_memstats_gc_sys_bytes Number of bytes used for garbage collection system metadata. Equals to /memory/classes/metadata/other:bytes.
+# TYPE go_memstats_gc_sys_bytes gauge
+go_memstats_gc_sys_bytes 3.775728e+06
+# HELP go_memstats_heap_alloc_bytes Number of heap bytes allocated and currently in use, same as go_memstats_alloc_bytes. Equals to /memory/classes/heap/objects:bytes.
+# TYPE go_memstats_heap_alloc_bytes gauge
+go_memstats_heap_alloc_bytes 1.5155776e+07
+# HELP go_memstats_heap_idle_bytes Number of heap bytes waiting to be used. Equals to /memory/classes/heap/released:bytes + /memory/classes/heap/free:bytes.
+# TYPE go_memstats_heap_idle_bytes gauge
+go_memstats_heap_idle_bytes 6.864896e+06
+# HELP go_memstats_heap_inuse_bytes Number of heap bytes that are in use. Equals to /memory/classes/heap/objects:bytes + /memory/classes/heap/unused:bytes
+# TYPE go_memstats_heap_inuse_bytes gauge
+go_memstats_heap_inuse_bytes 1.7416192e+07
+# HELP go_memstats_heap_objects Number of currently allocated objects. Equals to /gc/heap/objects:objects.
+# TYPE go_memstats_heap_objects gauge
+go_memstats_heap_objects 88328
+# HELP go_memstats_heap_released_bytes Number of heap bytes released to OS. Equals to /memory/classes/heap/released:bytes.
+# TYPE go_memstats_heap_released_bytes gauge
+go_memstats_heap_released_bytes 6.864896e+06
+# HELP go_memstats_heap_sys_bytes Number of heap bytes obtained from system. Equals to /memory/classes/heap/objects:bytes + /memory/classes/heap/unused:bytes + /memory/classes/heap/released:bytes + /memory/classes/heap/free:bytes.
+# TYPE go_memstats_heap_sys_bytes gauge
+go_memstats_heap_sys_bytes 2.4281088e+07
+# HELP go_memstats_last_gc_time_seconds Number of seconds since 1970 of last garbage collection.
+# TYPE go_memstats_last_gc_time_seconds gauge
+go_memstats_last_gc_time_seconds 1.793238689869656e+09
+# HELP go_memstats_mallocs_total Total number of heap objects allocated, both live and gc-ed. Semantically a counter version for go_memstats_heap_objects gauge. Equals to /gc/heap/allocs:objects + /gc/heap/tiny/allocs:objects.
+# TYPE go_memstats_mallocs_total counter
+go_memstats_mallocs_total 141211
+# HELP go_memstats_mcache_inuse_bytes Number of bytes in use by mcache structures. Equals to /memory/classes/metadata/mcache/inuse:bytes.
+# TYPE go_memstats_mcache_inuse_bytes gauge
+go_memstats_mcache_inuse_bytes 2296
+# HELP go_memstats_mcache_sys_bytes Number of bytes used for mcache structures obtained from system. Equals to /memory/classes/metadata/mcache/inuse:bytes + /memory/classes/metadata/mcache/free:bytes.
+# TYPE go_memstats_mcache_sys_bytes gauge
+go_memstats_mcache_sys_bytes 16072
+# HELP go_memstats_mspan_inuse_bytes Number of bytes in use by mspan structures. Equals to /memory/classes/metadata/mspan/inuse:bytes.
+# TYPE go_memstats_mspan_inuse_bytes gauge
+go_memstats_mspan_inuse_bytes 204320
+# HELP go_memstats_mspan_sys_bytes Number of bytes used for mspan structures obtained from system. Equals to /memory/classes/metadata/mspan/inuse:bytes + /memory/classes/metadata/mspan/free:bytes.
+# TYPE go_memstats_mspan_sys_bytes gauge
+go_memstats_mspan_sys_bytes 212160
+# HELP go_memstats_next_gc_bytes Number of heap bytes when next garbage collection will take place. Equals to /gc/heap/goal:bytes.
+# TYPE go_memstats_next_gc_bytes gauge
+go_memstats_next_gc_bytes 2.516945e+07
+# HELP go_memstats_other_sys_bytes Number of bytes used for other system allocations. Equals to /memory/classes/other:bytes.
+# TYPE go_memstats_other_sys_bytes gauge
+go_memstats_other_sys_bytes 385948
+# HELP go_memstats_stack_inuse_bytes Number of bytes obtained from system for stack allocator in non-CGO environments. Equals to /memory/classes/heap/stacks:bytes.
+# TYPE go_memstats_stack_inuse_bytes gauge
+go_memstats_stack_inuse_bytes 884736
+# HELP go_memstats_stack_sys_bytes Number of bytes obtained from system for stack allocator. Equals to /memory/classes/heap/stacks:bytes + /memory/classes/os-stacks:bytes.
+# TYPE go_memstats_stack_sys_bytes gauge
+go_memstats_stack_sys_bytes 884736
+# HELP go_memstats_sys_bytes Number of bytes obtained from system. Equals to /memory/classes/total:byte.
+# TYPE go_memstats_sys_bytes gauge
+go_memstats_sys_bytes 3.1119934e+07
+# HELP go_sched_gomaxprocs_threads The current runtime.GOMAXPROCS setting, or the number of operating system threads that can execute user-level Go code simultaneously. Sourced from /sched/gomaxprocs:threads.
+# TYPE go_sched_gomaxprocs_threads gauge
+go_sched_gomaxprocs_threads 1
+# HELP go_threads Number of OS threads created.
+# TYPE go_threads gauge
+go_threads 10
+# HELP mem_active Telegraf collected metric
+# TYPE mem_active gauge
+mem_active{host="pfsense.example"} 1.10174208e+08
+# HELP mem_available Telegraf collected metric
+# TYPE mem_available gauge
+mem_available{host="pfsense.example"} 1.397977088e+09
+# HELP mem_available_percent Telegraf collected metric
+# TYPE mem_available_percent gauge
+mem_available_percent{host="pfsense.example"} 67.08117871581848
+# HELP mem_buffered Telegraf collected metric
+# TYPE mem_buffered gauge
+mem_buffered{host="pfsense.example"} 0
+# HELP mem_cached Telegraf collected metric
+# TYPE mem_cached gauge
+mem_cached{host="pfsense.example"} 0
+# HELP mem_free Telegraf collected metric
+# TYPE mem_free gauge
+mem_free{host="pfsense.example"} 1.13543168e+09
+# HELP mem_inactive Telegraf collected metric
+# TYPE mem_inactive gauge
+mem_inactive{host="pfsense.example"} 2.62545408e+08
+# HELP mem_laundry Telegraf collected metric
+# TYPE mem_laundry gauge
+mem_laundry{host="pfsense.example"} 0
+# HELP mem_total Telegraf collected metric
+# TYPE mem_total gauge
+mem_total{host="pfsense.example"} 2.084007936e+09
+# HELP mem_used Telegraf collected metric
+# TYPE mem_used gauge
+mem_used{host="pfsense.example"} 6.86030848e+08
+# HELP mem_used_percent Telegraf collected metric
+# TYPE mem_used_percent gauge
+mem_used_percent{host="pfsense.example"} 32.91882128418152
+# HELP mem_wired Telegraf collected metric
+# TYPE mem_wired gauge
+mem_wired{host="pfsense.example"} 5.24980224e+08
+# HELP net_bytes_recv Telegraf collected metric
+# TYPE net_bytes_recv counter
+net_bytes_recv{host="pfsense.example",interface="vtnet0"} 8.7815199e+07
+# HELP net_bytes_sent Telegraf collected metric
+# TYPE net_bytes_sent counter
+net_bytes_sent{host="pfsense.example",interface="vtnet0"} 2.4114689e+07
+# HELP net_drop_in Telegraf collected metric
+# TYPE net_drop_in counter
+net_drop_in{host="pfsense.example",interface="vtnet0"} 0
+# HELP net_drop_out Telegraf collected metric
+# TYPE net_drop_out counter
+net_drop_out{host="pfsense.example",interface="vtnet0"} 0
+# HELP net_err_in Telegraf collected metric
+# TYPE net_err_in counter
+net_err_in{host="pfsense.example",interface="vtnet0"} 0
+# HELP net_err_out Telegraf collected metric
+# TYPE net_err_out counter
+net_err_out{host="pfsense.example",interface="vtnet0"} 0
+# HELP net_packets_recv Telegraf collected metric
+# TYPE net_packets_recv counter
+net_packets_recv{host="pfsense.example",interface="vtnet0"} 61914
+# HELP net_packets_sent Telegraf collected metric
+# TYPE net_packets_sent counter
+net_packets_sent{host="pfsense.example",interface="vtnet0"} 78332
+# HELP net_speed Telegraf collected metric
+# TYPE net_speed counter
+net_speed{host="pfsense.example",interface="vtnet0"} -1
+# HELP pf_bad_offset Telegraf collected metric
+# TYPE pf_bad_offset untyped
+pf_bad_offset{host="pfsense.example"} 0
+# HELP pf_bad_timestamp Telegraf collected metric
+# TYPE pf_bad_timestamp untyped
+pf_bad_timestamp{host="pfsense.example"} 0
+# HELP pf_congestion Telegraf collected metric
+# TYPE pf_congestion untyped
+pf_congestion{host="pfsense.example"} 0
+# HELP pf_entries Telegraf collected metric
+# TYPE pf_entries untyped
+pf_entries{host="pfsense.example"} 9
+# HELP pf_fragment Telegraf collected metric
+# TYPE pf_fragment untyped
+pf_fragment{host="pfsense.example"} 0
+# HELP pf_inserts Telegraf collected metric
+# TYPE pf_inserts untyped
+pf_inserts{host="pfsense.example"} 1313
+# HELP pf_ip_option Telegraf collected metric
+# TYPE pf_ip_option untyped
+pf_ip_option{host="pfsense.example"} 2
+# HELP pf_match Telegraf collected metric
+# TYPE pf_match untyped
+pf_match{host="pfsense.example"} 1313
+# HELP pf_memory Telegraf collected metric
+# TYPE pf_memory untyped
+pf_memory{host="pfsense.example"} 0
+# HELP pf_normalize Telegraf collected metric
+# TYPE pf_normalize untyped
+pf_normalize{host="pfsense.example"} 0
+# HELP pf_proto_cksum Telegraf collected metric
+# TYPE pf_proto_cksum untyped
+pf_proto_cksum{host="pfsense.example"} 0
+# HELP pf_removals Telegraf collected metric
+# TYPE pf_removals untyped
+pf_removals{host="pfsense.example"} 1303
+# HELP pf_searches Telegraf collected metric
+# TYPE pf_searches untyped
+pf_searches{host="pfsense.example"} 141448
+# HELP pf_short Telegraf collected metric
+# TYPE pf_short untyped
+pf_short{host="pfsense.example"} 0
+# HELP pf_src_limit Telegraf collected metric
+# TYPE pf_src_limit untyped
+pf_src_limit{host="pfsense.example"} 0
+# HELP pf_state_insert Telegraf collected metric
+# TYPE pf_state_insert untyped
+pf_state_insert{host="pfsense.example"} 0
+# HELP pf_state_limit Telegraf collected metric
+# TYPE pf_state_limit untyped
+pf_state_limit{host="pfsense.example"} 0
+# HELP pf_state_mismatch Telegraf collected metric
+# TYPE pf_state_mismatch untyped
+pf_state_mismatch{host="pfsense.example"} 0
+# HELP pf_synproxy Telegraf collected metric
+# TYPE pf_synproxy untyped
+pf_synproxy{host="pfsense.example"} 0
+# HELP ping_average_response_ms Telegraf collected metric
+# TYPE ping_average_response_ms untyped
+ping_average_response_ms{host="pfsense.example",url="192.0.2.10"} 0.337
+ping_average_response_ms{host="pfsense.example",url="127.0.0.1"} 0.045
+# HELP ping_maximum_response_ms Telegraf collected metric
+# TYPE ping_maximum_response_ms untyped
+ping_maximum_response_ms{host="pfsense.example",url="192.0.2.10"} 0.421
+ping_maximum_response_ms{host="pfsense.example",url="127.0.0.1"} 0.052
+# HELP ping_minimum_response_ms Telegraf collected metric
+# TYPE ping_minimum_response_ms untyped
+ping_minimum_response_ms{host="pfsense.example",url="192.0.2.10"} 0.254
+ping_minimum_response_ms{host="pfsense.example",url="127.0.0.1"} 0.039
+# HELP ping_packets_received Telegraf collected metric
+# TYPE ping_packets_received untyped
+ping_packets_received{host="pfsense.example",url="192.0.2.10"} 3
+ping_packets_received{host="pfsense.example",url="127.0.0.1"} 3
+# HELP ping_packets_transmitted Telegraf collected metric
+# TYPE ping_packets_transmitted untyped
+ping_packets_transmitted{host="pfsense.example",url="192.0.2.10"} 3
+ping_packets_transmitted{host="pfsense.example",url="127.0.0.1"} 3
+# HELP ping_percent_packet_loss Telegraf collected metric
+# TYPE ping_percent_packet_loss untyped
+ping_percent_packet_loss{host="pfsense.example",url="192.0.2.10"} 0
+ping_percent_packet_loss{host="pfsense.example",url="127.0.0.1"} 0
+# HELP ping_result_code Telegraf collected metric
+# TYPE ping_result_code untyped
+ping_result_code{host="pfsense.example",url="192.0.2.10"} 0
+ping_result_code{host="pfsense.example",url="127.0.0.1"} 0
+# HELP ping_standard_deviation_ms Telegraf collected metric
+# TYPE ping_standard_deviation_ms untyped
+ping_standard_deviation_ms{host="pfsense.example",url="192.0.2.10"} 0.068
+ping_standard_deviation_ms{host="pfsense.example",url="127.0.0.1"} 0.005
+# HELP ping_ttl Telegraf collected metric
+# TYPE ping_ttl untyped
+ping_ttl{host="pfsense.example",url="192.0.2.10"} 64
+ping_ttl{host="pfsense.example",url="127.0.0.1"} 64
+# HELP processes_blocked Telegraf collected metric
+# TYPE processes_blocked gauge
+processes_blocked{host="pfsense.example"} 17
+# HELP processes_idle Telegraf collected metric
+# TYPE processes_idle gauge
+processes_idle{host="pfsense.example"} 36
+# HELP processes_running Telegraf collected metric
+# TYPE processes_running gauge
+processes_running{host="pfsense.example"} 2
+# HELP processes_sleeping Telegraf collected metric
+# TYPE processes_sleeping gauge
+processes_sleeping{host="pfsense.example"} 15
+# HELP processes_stopped Telegraf collected metric
+# TYPE processes_stopped gauge
+processes_stopped{host="pfsense.example"} 0
+# HELP processes_total Telegraf collected metric
+# TYPE processes_total gauge
+processes_total{host="pfsense.example"} 72
+# HELP processes_unknown Telegraf collected metric
+# TYPE processes_unknown gauge
+processes_unknown{host="pfsense.example"} 0
+# HELP processes_wait Telegraf collected metric
+# TYPE processes_wait gauge
+processes_wait{host="pfsense.example"} 2
+# HELP processes_zombies Telegraf collected metric
+# TYPE processes_zombies gauge
+processes_zombies{host="pfsense.example"} 0
+# HELP swap_free Telegraf collected metric
+# TYPE swap_free gauge
+swap_free{host="pfsense.example"} 1.073741824e+09
+# HELP swap_in Telegraf collected metric
+# TYPE swap_in counter
+swap_in{host="pfsense.example"} 0
+# HELP swap_out Telegraf collected metric
+# TYPE swap_out counter
+swap_out{host="pfsense.example"} 0
+# HELP swap_total Telegraf collected metric
+# TYPE swap_total gauge
+swap_total{host="pfsense.example"} 1.073741824e+09
+# HELP swap_used Telegraf collected metric
+# TYPE swap_used gauge
+swap_used{host="pfsense.example"} 0
+# HELP swap_used_percent Telegraf collected metric
+# TYPE swap_used_percent gauge
+swap_used_percent{host="pfsense.example"} 0
+# HELP system_load1 Telegraf collected metric
+# TYPE system_load1 gauge
+system_load1{host="pfsense.example"} 0.46826171875
+# HELP system_load15 Telegraf collected metric
+# TYPE system_load15 gauge
+system_load15{host="pfsense.example"} 0.3681640625
+# HELP system_load5 Telegraf collected metric
+# TYPE system_load5 gauge
+system_load5{host="pfsense.example"} 0.40673828125
+# HELP system_n_cpus Telegraf collected metric
+# TYPE system_n_cpus gauge
+system_n_cpus{host="pfsense.example"} 1
+# HELP system_n_physical_cpus Telegraf collected metric
+# TYPE system_n_physical_cpus gauge
+system_n_physical_cpus{host="pfsense.example"} 1
+# HELP system_n_unique_users Telegraf collected metric
+# TYPE system_n_unique_users gauge
+system_n_unique_users{host="pfsense.example"} 1
+# HELP system_n_users Telegraf collected metric
+# TYPE system_n_users gauge
+system_n_users{host="pfsense.example"} 1
+# HELP system_uptime Telegraf collected metric
+# TYPE system_uptime counter
+system_uptime{host="pfsense.example"} 2439
+ping_packets_received{host="pfsense.example",url="192.0.2.254"} 0
+ping_packets_transmitted{host="pfsense.example",url="192.0.2.254"} 3
+ping_percent_packet_loss{host="pfsense.example",url="192.0.2.254"} 100
+ping_result_code{host="pfsense.example",url="192.0.2.254"} 2

@@ -41,14 +41,18 @@ MAX_BODY_BYTES = 8 * 1024 * 1024
 
 # Telegraf metric names that identify the output and that the cards read.
 IFACE_METRIC = "net_bytes_recv"  # label: interface
-GATEWAY_METRIC = "ping_average_response_ms"  # label: url (the monitored gateway address)
+RTT_METRIC = "ping_average_response_ms"  # label: url (the monitored gateway address)
 LOSS_METRIC = "ping_percent_packet_loss"
 STATES_METRIC = "pf_entries"
 CPU_IDLE_METRIC = "cpu_usage_idle"
 MEM_TOTAL_METRIC = "mem_total"
-_RECOGNISED = frozenset(
-    {IFACE_METRIC, GATEWAY_METRIC, LOSS_METRIC, STATES_METRIC, CPU_IDLE_METRIC, MEM_TOTAL_METRIC}
+# Telegraf's ping input emits the RTT families (and ``ping_ttl``) only when a reply came
+# back. A gateway with 100% loss has only loss, packet counts and result code, so gateways
+# are counted from any of these, keyed by ``url``.
+GATEWAY_METRICS = frozenset(
+    {RTT_METRIC, LOSS_METRIC, "ping_packets_transmitted", "ping_result_code"}
 )
+_RECOGNISED = GATEWAY_METRICS | {IFACE_METRIC, STATES_METRIC, CPU_IDLE_METRIC, MEM_TOTAL_METRIC}
 
 
 class PfSenseConfig(BaseModel):
@@ -105,7 +109,7 @@ def describe_telegraf(text: str) -> tuple[int, int] | None:
             for sample in family.samples:
                 if family.name == IFACE_METRIC:
                     interfaces.add(sample.labels.get("interface", ""))
-                elif family.name == GATEWAY_METRIC:
+                elif family.name in GATEWAY_METRICS:
                     gateways.add(sample.labels.get("url", ""))
     except ValueError:
         return None
