@@ -12,7 +12,8 @@ Secret: the API key, a top-level ``SecretStr``. It is sent in the ``X-Emby-Token
 header to the configured host and nowhere else: never in the query string, never in a
 message or log line (redirects are not followed).
 
-Privacy: the metrics are counts. No user name, client address, device name or media
+Privacy: the metrics are counts. The server's name is the only device text exported,
+and only on the info series. No user name, client address, device name or media
 title is read into a label or a message; the session fields that hold them are never
 looked at.
 
@@ -51,6 +52,7 @@ from app.integrations.builtin.common import (
     host_port,
     is_tls_failure,
 )
+from app.integrations.builtin.ifmib import MAX_LABEL_TEXT, clean_text
 
 # Reuse the Proxmox pattern for pinning a pasted certificate (same parser, same limits).
 from app.integrations.builtin.proxmox.integration import (
@@ -63,7 +65,7 @@ from app.integrations.errors import PollFailure
 TYPE_ID = "emby"
 PREFIX = f"vantage_{TYPE_ID}"
 
-METRIC_INFO = f"{PREFIX}_server_info"  # value 1; label: version (validated, not free text)
+METRIC_INFO = f"{PREFIX}_server_info"  # value 1; labels: version (validated), server_name
 METRIC_UPDATE = f"{PREFIX}_update_available"
 METRIC_RESTART = f"{PREFIX}_restart_pending"
 METRIC_SESSIONS = f"{PREFIX}_sessions"
@@ -369,10 +371,15 @@ def parse_info(data: Any) -> str | None:
 
 
 def info_samples(data: dict[str, Any], version: str | None) -> list[Sample]:
+    # The server name is device text: only on this info series (value 1), cleaned and
+    # capped (maintainer's label rule, INTEGRATIONS.md section 9).
     samples = [
         Sample(
             name=METRIC_INFO,
-            labels={"version": version or ""},
+            labels={
+                "version": version or "",
+                "server_name": clean_text(data.get("ServerName"), MAX_LABEL_TEXT),
+            },
             value=1.0,
             type="gauge",
         )

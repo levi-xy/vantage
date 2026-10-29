@@ -60,7 +60,7 @@ HINT = {
 }
 PRIVATE_TEXT = (
     "example-alice", "example-bob", "example-laptop", "192.0.2.1", "Example Movie",
-    "example-emby", "Example Movies", "/example/",
+    "Example Movies", "/example/",
 )  # fmt: skip
 
 INFO = emby.PATH_INFO
@@ -412,7 +412,8 @@ async def test_poll_parses_the_fixtures(fake_net: FakeNetwork) -> None:
     assert_read_only(fake_net)
     found = by_name(samples)
     [info] = found["server_info"]
-    assert info.labels == {"version": "4.8.10.0"} and info.value == 1
+    assert info.labels == {"version": "4.8.10.0", "server_name": "example-emby"}
+    assert info.value == 1
     assert found["update_available"][0].value == 1
     assert found["restart_pending"][0].value == 0
     assert found["sessions"][0].value == 4
@@ -471,7 +472,7 @@ async def test_poll_skips_unusable_values(fake_net: FakeNetwork) -> None:
     serve(fake_net, counts=body(counts), info=body({"Version": 5, "HasUpdateAvailable": "yes"}))
     samples = await run_poll(cfg())
     assert labelled(samples, "items", "item_type") == {"song": 5.0}
-    assert by_name(samples)["server_info"][0].labels == {"version": ""}
+    assert by_name(samples)["server_info"][0].labels == {"version": "", "server_name": ""}
     assert "update_available" not in by_name(samples)
 
 
@@ -485,15 +486,16 @@ async def test_metrics_carry_counts_only(fake_net: FakeNetwork) -> None:
     """No user, device, address, title, server or library name reaches a sample."""
     serve(fake_net)
     samples = await run_poll(cfg())
-    allowed = {"version", "play_method", "item_type", "library_type"}
+    allowed = {"version", "server_name", "play_method", "item_type", "library_type"}
     for s in samples:
         assert set(s.labels) <= allowed, s
+        assert "server_name" not in s.labels or s.name == emby.METRIC_INFO
         text = s.name + "".join(f"{k}={v}" for k, v in s.labels.items())
         for private in PRIVATE_TEXT:
             assert private not in text
     values = {v for s in samples for v in s.labels.values()}
     assert values <= {
-        "4.8.10.0", "transcode", "direct_play", "direct_stream", "unknown", "other",
+        "4.8.10.0", "example-emby", "transcode", "direct_play", "direct_stream", "unknown", "other",
         *emby.ITEM_TYPES.values(), *emby.LIBRARY_TYPES.values(),
     }  # fmt: skip
 
@@ -659,3 +661,15 @@ def test_api_serves_tcp_hint_on_timeout(admin: TestClient, fake_net: FakeNetwork
     r = admin.post("/api/v1/instances/test", json={"type_id": "emby", "config": cfg()})
     assert r.status_code == 200 and r.json()["hint"] == HINT
     assert_no_secret(r.text)
+
+
+async def test_server_name_is_cleaned_capped_and_only_on_the_info_series(
+    fake_net: FakeNetwork,
+) -> None:
+    name = "Ex\nample\x00 " + "x" * 300
+    serve(fake_net, info=body({"ServerName": name, "Version": "4.8.10.0"}))
+    samples = await run_poll(cfg())
+    [info] = by_name(samples)["server_info"]
+    shown = info.labels["server_name"]
+    assert shown.startswith("Ex ample ") and len(shown) == 128 and "\n" not in shown
+    assert [s.name for s in samples if "server_name" in s.labels] == [emby.METRIC_INFO]

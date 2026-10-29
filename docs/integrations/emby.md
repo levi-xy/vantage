@@ -26,13 +26,13 @@ The two optional requests are left out of the poll, silently, if the server refu
 
 Emby API keys (Dashboard, Advanced, API Keys) cannot be limited to read-only: Emby gives a key the rights of a server administrator. So the safety comes from two things: Vantage sends only the four `GET`s above (enforced in code, tested), and you give it a key of its own. Create a key named "Vantage" used by nothing else, so you can revoke it without touching other apps, rotate it when you like, and see in Emby's activity which calls it makes. Keep the server on a private network, and prefer HTTPS so the key is not readable on the wire.
 
-**Privacy:** the metrics are counts. User names, device and client names, client addresses and media titles are never read into a label or a message, and neither are server, library and path names.
+**Privacy:** the metrics are counts. User names, device and client names, client addresses and media titles are never read into a label or a message, and neither are library and path names. The one device text exported is the server's name, only as `server_name` on `server_info`.
 
 **Metrics:** prefix `vantage_emby_`. A server that is down or refuses the key marks the instance `down` (`vantage_instance_up` 0); there is no separate `up` series.
 
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
-| `server_info` | gauge, 1 | `version` | the server version, only if it looks like one (digits, letters, `.+_-`, at most 32 characters), else empty |
+| `server_info` | gauge, 1 | `version`, `server_name` | the server version, only if it looks like one (digits, letters, `.+_-`, at most 32 characters), else empty; the server's name, cleaned and capped (`ifmib.clean_text`, 128 characters). The name is on this info series only (maintainer's label rule, INTEGRATIONS.md section 9) |
 | `update_available` | gauge | none | 1 if Emby reports a newer server version |
 | `restart_pending` | gauge | none | 1 if the server needs a restart |
 | `sessions` | gauge | none | sessions active in the last 16 minutes (up to 2000) |
@@ -41,14 +41,12 @@ Emby API keys (Dashboard, Advanced, API Keys) cannot be limited to read-only: Em
 | `items` | gauge | `item_type` | totals by `movie`, `series`, `episode`, `album`, `song`, `artist`, `music_video`, `box_set`, `trailer`, `program`, `game`, `book`; a kind the server doesn't report has no series |
 | `libraries` | gauge | `library_type` | libraries by collection type (`movies`, `tvshows`, `music`, ...), plus `other` for a library without one |
 
-All label values come from fixed lists in the code (or the validated version), never from the server's text.
+All other label values come from fixed lists in the code (or the validated version).
 
 **Status and failures:** the info and sessions requests must succeed; otherwise the instance goes `down` with a short, fixed message that names only `<host>:<port>`: key refused (401), not allowed (403), certificate not trusted, could not connect, timed out, `answered HTTP <status>`, "answered, but not like the Emby API" (wrong port, wrong http/https choice, something in between, a body over 4 MiB or a shape that isn't Emby's), `refused by the network guard: ...`, or a poll over its own 50 s budget.
 
 **Firewall:** `tcp` to the configured port on the Emby server, from the Vantage backend, for polls and connection tests.
 
 **Cards:** `emby-overview`, "Emby", 4 by 3: `now_playing`, `sessions`, `streams` by method, `server_info`, `update_available`. `emby-libraries`, "Emby libraries", 4 by 2: `items` and `libraries`. The card components are frontend work (M5.5).
-
-**Open questions:** `TODO(maintainer)`: the server's name as a label on `server_info` would help dashboards but is free-form text, and the label exception in INTEGRATIONS.md section 9 does not list Emby. It is not exported until the maintainer decides.
 
 **Caveats:** `now_playing` counts sessions with a `NowPlayingItem`, including paused ones. Field names come from the Emby API documentation and hand-written fixtures; not yet verified against a live server. Fixtures: `backend/tests/integrations/builtin/fixtures/emby_*.json`, example values only.
