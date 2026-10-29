@@ -109,8 +109,8 @@ def describe_telegraf(text: str) -> tuple[int, int] | None:
             for sample in family.samples:
                 if family.name == IFACE_METRIC:
                     interfaces.add(sample.labels.get("interface", ""))
-                elif family.name in GATEWAY_METRICS:
-                    gateways.add(sample.labels.get("url", ""))
+                elif family.name in GATEWAY_METRICS and sample.labels.get("url"):
+                    gateways.add(sample.labels["url"])
     except ValueError:
         return None
     return (len(interfaces), len(gateways)) if seen else None

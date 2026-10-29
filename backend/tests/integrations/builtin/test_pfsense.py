@@ -104,6 +104,10 @@ def test_describe_live_capture_counts_down_gateway() -> None:
     # 3 ping targets, one with 100% loss and therefore no RTT series.
     down = [line for line in LIVE_FIXTURE.decode().splitlines() if "192.0.2.254" in line]
     assert down and not any(line.startswith("ping_average_response_ms") for line in down)
+    assert any(
+        line.startswith('cpu_usage_idle{cpu="cpu-total"')
+        for line in LIVE_FIXTURE.decode().splitlines()
+    )
     assert describe_telegraf(LIVE_FIXTURE.decode()) == (1, 3)
 
 
@@ -118,6 +122,11 @@ DOWN_GATEWAY_ONLY = (
     "# TYPE ping_result_code untyped\n"
     'ping_result_code{host="fw-example",url="192.0.2.254"} 2\n'
 )
+
+
+def test_describe_ignores_ping_without_url() -> None:
+    page = '# TYPE ping_result_code untyped\nping_result_code{url=""} 1\nping_result_code 1\n'
+    assert describe_telegraf(page) == (0, 0)
 
 
 def test_describe_only_down_gateway() -> None:
