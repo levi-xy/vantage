@@ -1,0 +1,80 @@
+{
+  "success": true,
+  "errors": [],
+  "messages": [],
+  "result": [
+    {
+      "id": "e0000000000000000000000000000001",
+      "name": "example.com",
+      "status": "active",
+      "paused": false,
+      "type": "full",
+      "development_mode": 0,
+      "name_servers": [
+        "ns1.example.net",
+        "ns2.example.net"
+      ],
+      "account": {
+        "id": "0000000000000000000000000acc0001",
+        "name": "Example account"
+      },
+      "plan": {
+        "id": "00000000000000000000000000000000",
+        "name": "Free Website"
+      },
+      "created_on": "2026-01-01T00:00:00.000000Z",
+      "modified_on": "2026-01-01T00:00:00.000000Z"
+    },
+    {
+      "id": "e0000000000000000000000000000002",
+      "name": "example.net",
+      "status": "active",
+      "paused": false,
+      "type": "full",
+      "development_mode": 0,
+      "name_servers": [
+        "ns1.example.net",
+        "ns2.example.net"
+      ],
+      "account": {
+        "id": "0000000000000000000000000acc0001",
+        "name": "Example account"
+      },
+      "plan": {
+        "id": "00000000000000000000000000000000",
+        "name": "Free Website"
+      },
+      "created_on": "2026-01-01T00:00:00.000000Z",
+      "modified_on": "2026-01-01T00:00:00.000000Z"
+    },
+    {
+      "id": "e0000000000000000000000000000003",
+      "name": "example.org",
+      "status": "pending",
+      "paused": true,
+      "type": "full",
+      "development_mode": 0,
+      "name_servers": [
+        "ns1.example.net",
+        "ns2.example.net"
+      ],
+      "account": {
+        "id": "0000000000000000000000000acc0001",
+        "name": "Example account"
+      },
+      "plan": {
+        "id": "00000000000000000000000000000000",
+        "name": "Free Website"
+      },
+      "created_on": "2026-01-01T00:00:00.000000Z",
+      "modified_on": "2026-01-01T00:00:00.000000Z"
+    }
+  ],
+  "result_info": {
+    "page": 1,
+    "per_page": 50,
+    "count": 3,
+    "total_count": 3,
+    "total_pages": 1
+  }
+}
