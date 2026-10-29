@@ -275,7 +275,7 @@ async def test_connection_ok(fake_net: FakeNetwork, caplog: pytest.LogCaptureFix
     serve(fake_net)
     result = await run_test(cfg())
     assert result.ok, result
-    assert result.message == "Emby 4.8.10.0: 4 active sessions"
+    assert result.message == f"Emby 4.8.10.0: 4 active sessions {emby.PLAIN_HTTP_NOTE}"
     assert result.hint is None
     assert [r.target for r in fake_net.requests] == [INFO, SESSIONS]
     assert_read_only(fake_net)
@@ -288,6 +288,8 @@ async def test_connection_https_verifies_by_default(fake_net: FakeNetwork) -> No
     # The fake serves the plain bytes after the (fake) handshake.
     result = await run_test(cfg(use_https=True, port=8920))
     assert result.ok, result
+    assert result.message == "Emby 4.8.10.0: 4 active sessions"  # no plain-http note
+    assert "plain http" not in result.message
     for server_name, context in fake_net.tls:
         assert server_name == HOST
         assert context.verify_mode == ssl.CERT_REQUIRED and context.check_hostname
@@ -398,7 +400,7 @@ async def test_connection_version_that_is_not_a_version_is_left_out(
 ) -> None:
     serve(fake_net, info=body({"Version": "<b>evil</b>\n" + "9" * 100}))
     result = await run_test(cfg())
-    assert result.ok and result.message == "Emby: 4 active sessions"
+    assert result.ok and result.message == f"Emby: 4 active sessions {emby.PLAIN_HTTP_NOTE}"
 
 
 # --- poll ------------------------------------------------------------------------------

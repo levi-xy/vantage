@@ -17,9 +17,9 @@ The two optional requests are left out of the poll, silently, if the server refu
 
 - `host` is the Emby server (IP literal preferred); it must be on a private network (the SSRF guard decides). Stored in plaintext.
 - `port` defaults to 8096 (Emby's http port); Emby's https default is 8920.
-- `use_https` is off by default because Emby serves plain http out of the box. With http the API key crosses the network unencrypted; use HTTPS (Emby's own certificate, or a reverse proxy in front) wherever you can.
+- `use_https` is off by default because Emby serves plain http out of the box. With http the API key (in the `X-Emby-Token` header) **is sent unencrypted**, and a successful connection test says so ("API key sent over plain http; enable HTTPS on the server to protect it"); use HTTPS (Emby's own certificate, or a reverse proxy in front) wherever you can.
 - `api_key` is the secret; see below.
-- `tls_ca_certificate` and `tls_insecure_skip_verify` apply to HTTPS only (the form refuses them with plain http, and refuses both together). Verification is **on** by default. For a self-signed or private-CA certificate, paste that certificate in **Trusted certificate (PEM)**: only it is trusted, and the host must still match it. **INSECURE: don't verify the TLS certificate** is a last resort that sends the key to whatever answers. The PEM field accepts certificates only (never a private key), at most 16 KiB.
+- `tls_ca_certificate` and `tls_insecure_skip_verify` apply to HTTPS only (the form refuses them when `use_https` is off, since there is nothing to verify, and refuses both together; plain http itself is allowed). Verification is **on** by default. For a self-signed or private-CA certificate, paste that certificate in **Trusted certificate (PEM)**: only it is trusted, and the host must still match it. **INSECURE: don't verify the TLS certificate** is a last resort that sends the key to whatever answers. The PEM field accepts certificates only (never a private key), at most 16 KiB.
 - `timeout_seconds` applies to each request (at most 15 s).
 
 **Secret and least privilege:** `api_key`, a write-only `SecretStr`. It is sent only in the `X-Emby-Token` header, to the configured host and port; never in a query string, a message, a log line, a metric or an API response.

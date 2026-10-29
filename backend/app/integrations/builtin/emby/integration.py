@@ -133,6 +133,9 @@ PLAY_METHODS = {
     "transcode": "transcode",
 }
 
+# Shown after a successful test over plain http (Emby's default): the key is not encrypted.
+PLAIN_HTTP_NOTE = "(API key sent over plain http; enable HTTPS on the server to protect it)"
+
 logger = logging.getLogger(__name__)
 
 
@@ -563,7 +566,8 @@ class Emby(Integration):
             return connection_failure(exc, where=where, hint=self._hint(cfg))
         label = f"Emby {version}" if version else "Emby"
         plural = "" if active == 1 else "s"
-        return TestResult(ok=True, message=f"{label}: {active} active session{plural}")
+        note = "" if cfg.use_https else f" {PLAIN_HTTP_NOTE}"
+        return TestResult(ok=True, message=f"{label}: {active} active session{plural}{note}")
 
     async def poll(self, ctx: InstanceContext) -> list[Sample]:
         """Info and sessions are required (a failure marks the instance ``down`` with a
