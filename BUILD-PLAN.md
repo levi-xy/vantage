@@ -2,6 +2,10 @@
 
 How Vantage gets built by coding agents, milestone by milestone. Every agent reads `AGENTS.md` first; this file says **what** to build and **in which order**, and `AGENTS.md` says **how**.
 
+**Direction (maintainer, 2026-10-28):** Vantage is meant for anyone to clone and run, not only the maintainer's network. Generic integrations come first (SNMP device, Linux host, SMART, ping and HTTP checks, the NAS exporter bundle); vendor-specific integrations are optional **profiles**, documented for any user. The project is not open source for now: add no `LICENSE` file until the maintainer decides.
+
+**Progress (2026-10-28):** done: M0, M1.1–M1.9, M2.1–M2.7, M3.1–M3.5, M4a, M4c, M4d, M4f. In review: M4b. Next: M4i, then M4e, M4g, M4h, then M5.
+
 ---
 
 ## How to run the agents
@@ -24,7 +28,7 @@ How Vantage gets built by coding agents, milestone by milestone. Every agent rea
 | Tier | Builder | Reviewer | Tasks |
 |---|---|---|---|
 | **Critical** (secrets, auth, crypto, `net_guard`, contracts, anything reachable from outside) | Opus | Opus | M1.6, M1.7, M1.8, M2.7, M3.5, M4b, M4d, M4g, M5.1, M7.2, M8.1, M8.2, M8.3 |
-| **Standard** | Sonnet | Sonnet | Everything else: M2.6, M4a, M4c, M4e, M4f, M4h, M5.2–M5.5, M6.1–M6.2, M7.1, M7.3, M7.4, M8.4 |
+| **Standard** | Sonnet | Sonnet | Everything else: M2.6, M4a, M4c, M4e, M4f, M4h, M4i, M5.2–M5.5, M6.1–M6.2, M7.1, M7.3, M7.4, M8.4 |
 | **Light** (docs-only or mechanical, no decisions) | Haiku | Sonnet | Docs-only PRs and plan edits; none of the numbered tasks yet |
 
 - A task not listed is Standard, unless it touches secrets, auth, crypto, `net_guard` or a contract in `AGENTS.md`: then it is Critical.
@@ -60,7 +64,7 @@ M0 ──► M1 ──► M2 ──┬──► M4a ─┐
 
 - **Sequential:** M0 → M1 → M2. These set the contracts everything else depends on.
 - **M3** (frontend shell) can start once M1's auth API is merged.
-- **M4 tasks run in parallel**, one agent each, once M2 is merged.
+- **M4 tasks run in parallel**, one agent each, once M2 is merged. M4i (NAS exporter bundle) needs only M2.5 (`linux_host`) and M4a (`smart_exporter`), both merged.
 - **M6 and M7** run in parallel after M5.
 
 ---
@@ -126,7 +130,9 @@ M0 ──► M1 ──► M2 ──┬──► M4a ─┐
   - Login attempts refused with 429 while an account is locked aren't audited, so an admin can't see that someone kept trying. Scheduled as M1.9 (maintainer approved, 2026-10-28).
 - Done (`m2/poll-status-noreply`, `test_poll_status_never_contains_config_or_secret_values`). From the PR #33 review: the scheduler's `PingError` branch puts the exception text in the instance status, trusting every `PingError` message to be secret-free by convention only. Add a test that the poll status never contains config values.
 - CI never sends real ICMP (both event-loop variants of the socket test skip there), so `ping_check` changes still need a run on the real Docker stack.
-- Docs nits from the PR #26 review, for the next edit of `docs/INTEGRATIONS.md`:
+- From the PR #38 review: `_scrub` in `collectors/scheduler.py` replaces secrets one at a time, longest first, so a very short secret or two overlapping secrets could mangle the message or leave a fragment (low). `PollFailure` stays an optional helper documented in `docs/INTEGRATIONS.md`, not part of Contract 1.
+- Docs nits from the PR #26 and PR #38 reviews, for the next edit of `docs/INTEGRATIONS.md`:
+  - The status section says twice that secrets are scrubbed: merge the two sentences.
   - §11: "the API attaches only the first hint" holds only for the API's own timeout path.
   - §3 and `docs/integrations/ping_check.md`: point to the validator in `PingCheckConfig` instead of calling the bound a plain product.
 
@@ -146,7 +152,9 @@ M0 ──► M1 ──► M2 ──┬──► M4a ─┐
 - Logout: when logout fails and the follow-up `me()` also fails with a network error, the CSRF token stays null and every write gets 403 until reload. Move the session to the `unreachable` state instead, with a test. (PR #15)
 - After an explicit logout, don't keep the current path as the post-login return path: the next person to log in on that browser shouldn't land on the previous user's page. (PR #15)
 
-**Carried over from reviews (include in the M3.5 task):**
+**M3.5 done** (PRs #39, #40). Low-priority notes from the PR #40 review: no test for the self-delete 409 message (reachable only through a race); after a delete, the row stays until the refetch returns; on self-demotion, `navigate("/")` runs before `reload()`, so the old role can show for a moment.
+
+**Carried over from reviews (done in M3.5, kept for reference):**
 - `api/auth.py` login, lost-race path: it reads `user.id` after `db.rollback()`, which expires `user`. Once users can be deleted, a delete that lands during a login makes that reload fail, so the request returns 500 instead of 401. Keep the id in a local before the rollback. (PR #27)
 - Refuse duplicate usernames case-insensitively in the user API, as `create-user` does: the login limiter keys on the lowercased name. (PR #27)
 - Resetting another user's password from the API races logins the same way the CLI reset does. Reuse the CLI's order (write the user row, then delete sessions). Add a deterministic test for the order where the login holds the row lock first; today only the "reset commits first" order is tested. (PR #27)
@@ -158,24 +166,28 @@ M0 ──► M1 ──► M2 ──┬──► M4a ─┐
 
 Each task: config schema, `test_connection`, scrape targets and/or `poll`, cards list, firewall hints, fixtures, tests per `AGENTS.md`, and its own doc file `docs/integrations/<type_id>.md` (template in `docs/INTEGRATIONS.md`).
 
-| ID | Integration | Notes |
-|---|---|---|
-| M4a | SMART add-on | Scrapes smartctl_exporter; per-disk health and temperature |
-| M4b | Proxmox VE | API with a read-only token; nodes, guests (status, CPU, RAM, disk), storage pools; TLS verify on by default, with an explicit per-instance option for self-signed certs |
-| M4c | pfSense | Scrapes Telegraf `prometheus_client`; interfaces, gateways (latency, loss), states, CPU/RAM |
-| M4d | SNMP device | Generic IF-MIB poll (traffic, status, errors) with v1/v2c/v3 support |
-| M4e | MikroTik SwOS | SNMP profile on top of M4d, with port naming and what SwOS exposes |
-| M4f | cloudflared | Scrapes tunnel metrics; connections, requests, errors, latency |
-| M4g | Cloudflare account | GraphQL analytics + tunnel status via `cloud_hosts = ("api.cloudflare.com",)`; per-zone traffic, cache, status codes, countries, threats; respects API rate limits |
-| M4h | Emby | Sessions (now playing, transcode vs direct), library counts, server info; read-only endpoints only |
+| ID | Integration | Kind | Notes |
+|---|---|---|---|
+| M4a | SMART add-on | Generic | Scrapes smartctl_exporter; per-disk health and temperature |
+| M4b | Proxmox VE | Profile | API with a read-only token; nodes, guests (status, CPU, RAM, disk), storage pools; TLS verify on by default, with an explicit per-instance option for self-signed certs |
+| M4c | pfSense | Profile | Scrapes Telegraf `prometheus_client`; interfaces, gateways (latency, loss), states, CPU/RAM |
+| M4d | SNMP device | Generic | Generic IF-MIB poll (traffic, status, errors) with v1/v2c/v3 support |
+| M4e | MikroTik SwOS | Profile | SNMP profile on top of M4d, with port naming and what SwOS exposes |
+| M4f | cloudflared | Profile | Scrapes tunnel metrics; connections, requests, errors, latency |
+| M4g | Cloudflare account | Profile | GraphQL analytics + tunnel status via `cloud_hosts = ("api.cloudflare.com",)`; per-zone traffic, cache, status codes, countries, threats; respects API rate limits |
+| M4h | Emby | Profile | Sessions (now playing, transcode vs direct), library counts, server info; read-only endpoints only |
+| M4i | NAS exporter bundle | Generic | `deploy/exporters/nas/docker-compose.yml` with pinned `node_exporter` and `smartctl_exporter` (both Prometheus project, Apache-2.0), read-only mounts, dropped capabilities; `smartctl_exporter` gets only the disk devices it needs and `SYS_RAWIO`, never `privileged`, with the trade-off documented. State deliberately what `node_exporter` needs for host metrics (a read-only host-root mount, host PID or network mode) and why. Setup docs for UGOS Pro (its Docker UI refuses a host-root bind since 1.19; start over SSH if needed), TrueNAS SCALE, Unraid and OpenMediaVault. Make sure `linux_host` checks and cards cover mdadm (`node_md_*`), ZFS and hwmon temperatures/fans, with fixtures. The NAS drive-bay card (M5.5) combines `linux_host` and `smart_exporter`. Out of scope for now: per-container stats (cAdvisor), libvirt VMs, UPS (NUT); each can be an optional add-on later |
+
+**Kinds:** *Generic* works for any vendor and comes first. *Profile* targets one product: keep it optional, and write its docs for any user, not one lab.
 
 **Carried over from reviews (scrape integrations; one small follow-up task, or include in the next M4 task):**
 - `test_connection` in the scrape integrations (`linux_host`, `smart_exporter`, `cloudflared`, `pfsense`) reads up to 8 MiB and parses it synchronously on the event loop, so a hostile or broken host can stall the loop briefly. Lower the cap (real exporter pages are tens of KB) or parse in a thread. (PR #30)
 - The parsers catch only `ValueError` from `prometheus_client`, and the parse runs outside `test_connection`'s `try`. Any other exception on garbage input would make `test_connection` raise instead of returning a failed `TestResult`. Low priority: 3,000 random garbage inputs raised only `ValueError`. Hardening only: catch broadly around the parse and add a garbage-input test per integration. (PR #32)
 - Docs: `docs/integrations/cloudflared.md` Config paragraph is garbled ("host is found by name by the save-time check"). Say instead that the SSRF guard resolves and checks the host when the instance is saved. `docs/integrations/pfsense.md` should name the port default (9273) instead of "Telegraf's default". (PR #31, PR #32)
 - Not verified against real devices: cloudflared's default metrics port (20241) and metric names (PR #31). Maintainer lab checkpoint.
-- Verified 2026-10-28 against pfSense with the Telegraf package (Prometheus output on 9273): the pfSense metric names (`net_bytes_recv{interface}`, `ping_average_response_ms{url}`, `ping_percent_packet_loss{url}`, `pf_entries`, `cpu_usage_idle`, `mem_total`) match what the integration reads; gateway metrics need a Telegraf `ping` input per gateway (PR #32). Fixed in `m4/pfsense-down-gateway`: a gateway with 100% loss has no `ping_average_response_ms`, so `test_connection` now counts gateways from any always-present `ping_*` family; cards and alerts must use `ping_percent_packet_loss` to detect it.
-- M4d (`snmp_device`) live-verified 2026-10-28 against VyOS 2025.06 rolling in an isolated lab, SNMP v2c and v3 authPriv (SHA/AES-128): connection test OK, 6 interfaces with 64-bit counters (PR #41). Fixed in `m4/snmp-live-followup`: `uptime_seconds` now prefers hrSystemUptime (sysUpTime is the agent's uptime, and VyOS restarts snmpd on every commit), with `source` label and sysUpTime kept as `agent_uptime_seconds`; the scrubbed walk is a fixture (`snmp_vyos_live`).
+- From the PR #41 reviews (M4d): later IF-MIB walks are capped at the ifDescr row count, so an agent whose ifXTable has extra low indexes could drop selected interfaces (edge case). Walks send one request per row; add GETBULK to `net_guard`'s SNMP client for large switches (read-only, so no rule change). `docs/INTEGRATIONS.md` gained a lot of SNMP text; trim it on the next docs edit.
+- Verified 2026-10-28 against pfSense with the Telegraf package (Prometheus output on 9273): the pfSense metric names (`net_bytes_recv{interface}`, `ping_average_response_ms{url}`, `ping_percent_packet_loss{url}`, `pf_entries`, `cpu_usage_idle`, `mem_total`) match what the integration reads; gateway metrics need a Telegraf `ping` input per gateway (PR #32). Fixed in PR #42: a gateway with 100% loss has no `ping_average_response_ms`, so `test_connection` now counts gateways from any always-present `ping_*` family; cards and alerts must use `ping_percent_packet_loss` to detect it.
+- M4d (`snmp_device`) live-verified 2026-10-28 against VyOS 2025.06 rolling in an isolated lab, SNMP v2c and v3 authPriv (SHA/AES-128): connection test OK, 6 interfaces with 64-bit counters (PR #41). Fixed in PR #43: `uptime_seconds` now prefers hrSystemUptime (sysUpTime is the agent's uptime, and VyOS restarts snmpd on every commit), with `source` label and sysUpTime kept as `agent_uptime_seconds`; the scrubbed walk is a fixture (`snmp_vyos_live`).
 
 ## M5: Dashboard
 
@@ -210,7 +222,7 @@ Each task: config schema, `test_connection`, scrape targets and/or `poll`, cards
 | M8.1 | HTTPS | Serves HTTPS with a user-supplied cert or a generated self-signed one |
 | M8.2 | Backup/restore | Export and import DB + reminder that the master key is backed up separately; plus a master-key rotation command that re-encrypts every stored secret with a new key (needs the old key, all-or-nothing, audited) |
 | M8.3 | Security review | A dedicated reviewer agent does a full threat-model review; findings fixed; `docs/SECURITY.md` written |
-| M8.4 | Docs and release | README quick start verified on a clean machine; versioned Docker images; changelog; license file; `docs/ARCHITECTURE.md`. README gets an "Upgrading" section: when a release changes the compose network, run `docker compose down` then `up -d` (a plain `up -d` leaves the frontend without its fixed address and the dashboard down); otherwise `up -d --build` is enough, and migrations run on start |
+| M8.4 | Docs and release | README quick start verified on a clean machine by someone who has never seen the repo: get the compose file, set the master key, open the UI, add a device. Official images on GitHub Container Registry (`ghcr.io/levi-xy/vantage-backend`, `-frontend`; a Docker Hub mirror optional), multi-arch amd64 + arm64, version tags, signed (cosign) with an SBOM, built by CI on every release tag. A pull-based `deploy/docker-compose.yml` (images, not a source build) next to the build-from-source one, plus the optional exporter bundles in `deploy/exporters/`. Changelog; `docs/ARCHITECTURE.md`. License: the maintainer's decision; not open source for now, so no `LICENSE` file until decided. README gets an "Upgrading" section: when a release changes the compose network, run `docker compose down` then `up -d` (a plain `up -d` leaves the frontend without its fixed address and the dashboard down); otherwise `up -d --build` is enough, and migrations run on start |
 
 ---
 
