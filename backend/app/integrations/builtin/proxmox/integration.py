@@ -49,6 +49,7 @@ from app.integrations.builtin.common import (
     host_port,
     is_tls_failure,
 )
+from app.integrations.builtin.ifmib import MAX_LABEL_TEXT, clean_text
 from app.integrations.errors import PollFailure
 
 TYPE_ID = "proxmox"
@@ -84,6 +85,8 @@ METRIC_GUEST_NET_OUT = f"{PREFIX}_guest_network_transmit_bytes"  # counter
 METRIC_GUEST_DISK_READ = f"{PREFIX}_guest_disk_read_bytes"  # counter
 METRIC_GUEST_DISK_WRITE = f"{PREFIX}_guest_disk_written_bytes"  # counter
 METRIC_GUEST_UPTIME = f"{PREFIX}_guest_uptime_seconds"
+# Value 1; the only series that carries the guest's name (label exception, section 9).
+METRIC_GUEST_INFO = f"{PREFIX}_guest_info"
 
 METRIC_STORAGE_ACTIVE = f"{PREFIX}_storage_active"
 METRIC_STORAGE_USED = f"{PREFIX}_storage_used_bytes"
@@ -103,7 +106,8 @@ MAX_BODY_BYTES = 4 * 1024 * 1024
 # Bodies larger than this are parsed in a worker thread, off the event loop.
 _PARSE_IN_THREAD_BYTES = 64 * 1024
 MAX_CA_CERTIFICATES = 8
-MAX_CA_PEM_CHARS = 32_768
+# A PVE CA is about 2 KB of PEM; 16 KiB holds several, and bounds the parse.
+MAX_CA_PEM_CHARS = 16_384
 
 # A poll is two cluster-wide GETs plus two per online node, each allowed up to 15 s:
 # far past the collector's cut-off of min(interval, 60) s for a cluster. So a poll has
@@ -137,9 +141,11 @@ _TOKEN_ID_RE = re.compile(
     r"(?:(?![:/@!=])[!-~]){1,64}@[A-Za-z][A-Za-z0-9._-]{0,63}![A-Za-z][A-Za-z0-9._-]{0,63}"
 )
 _TOKEN_SECRET_RE = re.compile(r"[!-~]{1,256}")  # printable ASCII, no spaces
-_PEM_CERT_RE = re.compile(
-    r"-----BEGIN CERTIFICATE-----\s*([A-Za-z0-9+/=\s]+?)\s*-----END CERTIFICATE-----"
-)
+# One line of a PEM body. A single character class, matched with fullmatch on a line
+# that is already stripped: linear time, nothing to backtrack over.
+_BASE64_LINE_RE = re.compile(r"[A-Za-z0-9+/=]+")
+_PEM_BEGIN = "-----BEGIN CERTIFICATE-----"
+_PEM_END = "-----END CERTIFICATE-----"
 
 logger = logging.getLogger(__name__)
 
@@ -325,26 +331,50 @@ class ProxmoxConfig(BaseModel):
 
 def _normalise_pem(value: str) -> str:
     """One or more PEM certificates, nothing else; refused (without echoing) otherwise."""
-    blocks = _PEM_CERT_RE.findall(value)
-    if not blocks:
-        raise ValueError("must be one or more PEM certificates (-----BEGIN CERTIFICATE-----)")
-    if _PEM_CERT_RE.sub("", value).strip():
-        # Anything else (a private key, a chain with text around it) is refused, so a
-        # pasted key never lands in the plaintext config.
-        raise ValueError("must contain only PEM certificates, nothing else (never a private key)")
-    if len(blocks) > MAX_CA_CERTIFICATES:
-        raise ValueError(f"at most {MAX_CA_CERTIFICATES} certificates")
+    blocks = _pem_blocks(value)
     pem = "\n".join(
-        "-----BEGIN CERTIFICATE-----\n"
-        + "\n".join(_wrap("".join(block.split())))
-        + "\n-----END CERTIFICATE-----"
-        for block in blocks
+        f"{_PEM_BEGIN}\n" + "\n".join(_wrap(block)) + f"\n{_PEM_END}" for block in blocks
     )
     try:
         pinned_context(pem)
     except (ssl.SSLError, ValueError):
         raise ValueError("is not a valid PEM certificate") from None
     return pem + "\n"
+
+
+def _pem_blocks(value: str) -> list[str]:
+    """The base64 body of each certificate, parsed line by line (no regex over the
+    whole text, so no backtracking). Refuses anything that isn't certificates, so a
+    pasted private key never lands in the plaintext config."""
+    if len(value) > MAX_CA_PEM_CHARS:  # the field's max_length already says so
+        raise ValueError(f"at most {MAX_CA_PEM_CHARS} characters")
+    only_certs = "must contain only PEM certificates, nothing else (never a private key)"
+    blocks: list[str] = []
+    current: list[str] | None = None
+    for raw in value.splitlines():
+        line = raw.strip()
+        if current is None:
+            if not line:
+                continue
+            if line != _PEM_BEGIN:
+                raise ValueError(only_certs)
+            if len(blocks) == MAX_CA_CERTIFICATES:
+                raise ValueError(f"at most {MAX_CA_CERTIFICATES} certificates")
+            current = []
+        elif line == _PEM_END:
+            if not current:
+                raise ValueError("is not a valid PEM certificate")
+            blocks.append("".join(current))
+            current = None
+        elif line and _BASE64_LINE_RE.fullmatch(line):
+            current.append(line)
+        else:
+            raise ValueError("is not a valid PEM certificate")
+    if current is not None:
+        raise ValueError("is not a valid PEM certificate (no END CERTIFICATE line)")
+    if not blocks:
+        raise ValueError("must be one or more PEM certificates (-----BEGIN CERTIFICATE-----)")
+    return blocks
 
 
 def _wrap(base64: str) -> list[str]:
@@ -357,8 +387,10 @@ def pinned_context(pem: str) -> ssl.SSLContext:
     ``create_default_context(cadata=...)`` loads only these certificates, not the
     system store. ``VERIFY_X509_PARTIAL_CHAIN`` lets a pasted node certificate (not a
     CA) act as the trust anchor, so pinning the node's own certificate works too.
+    TLS 1.2 is the floor (PVE 8 offers 1.2 and 1.3).
     """
     context = ssl.create_default_context(cadata=pem)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
     return context
 
@@ -570,10 +602,17 @@ def guest_samples(guest: Guest) -> list[Sample]:
     )
     for metric, key, kind in fields:
         _sample(samples, metric, entry.get(key), labels, kind)
-    # TODO(maintainer): guest names (and tags) would go on a vantage_proxmox_guest_info
-    # series (value 1), joined on vmid. The 2026-10-28 label exception (INTEGRATIONS.md
-    # section 9) lists only sys_name, sys_descr, if_descr and if_alias, so no guest name
-    # is emitted until the maintainer decides whether to add guest_name to it.
+    # The guest's name is free-form text: only on the info series (value 1), cleaned and
+    # capped like the SNMP labels, under the maintainer's label exception (INTEGRATIONS.md
+    # section 9). Dashboards join it on vmid. Tags and other text are not read.
+    samples.append(
+        Sample(
+            name=METRIC_GUEST_INFO,
+            labels={**labels, "guest_name": clean_text(entry.get("name"), MAX_LABEL_TEXT)},
+            value=1.0,
+            type="gauge",
+        )
+    )
     return samples
 
 

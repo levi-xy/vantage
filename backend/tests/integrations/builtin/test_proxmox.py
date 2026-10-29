@@ -77,6 +77,8 @@ TCP_HINT = {
     "reason": "The Vantage backend calls the Proxmox VE API (HTTPS) on this port.",
 }
 OWN_LABELS = {"node", "vmid", "guest_type", "storage"}
+# The maintainer's label exception (INTEGRATIONS.md section 9): device text, info series only.
+FREE_TEXT_LABELS = {"sys_name", "sys_descr", "if_descr", "if_alias", "guest_name"}
 
 V = "/api2/json"
 
@@ -304,6 +306,39 @@ def test_ca_certificate_is_normalised_and_pinned() -> None:
     assert context.verify_flags & ssl.VERIFY_X509_PARTIAL_CHAIN
     # Only the pasted certificate is trusted, not the system store.
     assert len(context.get_ca_certs()) == 1
+    assert context.minimum_version == ssl.TLSVersion.TLSv1_2
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "-----BEGIN CERTIFICATE-----" + " " * 16_000,
+        "-----BEGIN CERTIFICATE-----\n" + " \n" * 8_000,
+        "-----BEGIN CERTIFICATE-----" + "\t \r\n" * 4_000,
+        "-----BEGIN CERTIFICATE-----\n" + "A" * 16_000,
+        "-----BEGIN CERTIFICATE-----\nQUFB\n" + " " * 16_000 + "-----END CERTIFICATE",
+    ],
+)
+def test_ca_parse_is_linear_on_hostile_input(text: str) -> None:
+    """A BEGIN line followed by a long run of whitespace and no END used to backtrack for
+    minutes. The line-by-line parse refuses it at once."""
+    assert len(text) <= pve.MAX_CA_PEM_CHARS
+    started = time.perf_counter()
+    with pytest.raises(ValidationError):
+        ProxmoxConfig.model_validate(cfg(tls_ca_certificate=text))
+    assert time.perf_counter() - started < 0.2
+
+
+def test_ca_field_is_capped() -> None:
+    schema = config_json_schema(ProxmoxConfig)["properties"]["tls_ca_certificate"]
+    assert pve.MAX_CA_PEM_CHARS == 16_384
+    assert 16_384 in {branch.get("maxLength") for branch in schema.get("anyOf", [schema])}
+    started = time.perf_counter()
+    with pytest.raises(ValidationError):
+        ProxmoxConfig.model_validate(
+            cfg(tls_ca_certificate="-----BEGIN CERTIFICATE-----" + " " * 100_000)
+        )
+    assert time.perf_counter() - started < 0.2
 
 
 def test_ca_field_takes_several_certificates() -> None:
@@ -665,6 +700,7 @@ async def test_poll_guest_with_missing_fields(fake_net: FakeNetwork) -> None:
         "guest_running": 0.0,
         "guest_memory_max_bytes": 268435456,
         "guest_disk_max_bytes": 4294967296,
+        "guest_info": 1.0,
     }
 
 
@@ -886,6 +922,7 @@ async def test_poll_skips_unusable_values(fake_net: FakeNetwork) -> None:
     assert {(s.name.removeprefix(PREFIX + "_"), s.value) for s in guest} == {
         ("guest_running", 1.0),
         ("guest_uptime_seconds", 12.0),
+        ("guest_info", 1.0),
     }
     node1 = {
         s.name.removeprefix(PREFIX + "_") for s in samples if s.labels == {"node": "pve-example"}
@@ -911,16 +948,51 @@ async def test_poll_parses_large_answers_off_the_event_loop(
     assert calls and all(func is json.loads for func in calls)
 
 
-async def test_free_text_never_becomes_a_label(fake_net: FakeNetwork) -> None:
-    """Guest names, tags and other device text are never emitted: the maintainer's
-    label exception (2026-10-28) doesn't cover guest names (see the TODO in poll)."""
+async def test_free_text_labels_only_on_info_series(fake_net: FakeNetwork) -> None:
+    """Maintainer exception (2026-10-28): cleaned, capped guest names may be a label
+    value on vantage_proxmox_guest_info only (value 1), never on a value series. Tags
+    and other device text are never emitted."""
     serve(fake_net)
     samples = await run_poll(cfg())
+    info = [s for s in samples if s.name.endswith("_info")]
+    assert {s.name for s in info} == {f"{PREFIX}_guest_info"}
     for sample in samples:
-        assert set(sample.labels) <= OWN_LABELS, sample
-        for text in (*GUEST_TEXT, "example;web", "lvmthin", "Example CPU"):
+        if sample.name.endswith("_info"):
+            assert sample.value == 1.0 and sample.type == "gauge"
+            assert set(sample.labels) == {"node", "vmid", "guest_type", "guest_name"}
+        else:
+            assert not FREE_TEXT_LABELS & sample.labels.keys(), sample.name
+            assert set(sample.labels) <= OWN_LABELS, sample
+            for text in GUEST_TEXT:
+                assert text not in sample.labels.values()
+        for text in ("example;web", "lvmthin", "Example CPU"):
             assert text not in sample.labels.values()
-        assert not sample.name.endswith("_info")
+    names = {s.labels["vmid"]: s.labels["guest_name"] for s in info}
+    # Templates are skipped, so 9000 has no info series either.
+    assert names == {
+        "100": "example-web",
+        "101": "example-db",
+        "200": "example-dns",
+        "201": "example-new",
+    }
+
+
+async def test_guest_name_is_cleaned_and_capped(fake_net: FakeNetwork) -> None:
+    long_name = "web\n\x00\tone  " + "x" * 300
+    guests = {
+        "data": [
+            {"type": "qemu", "vmid": 100, "node": "pve-example", "name": long_name},
+            {"type": "qemu", "vmid": 101, "node": "pve-example", "name": 42},
+            {"type": "lxc", "vmid": 102, "node": "pve-example"},
+        ]
+    }
+    serve(fake_net, guests=body(guests))
+    samples = await run_poll(cfg())
+    names = {s.labels["vmid"]: s.labels["guest_name"] for s in samples if s.name.endswith("_info")}
+    assert names["100"].startswith("web one x")
+    assert len(names["100"]) == 128
+    assert names["100"].isprintable()
+    assert names["101"] == "" and names["102"] == ""
 
 
 # --- read-only -------------------------------------------------------------------------

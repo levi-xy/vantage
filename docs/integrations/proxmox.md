@@ -44,12 +44,12 @@ A privilege-separated token gets only what is granted to the token itself, and n
 
 Verification is **on** by default, against the system's CA store. Proxmox nodes ship with a certificate signed by the cluster's own CA, which the system doesn't trust, so the connection test then fails with "certificate not trusted". Fix it, in order of preference:
 
-1. **Paste the cluster CA** into **Trusted certificate (PEM)**: the contents of `/etc/pve/pve-root-ca.pem` on any node (in the web UI: node, System, Certificates, `pve-root-ca.pem`, View Certificate). Only the pasted certificate(s) are then trusted, not the system store, and the hostname is still checked: `host` must be a name or address in the node's certificate. Proxmox puts the node's host name, FQDN and its IP addresses into the certificate it generates; if you connect by another name, regenerate it (`pvecm updatecerts --force`) or use a name it covers.
+1. **Paste the cluster CA** into **Trusted certificate (PEM)**: the contents of `/etc/pve/pve-root-ca.pem` on any node (in the web UI: node, System, Certificates, `pve-root-ca.pem`, View Certificate). Only the pasted certificate(s) are then trusted, not the system store, TLS 1.2 is the minimum version (PVE 8 offers 1.2 and 1.3), and the hostname is still checked: `host` must be a name or address in the node's certificate. Proxmox puts the node's host name, FQDN and its IP addresses into the certificate it generates; if you connect by another name, regenerate it (`pvecm updatecerts --force`) or use a name it covers.
 2. Or paste **the node's own certificate** (`/etc/pve/nodes/<node>/pve-ssl.pem`, or `pveproxy-ssl.pem` if you uploaded one). It works as the trust anchor on its own (`VERIFY_X509_PARTIAL_CHAIN`). Pin the CA instead if you can: a node certificate is regenerated on some upgrades and the pin then breaks.
 3. If the node has a certificate from a public CA (for example ACME), leave both TLS fields alone.
 4. **Last resort:** **INSECURE: don't verify the TLS certificate**. The token is then sent to whatever answers on that address, so anyone who can intercept the traffic gets a read-only token. Only on a network you control.
 
-The field accepts only `-----BEGIN CERTIFICATE-----` blocks (at most 8) and refuses anything else, so a pasted private key is never stored. Certificates are public; the field is stored in plaintext and shown to every user. Pinning by SHA-256 fingerprint is not offered yet (see the PR for the open question).
+The field is at most 16 KiB (a PVE CA is about 2 KB) and is parsed line by line, so hostile input can't make the check slow. It accepts only `-----BEGIN CERTIFICATE-----` blocks (at most 8) and refuses anything else, so a pasted private key is never stored. Certificates are public; the field is stored in plaintext and shown to every user. Pinning by SHA-256 fingerprint is not offered yet (see the PR for the open question).
 
 **Metrics:** prefix `vantage_proxmox_`. Constants at the top of `integration.py`. Counters are exposed with `_total`.
 
@@ -72,10 +72,11 @@ The field accepts only `-----BEGIN CERTIFICATE-----` blocks (at most 8) and refu
 | `guest_network_receive_bytes`, `guest_network_transmit_bytes` | counter | same | since the guest started |
 | `guest_disk_read_bytes`, `guest_disk_written_bytes` | counter | same | since the guest started |
 | `guest_uptime_seconds` | gauge | same | 0 when stopped |
+| `guest_info` | gauge, 1 | same, plus `guest_name` | one per reported guest; `guest_name` is the guest's name, cleaned and capped (`ifmib.clean_text`, 128 characters), empty if it has none |
 | `storage_active` | gauge | `node`, `storage` | 1 if the storage is active on that node |
 | `storage_used_bytes`, `storage_total_bytes` | gauge | `node`, `storage` | absent for an inactive storage |
 
-`guest_type` is `qemu` or `lxc`. A guest that migrates gets new series with the new `node`. A shared storage appears once per node. Labels are stable identifiers only (node name, VM id, guest type, storage id), each checked against Proxmox's own format first. **Guest names, tags, descriptions and storage types are not exported**: free-form text may only be a label on an `*_info` series, and the maintainer's 2026-10-28 exception (INTEGRATIONS.md section 9) doesn't list guest names. Adding a `guest_info{vmid, guest_name}` series is an open maintainer question. A field Proxmox leaves out (for example on a container that has never started) gives no sample rather than a 0.
+`guest_type` is `qemu` or `lxc`. A guest that migrates gets new series with the new `node`. A shared storage appears once per node. Labels on value series are stable identifiers only (node name, VM id, guest type, storage id), each checked against Proxmox's own format first. The guest's name is the one free-form label: it appears only on `guest_info` (value 1), under the maintainer's 2026-10-28 exception (INTEGRATIONS.md section 9), so renaming a guest doesn't split its value series. Join on `vmid` to show names. Tags, descriptions and storage types are not exported. A field Proxmox leaves out (for example on a container that has never started) gives no sample rather than a 0.
 
 **Status and failures:** the two cluster-wide requests must succeed; otherwise the instance goes `down` with:
 
@@ -91,7 +92,7 @@ A per-node request answered with an error (a node that went offline mid-poll ans
 
 **Firewall:** `tcp` to the configured port (8006 by default) on the configured node, from the Vantage backend, for polls and connection tests. Other cluster nodes need no rule for Vantage: the configured node reaches them itself.
 
-**Cards:** `proxmox-node`, "Proxmox node", 4 by 3: `node_up`, `node_cpu_ratio`, memory and root disk used/total, `node_load1`, `node_uptime_seconds`, and the node's `storage_*`. `proxmox-guests`, "Guests", 4 by 3: per guest `guest_running`, `guest_cpu_ratio`, memory used/max, `rate()` of the network and disk counters, `guest_uptime_seconds`, plus `guests_omitted`. Guests are shown by VM id until guest names are decided. The card components are frontend work (M5.5).
+**Cards:** `proxmox-node`, "Proxmox node", 4 by 3: `node_up`, `node_cpu_ratio`, memory and root disk used/total, `node_load1`, `node_uptime_seconds`, and the node's `storage_*`. `proxmox-guests`, "Guests", 4 by 3: per guest `guest_running`, `guest_cpu_ratio`, memory used/max, `rate()` of the network and disk counters, `guest_uptime_seconds`, `guest_info` for names (joined on `vmid`), plus `guests_omitted`. The card components are frontend work (M5.5).
 
 **Limits and caveats:**
 
