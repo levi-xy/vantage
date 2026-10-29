@@ -294,3 +294,33 @@ or the bridge gateway (an address in `172.16.0.0/12`, such as `172.17.0.1`). The
 is low, since an echo reply only shows that the address is up and how long the round
 trip took, and carries no data from the host, but it does let an admin confirm those
 addresses exist.
+
+## Query proxy
+
+Cards read metrics through `POST /api/v1/query` (any logged-in user, CSRF checked);
+the browser never talks to Prometheus, which has no published port.
+
+The backend reaches the bundled Prometheus at `VANTAGE_PROMETHEUS_URL` (default
+`http://prometheus:9090`, the compose network). Prometheus is Vantage's own internal
+service, not a device, so this one client doesn't go through `net_guard`. That opens no
+SSRF path: the URL comes only from server config (an `http`/`https` URL without
+credentials, checked at startup), the API paths are fixed, a request supplies only the
+PromQL text and numbers (sent as form fields), redirects aren't followed and proxy
+environment variables are ignored.
+
+Budget (constants in `backend/app/query/proxy.py`); a query over it gets a 4xx with a
+short message and never reaches Prometheus:
+
+| Limit | Value |
+|---|---|
+| PromQL length | 2,000 characters |
+| Range (`end - start`) | 31 days |
+| Step | at least 15 s (default: range / 300, but at least 15 s) |
+| Points per series | 1,100 |
+| Series per result | 500 (Prometheus is asked for at most 501) |
+| Prometheus' answer | 8 MiB |
+| Time | 10 s evaluation timeout in Prometheus, 15 s for the whole call |
+
+Prometheus' own error text is never passed on: the client sees `invalid PromQL query`
+(400), `query could not be executed` (422), `query timed out` (504),
+`metrics backend unavailable` (503) or `metrics backend error` (502).
