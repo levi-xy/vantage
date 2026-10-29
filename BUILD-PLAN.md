@@ -64,7 +64,7 @@ M0 ──► M1 ──► M2 ──┬──► M4a ─┐
 
 - **Sequential:** M0 → M1 → M2. These set the contracts everything else depends on.
 - **M3** (frontend shell) can start once M1's auth API is merged.
-- **M4 tasks run in parallel**, one agent each, once M2 is merged.
+- **M4 tasks run in parallel**, one agent each, once M2 is merged. M4i (NAS exporter bundle) needs only M2.5 (`linux_host`) and M4a (`smart_exporter`), both merged.
 - **M6 and M7** run in parallel after M5.
 
 ---
@@ -176,7 +176,7 @@ Each task: config schema, `test_connection`, scrape targets and/or `poll`, cards
 | M4f | cloudflared | Profile | Scrapes tunnel metrics; connections, requests, errors, latency |
 | M4g | Cloudflare account | Profile | GraphQL analytics + tunnel status via `cloud_hosts = ("api.cloudflare.com",)`; per-zone traffic, cache, status codes, countries, threats; respects API rate limits |
 | M4h | Emby | Profile | Sessions (now playing, transcode vs direct), library counts, server info; read-only endpoints only |
-| M4i | NAS exporter bundle | Generic | `deploy/exporters/nas/docker-compose.yml` with pinned `node_exporter` and `smartctl_exporter` (both Prometheus project, Apache-2.0), read-only mounts, dropped capabilities; `smartctl_exporter` gets only the disk devices it needs and `SYS_RAWIO`, never `privileged`, with the trade-off documented. Setup docs for UGOS Pro (its Docker UI refuses a host-root bind since 1.19; start over SSH if needed), TrueNAS SCALE, Unraid and OpenMediaVault. Make sure `linux_host` checks and cards cover mdadm (`node_md_*`), ZFS and hwmon temperatures/fans, with fixtures. The NAS drive-bay card (M5.5) combines `linux_host` and `smart_exporter`. Out of scope for now: per-container stats (cAdvisor), libvirt VMs, UPS (NUT); each can be an optional add-on later |
+| M4i | NAS exporter bundle | Generic | `deploy/exporters/nas/docker-compose.yml` with pinned `node_exporter` and `smartctl_exporter` (both Prometheus project, Apache-2.0), read-only mounts, dropped capabilities; `smartctl_exporter` gets only the disk devices it needs and `SYS_RAWIO`, never `privileged`, with the trade-off documented. State deliberately what `node_exporter` needs for host metrics (a read-only host-root mount, host PID or network mode) and why. Setup docs for UGOS Pro (its Docker UI refuses a host-root bind since 1.19; start over SSH if needed), TrueNAS SCALE, Unraid and OpenMediaVault. Make sure `linux_host` checks and cards cover mdadm (`node_md_*`), ZFS and hwmon temperatures/fans, with fixtures. The NAS drive-bay card (M5.5) combines `linux_host` and `smart_exporter`. Out of scope for now: per-container stats (cAdvisor), libvirt VMs, UPS (NUT); each can be an optional add-on later |
 
 **Kinds:** *Generic* works for any vendor and comes first. *Profile* targets one product: keep it optional, and write its docs for any user, not one lab.
 
