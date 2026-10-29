@@ -20,6 +20,7 @@ from app.core.config import Settings, get_settings
 from app.core.crypto import SecretBox, load_master_key
 from app.core.db import make_engine, make_session_factory
 from app.core.login_failures import UserLoginFailures
+from app.core.net_guard import NetGuard, NetPolicy
 from app.core.prometheus_auth import PrometheusToken, load_prometheus_token
 from app.integrations.instance_config import NetGuardFactory, default_net_guard_factory
 from app.integrations.registry import Registry, builtin_registry
@@ -85,7 +86,10 @@ def create_app(
     app.state.net_guard_factory = net_guard_factory or default_net_guard_factory
     app.state.prometheus_token = prometheus_token
     # PromQL proxy (M5.1): the URL comes from server config only, never from a request.
-    app.state.prometheus = prometheus_client or PrometheusClient(settings.prometheus_url)
+    # Through net_guard with the default policy, like every outbound connection.
+    app.state.prometheus = prometheus_client or PrometheusClient.guarded(
+        settings.prometheus_url, NetGuard(NetPolicy())
+    )
     # Poll collector (M2.4): results kept in memory, served on /metrics.
     app.state.metrics_store = MetricsStore()
     app.state.metrics_registry = make_registry(app.state.metrics_store)

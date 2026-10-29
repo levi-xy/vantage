@@ -301,9 +301,11 @@ Cards read metrics through `POST /api/v1/query` (any logged-in user, CSRF checke
 the browser never talks to Prometheus, which has no published port.
 
 The backend reaches the bundled Prometheus at `VANTAGE_PROMETHEUS_URL` (default
-`http://prometheus:9090`, the compose network). Prometheus is Vantage's own internal
-service, not a device, so this one client doesn't go through `net_guard`. That opens no
-SSRF path: the URL comes only from server config (an `http`/`https` URL without
+`http://prometheus:9090`, the compose network) through `net_guard` with the default
+policy, like every outbound connection. The compose network is RFC 1918, so the guard
+allows it; a URL the guard refuses (loopback, for example) makes every query answer 503
+`metrics backend refused by the network guard`, and the guard's reason is logged. On
+top of the guard, the URL comes only from server config (an `http`/`https` URL without
 credentials, checked at startup), the API paths are fixed, a request supplies only the
 PromQL text and numbers (sent as form fields), redirects aren't followed and proxy
 environment variables are ignored.

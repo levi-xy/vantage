@@ -20,7 +20,18 @@ PrometheusDep = Annotated[PrometheusClient, Depends(get_prometheus)]
 
 @router.post("/query")
 async def query(body: QueryRequest, _auth: AuthDep, prometheus: PrometheusDep) -> QueryResult:
-    """Instant query without ``start``/``end``, range query with them, within the budget."""
+    """Instant query without ``start``/``end``, range query with them, within the budget.
+
+    Body: ``{query, start?, end?, step?}`` (Unix seconds; ``step`` in seconds). Response::
+
+        {"result_type": "vector" | "matrix" | "scalar" | "string",
+         "series": [{"labels": {...}, "values": [[unix_seconds, "value"], ...]}],
+         "warnings": ["..."]}
+
+    An instant query gives one ``values`` pair per series; a scalar or string result is
+    one series with no labels. Values are strings, as Prometheus sends them, so ``NaN``
+    and ``+Inf`` survive JSON. Over budget: 422 with a short ``detail``.
+    """
     try:
         return await prometheus.query(body)
     except QueryError as exc:

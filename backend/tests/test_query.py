@@ -1,10 +1,11 @@
 """PromQL query proxy (M5.1): main path, budget refusals, Prometheus failures, security."""
 
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any
 from urllib.parse import parse_qs
 
+import httpcore
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -13,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import CSRF_HEADER
 from app.core.config import ConfigError, load_settings
+from app.core.net_guard import NetGuard, NetPolicy
 from app.models import Role
 from app.query.proxy import MAX_SERIES, PrometheusClient
 from tests.test_auth import add_user, do_setup, login, make_client
@@ -56,8 +58,10 @@ def prom() -> FakePrometheus:
 @pytest.fixture
 def admin(engine: Engine, db_url: str, prom: FakePrometheus) -> Iterator[TestClient]:
     with make_client(db_url) as c:
+        # Budget, shape and error tests fake Prometheus at the httpx level; the guarded
+        # client itself is covered by the net_guard tests below.
         c.app.state.prometheus = PrometheusClient(  # type: ignore[attr-defined]
-            PROM_URL, transport=httpx.MockTransport(prom)
+            httpx.AsyncClient(base_url=PROM_URL, transport=httpx.MockTransport(prom))
         )
         me = do_setup(c)
         c.headers[CSRF_HEADER] = me["csrf_token"]
@@ -196,6 +200,47 @@ def test_prometheus_failures_leak_nothing(
     for text in (r.text, ours):
         assert "prometheus.internal.example" not in text
         assert "9090" not in text
+
+
+# --- through net_guard -----------------------------------------------------------------
+
+# Fake DNS for the guard: the compose network is RFC 1918; loopback is always denied.
+GUARD_DNS = {"prometheus": ["192.168.255.243"], "loopback.example": ["127.0.0.1"]}
+
+
+async def fake_resolver(host: str, _port: int) -> Sequence[str]:
+    return GUARD_DNS[host]
+
+
+def guarded(url: str, backend: httpcore.AsyncNetworkBackend) -> PrometheusClient:
+    guard = NetGuard(NetPolicy(own_addresses=frozenset()), resolver=fake_resolver)
+    return PrometheusClient.guarded(url, guard, network_backend=backend)
+
+
+def test_guarded_client_reaches_compose_prometheus(admin: TestClient) -> None:
+    body = b'{"status":"success","data":{"resultType":"scalar","result":[1700000000,"1"]}}'
+    backend = httpcore.AsyncMockBackend(
+        [
+            b"HTTP/1.1 200 OK\r\n",
+            b"Content-Type: application/json\r\n",
+            b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n",
+            body,
+        ]
+    )
+    admin.app.state.prometheus = guarded("http://prometheus:9090", backend)  # type: ignore[attr-defined]
+    r = admin.post(QUERY, json={"query": "1"})
+    assert r.status_code == 200, r.text
+    assert r.json()["series"] == [{"labels": {}, "values": [[NOW, "1"]]}]
+
+
+def test_guard_refusal_is_a_clear_503(admin: TestClient) -> None:
+    admin.app.state.prometheus = guarded(  # type: ignore[attr-defined]
+        "http://loopback.example:9090", httpcore.AsyncMockBackend([])
+    )
+    r = admin.post(QUERY, json={"query": "up"})
+    assert r.status_code == 503
+    assert r.json() == {"detail": "metrics backend refused by the network guard"}
+    assert "loopback.example" not in r.text and "127.0.0.1" not in r.text
 
 
 def test_prometheus_url_setting() -> None:

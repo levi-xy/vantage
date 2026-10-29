@@ -3,10 +3,11 @@
 The browser never talks to Prometheus (hard rule 4); cards send PromQL to
 ``POST /api/v1/query`` and this module forwards it to the bundled Prometheus.
 
-Prometheus is Vantage's own internal service, not a device, so this client does not go
-through ``net_guard``. That opens no SSRF path: the base URL comes only from server
-config (``VANTAGE_PROMETHEUS_URL``), the paths are fixed, and a request supplies only the
-PromQL text and numbers, sent as form fields. Redirects are not followed and proxy
+The connection goes through ``net_guard`` like every other outbound call (hard rule 5),
+with the default policy: the bundled Prometheus sits on the compose network (RFC 1918),
+which the guard allows. On top of that, the base URL comes only from server config
+(``VANTAGE_PROMETHEUS_URL``), the paths are fixed, a request supplies only the PromQL
+text and numbers (sent as form fields), redirects are not followed and proxy
 environment variables are ignored.
 """
 
@@ -16,8 +17,11 @@ import logging
 import math
 from typing import Any, Literal
 
+import httpcore
 import httpx
 from pydantic import BaseModel, Field
+
+from app.core.net_guard import NetGuard, NetGuardError, guarded_http_client
 
 log = logging.getLogger(__name__)
 
@@ -102,15 +106,28 @@ def check_budget(req: QueryRequest) -> dict[str, str]:
 
 
 class PrometheusClient:
-    """Calls the configured Prometheus. Tests pass an ``httpx.MockTransport``."""
+    """Calls the configured Prometheus. Build it with :meth:`guarded`; tests may pass
+    any ``httpx.AsyncClient`` (e.g. one on an ``httpx.MockTransport``)."""
 
-    def __init__(self, base_url: str, transport: httpx.AsyncBaseTransport | None = None) -> None:
-        self._client = httpx.AsyncClient(
-            base_url=base_url,
-            transport=transport,
-            timeout=httpx.Timeout(TOTAL_TIMEOUT_SECONDS, connect=5.0),
-            follow_redirects=False,
-            trust_env=False,
+    def __init__(self, client: httpx.AsyncClient) -> None:
+        self._client = client
+
+    @classmethod
+    def guarded(
+        cls,
+        base_url: str,
+        guard: NetGuard,
+        *,
+        network_backend: httpcore.AsyncNetworkBackend | None = None,
+    ) -> "PrometheusClient":
+        """The production client: every connection is checked by ``guard``."""
+        return cls(
+            guarded_http_client(
+                guard,
+                base_url=base_url,
+                total_timeout=TOTAL_TIMEOUT_SECONDS,
+                network_backend=network_backend,
+            )
         )
 
     async def aclose(self) -> None:
@@ -127,6 +144,11 @@ class PrometheusClient:
                 status_code, body = await self._post(path, form)
         except TimeoutError:
             raise QueryError(504, "query timed out") from None
+        except NetGuardError as exc:
+            # The guard's message names the configured host and the reason; log it, but
+            # keep internal addresses out of the response.
+            log.warning("network guard refused VANTAGE_PROMETHEUS_URL: %s", exc)
+            raise QueryError(503, "metrics backend refused by the network guard") from None
         except httpx.HTTPError as exc:
             # Class name only: the exception text names Prometheus' address.
             log.warning("Prometheus unreachable: %s", type(exc).__name__)
