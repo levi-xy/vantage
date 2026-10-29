@@ -5,6 +5,7 @@ The models and method signatures here are the contract; change them only with th
 maintainer's approval.
 """
 
+import ssl
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
@@ -118,11 +119,17 @@ class InstanceContext:
     def http_client(
         self,
         *,
-        verify: bool = True,
+        verify: bool | ssl.SSLContext = True,
         base_url: str = "",
         headers: Mapping[str, str] | None = None,
     ) -> httpx.AsyncClient:
-        """A guarded ``httpx.AsyncClient``. ``verify=False`` is for self-signed devices only."""
+        """A guarded ``httpx.AsyncClient``.
+
+        ``verify`` is ``True`` (system CAs), an ``ssl.SSLContext`` that verifies against
+        a certificate the admin supplied (pinning, for self-signed devices), or ``False``
+        (no verification; an explicit per-instance opt-in only). A cloud host is refused
+        unless the context verifies the certificate and the hostname.
+        """
         return guarded_http_client(
             self.net_guard,
             verify=verify,

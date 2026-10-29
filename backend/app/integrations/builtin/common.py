@@ -44,7 +44,7 @@ def host_port(host: str, port: int) -> str:
 _SSL_TEXT = re.compile(r"\[SSL[:\]]|certificate verify failed", re.IGNORECASE)
 
 
-def _tls_failure(exc: BaseException) -> bool:
+def is_tls_failure(exc: BaseException) -> bool:
     """Whether a connect error came from the TLS handshake. Only classifies: the text
     itself is never shown."""
     seen: set[int] = set()
@@ -77,7 +77,7 @@ def connection_failure(exc: Exception, *, where: str, hint: FirewallHint) -> Tes
     if isinstance(exc, TimeoutError | httpx.TimeoutException):
         return TestResult(ok=False, message=f"timed out waiting for {where}", hint=hint)
     if isinstance(exc, httpx.ConnectError):
-        if _tls_failure(exc):
+        if is_tls_failure(exc):
             return TestResult(
                 ok=False,
                 message=f"TLS handshake with {where} failed (is the certificate trusted?)",
