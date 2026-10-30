@@ -1062,6 +1062,7 @@ def test_api_create_test_read_and_update(admin: TestClient, fake_snmp: FakeSnmp)
     assert cards.json() == [
         {"card_type": "snmp-overview", "title": "SNMP device", "default_size": [2, 2]},
         {"card_type": "snmp-ports", "title": "Ports", "default_size": [4, 2]},
+        {"card_type": "switch-panel", "title": "Front panel", "default_size": [8, 3]},
     ]
     # Switch to v3 on an edit: the stored community stays (unused), the keys are added.
     patched = admin.patch(
@@ -1120,7 +1121,11 @@ def test_firewall_hints_cards_and_interval() -> None:
     [hint] = SnmpDevice().firewall_hints(make_ctx(SnmpDevice, v2c(host="[fd00::40]", port=1161)))
     assert (hint.protocol, hint.port, hint.destination) == ("udp", 1161, "fd00::40")
     assert SnmpDevice().poll_interval_seconds() == 60
-    assert [c.card_type for c in SnmpDevice().cards()] == ["snmp-overview", "snmp-ports"]
+    assert [c.card_type for c in SnmpDevice().cards()] == [
+        "snmp-overview",
+        "snmp-ports",
+        "switch-panel",
+    ]
     assert (SnmpDevice.type_id, SnmpDevice.category) == ("snmp_device", "switch")
 
 

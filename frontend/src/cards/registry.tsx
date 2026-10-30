@@ -17,6 +17,7 @@ import { ProxmoxNodeCard } from "./proxmox-node/ProxmoxNodeCard";
 import { SnmpOverviewCard } from "./snmp-overview/SnmpOverviewCard";
 import { SnmpPortsCard } from "./snmp-ports/SnmpPortsCard";
 import { SmartDisksCard } from "./smart-disks/SmartDisksCard";
+import { SwitchPanelCard } from "./switch-panel/SwitchPanelCard";
 
 /** What every card receives. Cards fetch their data only through the typed API client. */
 export interface CardProps {
@@ -49,6 +50,7 @@ const CARD_COMPONENTS: Readonly<Record<string, ComponentType<CardProps>>> = {
   "smart-disks": SmartDisksCard,
   "snmp-overview": SnmpOverviewCard,
   "snmp-ports": SnmpPortsCard,
+  "switch-panel": SwitchPanelCard,
 };
 
 /**
@@ -73,6 +75,7 @@ const MIN_SIZES: Readonly<Record<string, [number, number]>> = {
   "smart-disks": [4, 3],
   "snmp-overview": [3, 3],
   "snmp-ports": [4, 4],
+  "switch-panel": [6, 3],
 };
 const DEFAULT_MIN_SIZE: [number, number] = [3, 2];
 

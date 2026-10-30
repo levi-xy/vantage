@@ -529,7 +529,7 @@ def test_api_create_test_read(admin: TestClient, fake_snmp: FakeSnmp) -> None:
     assert tested.status_code == 200 and tested.json()["ok"] is True
     bodies.append(tested.text)
     cards = admin.get(f"/api/v1/instances/{body['id']}/cards").json()
-    assert [c["card_type"] for c in cards] == ["snmp-overview", "snmp-ports"]
+    assert [c["card_type"] for c in cards] == ["snmp-overview", "snmp-ports", "switch-panel"]
     assert_no_secret(*bodies)
     assert {c.address for c in fake_snmp.calls} == {ADDRESS}
 
@@ -559,7 +559,11 @@ def test_firewall_hints_cards_and_interval() -> None:
     ctx = make_ctx(MikroTikSwOS, cfg())
     assert [h.model_dump() for h in MikroTikSwOS().firewall_hints(ctx)] == [UDP_HINT]
     assert MikroTikSwOS().poll_interval_seconds() == 60
-    assert [c.card_type for c in MikroTikSwOS().cards()] == ["snmp-overview", "snmp-ports"]
+    assert [c.card_type for c in MikroTikSwOS().cards()] == [
+        "snmp-overview",
+        "snmp-ports",
+        "switch-panel",
+    ]
     assert (MikroTikSwOS.type_id, MikroTikSwOS.category) == ("mikrotik_swos", "switch")
 
 
