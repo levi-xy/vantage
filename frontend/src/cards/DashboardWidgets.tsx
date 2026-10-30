@@ -4,6 +4,7 @@ import { formatBitsPerSecond } from "./metrics/format";
 import { firstValue } from "./metrics/promql";
 import { StatTile } from "./metrics/StatTile";
 import type { StatTileProps } from "./metrics/StatTile";
+import { shownState, useScrapeStates } from "./metrics/scrapeStatus";
 import { useFleetQuery } from "./metrics/useMetricQuery";
 import {
   hasWanSource,
@@ -24,7 +25,8 @@ function Stat({ note, children }: { note?: string; children: ReactNode }) {
 }
 
 export function DevicesHealthCard({ instances }: WidgetProps) {
-  const counts = healthCounts(instances);
+  const scrape = useScrapeStates(instances);
+  const counts = healthCounts(instances, (i) => shownState(i, scrape));
   const polled = counts.up + counts.down + counts.pending;
   let note: string | undefined;
   if (counts.down) note = `${counts.down} down`;

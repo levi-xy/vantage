@@ -10,9 +10,13 @@ export interface HealthCounts {
   unknown: number;
 }
 
-export function healthCounts(instances: Instance[]): HealthCounts {
+/** `state` gives the state to count (the backend's, or Prometheus' for unpolled devices). */
+export function healthCounts(
+  instances: Instance[],
+  state: (i: Instance) => Instance["status"]["state"] = (i) => i.status.state,
+): HealthCounts {
   const counts: HealthCounts = { up: 0, down: 0, pending: 0, unknown: 0 };
-  for (const i of instances) counts[i.status.state] += 1;
+  for (const i of instances) counts[state(i)] += 1;
   return counts;
 }
 
