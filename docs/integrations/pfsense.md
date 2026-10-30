@@ -11,6 +11,8 @@
 | `host` | string | none | IP or DNS name of pfSense; checked by the SSRF guard on save |
 | `port` | integer | Telegraf's default | the `prometheus_client` listen port |
 | `scheme` | `http` / `https` | `http` | `https` only if Prometheus trusts Telegraf's certificate |
+| `interface_names` | list of `interface=name` | empty | display names for the cards, e.g. `igc0=WAN` (name up to 32 characters). Telegraf only knows the OS names; pfSense's own descriptions never reach it |
+| `hidden_interfaces` | list of interface names | empty | left off the Interfaces card; still scraped |
 
 See `PfSenseConfig` for bounds and defaults.
 
@@ -23,7 +25,8 @@ See `PfSenseConfig` for bounds and defaults.
 **Firewall:** TCP to the Telegraf port on pfSense, from Prometheus (scrapes) and from the backend (connection test). On pfSense this is a rule on the interface facing Vantage.
 
 **Cards:**
-- `pfsense-overview`, "pfSense", 4 by 3: `cpu_usage_idle`, `mem_used_percent`, `pf_entries`, `net_bytes_recv` / `net_bytes_sent` per interface.
+- `pfsense-overview`, "Resources", 4 by 3 (the id predates the name, so saved dashboards keep it): `cpu_usage_idle`, `mem_used_percent`, `disk_used_percent{path="/"}` (Telegraf `disk` input), `pf_entries`, `system_uptime` (`system` input), and the hottest `temp_temp` only when Telegraf's `temp` input reports a sensor.
+- `pfsense-interfaces`, "Interfaces", 4 by 3: `net_bytes_recv` / `net_bytes_sent` per interface, shown under `interface_names`, without `hidden_interfaces`. The names are display-only: metric labels keep the OS names.
 - `pfsense-gateways`, "Gateways", 4 by 2: one row per gateway, keyed by `url` from `ping_percent_packet_loss` (present for every gateway); latency from `ping_average_response_ms` where it exists. A gateway with loss 100 has no latency series: show it as down, not as missing.
 
 **Limits and caveats:** gateway latency and loss come from Telegraf's `ping` input, not from pfSense's own gateway monitoring (dpinger), so gateways appear only if you configure a ping target for each. Hostnames are resolved again by Prometheus when it scrapes, so only an IP-literal host is fully protected against DNS rebinding. The metric names are Telegraf's defaults; a custom Telegraf measurement prefix or name override will hide them.
