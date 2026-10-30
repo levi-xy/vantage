@@ -429,12 +429,16 @@ _VALUE_SAMPLES: tuple[tuple[str, str, Literal["gauge", "counter"]], ...] = (
 )
 
 
-def interface_samples(table: InterfaceTable, prefix: str) -> list[Sample]:
+def interface_samples(
+    table: InterfaceTable, prefix: str, *, label_on_info: bool = False
+) -> list[Sample]:
     """Per-interface samples, labelled ``if_index`` and ``if_name`` (the port name), plus
     ``<prefix>_if_info`` carrying ``if_descr`` and ``if_alias``, and the interface counts.
 
     The free-text ``ifDescr``/``ifAlias`` sit only on the info series, so renaming a port
-    on the device doesn't split its counter series.
+    on the device doesn't split its counter series. With ``label_on_info``, the info
+    series also carries ``if_label``: the device's own ifName (cleaned and capped), for a
+    profile whose ``if_name`` is a stable id rather than the name the admin set.
     """
     samples = [
         Sample(name=f"{prefix}_interfaces", value=float(table.seen), type="gauge"),
@@ -452,7 +456,12 @@ def interface_samples(table: InterfaceTable, prefix: str) -> list[Sample]:
         samples.append(
             Sample(
                 name=f"{prefix}_if_info",
-                labels={**labels, "if_descr": interface.descr, "if_alias": interface.alias},
+                labels={
+                    **labels,
+                    "if_descr": interface.descr,
+                    "if_alias": interface.alias,
+                    **({"if_label": interface.name} if label_on_info else {}),
+                },
                 value=1.0,
                 type="gauge",
             )
