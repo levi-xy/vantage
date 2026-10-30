@@ -93,6 +93,7 @@ export function DashboardGrid({
       cols={COLS}
       rowHeight={ROW_HEIGHT}
       margin={[16, 16]}
+      containerPadding={[0, 0]}
       isDraggable={canEdit}
       isResizable={canEdit}
       draggableHandle={`.${DRAG_HANDLE}`}
@@ -134,16 +135,16 @@ export function DashboardGrid({
               // Covers the card while editing: the card's own buttons don't react, and the
               // cover is what you drag. Resize with the bottom-right corner.
               <div
-                className={`${DRAG_HANDLE} absolute inset-0 flex cursor-move items-start justify-between gap-2 bg-slate-900/5 p-2 dark:bg-white/5`}
+                className={`${DRAG_HANDLE} absolute inset-0 flex cursor-move items-center justify-center bg-white/70 backdrop-blur-[1px] dark:bg-slate-950/70`}
               >
-                <span className="rounded bg-white/90 px-2 py-0.5 text-xs font-medium text-slate-700 shadow-sm dark:bg-slate-800/90 dark:text-slate-200">
+                <span className="rounded bg-white px-2 py-1 text-sm font-medium text-slate-700 shadow-sm dark:bg-slate-800 dark:text-slate-200">
                   ⠿ {title ?? c.card_type}
                 </span>
                 <button
                   type="button"
                   aria-label={`Remove ${title ?? c.card_type}`}
                   onClick={() => onRemove(c)}
-                  className={`${NO_DRAG} rounded bg-white/90 px-2 py-0.5 text-sm text-slate-700 shadow-sm hover:bg-red-50 hover:text-red-700 dark:bg-slate-800/90 dark:text-slate-200 dark:hover:bg-red-950 dark:hover:text-red-300`}
+                  className={`${NO_DRAG} absolute top-2 right-2 rounded bg-white px-2 py-0.5 text-sm text-slate-700 shadow-sm hover:bg-red-50 hover:text-red-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-red-950 dark:hover:text-red-300`}
                 >
                   ✕
                 </button>
