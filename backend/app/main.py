@@ -9,6 +9,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app import __version__
+from app.alerts.evaluator import AlertEvaluator
+from app.alerts.notifier import NullNotifier
 from app.api import api_router
 from app.api.auth import LOGIN_LIMITS, LOGIN_WINDOW_SECONDS
 from app.api.deps import SAFE_METHODS
@@ -57,9 +59,12 @@ def create_app(
         live_rates: LiveRates = app.state.live_rates
         poller.start()
         live_rates.start()
+        evaluator: AlertEvaluator = app.state.alert_evaluator
+        evaluator.start()
         try:
             yield
         finally:
+            await evaluator.stop()
             await live_rates.stop()
             await poller.stop()
             await app.state.prometheus.aclose()
@@ -115,6 +120,15 @@ def create_app(
         net_guard_factory=app.state.net_guard_factory,
         store=app.state.metrics_store,
         hub=app.state.event_hub,
+    )
+
+    # Alerts (M7.1): the notifier is swapped for the real channel sender by M7.2.
+    app.state.notifier = NullNotifier()
+    app.state.alert_evaluator = AlertEvaluator(
+        session_factory=app.state.session_factory,
+        prometheus=lambda: app.state.prometheus,
+        hub=app.state.event_hub,
+        notifier=lambda: app.state.notifier,
     )
 
     app.include_router(api_router)

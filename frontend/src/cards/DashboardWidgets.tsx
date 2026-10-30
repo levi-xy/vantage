@@ -1,9 +1,11 @@
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
 import type { ReactNode } from "react";
 import { StatTile } from "./metrics/StatTile";
 import type { StatTileProps } from "./metrics/StatTile";
 import { shownState, useScrapeStates } from "./metrics/scrapeStatus";
-import { useFleetQuery } from "./metrics/useMetricQuery";
+import { useApiClient } from "../app/session";
+import { INSTANT_REFETCH_MS, useFleetQuery } from "./metrics/useMetricQuery";
 import { hasWanSource, healthCounts, WAN_LOSS_QUERY, wanSummary } from "./overview";
 import type { WidgetProps } from "./widgets";
 
@@ -36,11 +38,21 @@ export function DevicesHealthCard({ instances }: WidgetProps) {
   );
 }
 
+const FIRING_LIMIT = 200;
+
 export function AlertsCard() {
-  // TODO(M7): show the number of firing alerts once the alerts API exists.
+  const client = useApiClient();
+  const firing = useQuery({
+    queryKey: ["alerts", "firing"],
+    queryFn: () => client.alertEvents({ state: "firing", limit: FIRING_LIMIT }),
+    refetchInterval: INSTANT_REFETCH_MS,
+  });
+  const count = firing.data?.length;
+  const value =
+    count === undefined ? "\u2014" : count >= FIRING_LIMIT ? `${count}+` : String(count);
   return (
-    <Stat note="Alerts not set up yet">
-      <StatTile label="Active alerts" value="—" />
+    <Stat note={count === 0 ? "All clear" : undefined}>
+      <StatTile label="Active alerts" value={value} tone={count ? "bad" : undefined} />
     </Stat>
   );
 }
