@@ -76,7 +76,9 @@ export function ThroughputCard({ instances, settings }: WidgetProps) {
   const rxSpark = useFleetRangeQuery(inExpr, undefined, chosen);
   const txSpark = useFleetRangeQuery(outExpr, undefined, chosen);
   const { groups } = usePortOptions(instances);
-  const live = useLiveRate();
+  // Live only when every chosen port was read; a partial sum would look like the total.
+  const pushed = useLiveRate();
+  const live = pushed && pushed.ports === ports.length ? pushed : undefined;
 
   if (!chosen) {
     return (

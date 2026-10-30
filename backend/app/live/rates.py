@@ -11,7 +11,12 @@ Reads go through each instance's guarded clients (``InstanceContext``), like a p
   The port's ifIndex comes from the instance's last poll in the metrics store.
 * Scraped exporters (``pfsense``, ``linux_host``): one GET of the integration's own
   scrape target, the counters picked from it. Telegraf updates its page on its own
-  interval, so between updates the last rate is kept.
+  interval, so between updates the last rate is kept (for at most
+  :data:`SCRAPED_STALE_SECONDS`). The rate is measured from when Vantage saw the new
+  value, not when the exporter collected it, so it can be off by up to about one tick:
+  fine for a live hint, and the history in Prometheus is exact.
+
+SNMP counters are read live, so unchanged counters there mean no traffic (rate 0).
 
 Ports come only from the saved layout (admin-written), at most :data:`MAX_PORTS`; the
 interface name is only compared with label values, never sent anywhere.
@@ -45,6 +50,8 @@ from app.models import Dashboard, Instance
 logger = logging.getLogger(__name__)
 
 TICK_SECONDS = 2.0
+# An exporter page whose counters haven't moved for this long is treated as stale.
+SCRAPED_STALE_SECONDS = 30.0
 READ_TIMEOUT_SECONDS = 1.5
 MAX_PORTS = 8
 MAX_BODY_BYTES = 8 * 1024 * 1024
@@ -173,7 +180,7 @@ class LiveRates:
         counted = 0
         for counters in results:
             for port, (in_octets, out_octets) in counters.items():
-                rate = self._rate(port, in_octets, out_octets, now)
+                rate = self._rate(port, in_octets, out_octets, now, live=port.source == "snmp")
                 if rate is not None:
                     total_in += rate[0]
                     total_out += rate[1]
@@ -191,15 +198,23 @@ class LiveRates:
             )
 
     def _rate(
-        self, port: Port, in_octets: int, out_octets: int, now: float
+        self, port: Port, in_octets: int, out_octets: int, now: float, *, live: bool
     ) -> tuple[float, float] | None:
+        """Bits per second since the last change, or None when unknown.
+
+        ``live``: the counters are read from the device itself (SNMP), so unchanged
+        counters mean no traffic. Otherwise (an exporter page updated on its own
+        interval) the last rate is kept while it isn't stale.
+        """
         last = self._last.get(port)
         if last is None or in_octets < last.in_octets or out_octets < last.out_octets:
             self._last[port] = _Last(in_octets, out_octets, now)  # first read, or a reset
             return None
-        if in_octets == last.in_octets and out_octets == last.out_octets:
-            # Not updated since (an exporter's own interval): keep the last rate, if any.
+        unchanged = in_octets == last.in_octets and out_octets == last.out_octets
+        if unchanged and not live:
             if last.in_bps is None or last.out_bps is None:
+                return None
+            if now - last.at > SCRAPED_STALE_SECONDS:
                 return None
             return last.in_bps, last.out_bps
         elapsed = now - last.at
@@ -309,7 +324,22 @@ class LiveRates:
                     return {}
         wanted = {p.iface: p for p in ports}
         found: dict[str, dict[str, int]] = {}
-        for family in text_string_to_metric_families(body.decode("utf-8", errors="replace")):
+        # Parse only the two families' lines: the page can be large, and parsing runs on
+        # the event loop.
+        # Counters may be written with or without the ``_total`` suffix (node_exporter
+        # writes it, Telegraf doesn't).
+        keep = tuple(
+            prefix
+            for name in (in_name, out_name)
+            for exposed in (name, f"{name}_total")
+            for prefix in (f"# TYPE {exposed} ", f"{exposed}{{")
+        )
+        text = "\n".join(
+            line
+            for line in body.decode("utf-8", errors="replace").splitlines()
+            if line.startswith(keep)
+        )
+        for family in text_string_to_metric_families(text):
             if family.name not in (in_name, out_name):
                 continue
             for sample in family.samples:
