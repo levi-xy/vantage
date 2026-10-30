@@ -108,6 +108,20 @@ describe("dashboard page", () => {
     expect(puts(backend)).toHaveLength(0);
   });
 
+  it("on a phone: a plain list of cards, no editing", async () => {
+    const width = window.innerWidth;
+    window.innerWidth = 390;
+    try {
+      const backend = backendWith({ version: 2, cards: [PING] });
+      renderApp("/", backend);
+      expect(await screen.findByTestId("card")).toHaveTextContent("nas-1");
+      expect(document.querySelector(".react-grid-layout")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Edit dashboard" })).not.toBeInTheDocument();
+    } finally {
+      window.innerWidth = width;
+    }
+  });
+
   it("offers no editing to a viewer", async () => {
     const backend = backendWith({ version: 2, cards: [PING] }, "viewer");
     renderApp("/", backend);

@@ -277,6 +277,7 @@ export function DashboardPage() {
         instances={new Map(instanceList.map((i) => [i.id, i]))}
         titles={titles}
         editing={editing}
+        compact={!isDesktop}
         onChange={setDraft}
         onRemove={(card) => setDraft(shown.filter((c) => cardKey(c) !== cardKey(card)))}
         onConfigure={(card) => {
