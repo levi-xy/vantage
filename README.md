@@ -93,16 +93,19 @@ Vantage holds a map of your network and credentials to your devices, so it's bui
 
 ---
 
-## Quick start (planned)
+## Quick start
+
+Needs Docker Engine with Compose v2, and `openssl`.
 
 ```bash
 git clone https://github.com/<owner>/vantage.git
 cd vantage/deploy
-cp .env.example .env        # then generate a master key (see docs)
-docker compose up -d
+./setup.sh
 ```
 
-Open `https://<host>`, create the admin account in the setup wizard, then add your first device under **Integrations → Add**.
+`setup.sh` creates the master key, the Prometheus token and `.env` (keeping any that already exist), starts the stack and prints the address. Back up `deploy/secrets/master.key` somewhere off the server: without it, stored device credentials can't be decrypted. The dashboard listens on `127.0.0.1:8080` by default; set `VANTAGE_BIND_ADDRESS` in `.env` to reach it from other machines, then run `docker compose up -d`.
+
+Open the address, create the admin account in the setup wizard, then add your first device.
 
 ## Development
 
