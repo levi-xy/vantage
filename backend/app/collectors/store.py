@@ -199,6 +199,11 @@ class MetricsStore:
     def tracked(self) -> frozenset[uuid.UUID]:
         return frozenset(self._entries)
 
+    def samples(self, instance_id: uuid.UUID) -> list[Sample]:
+        """The samples of the instance's last good poll (empty if none)."""
+        entry = self._entries.get(instance_id)
+        return list(entry.samples) if entry else []
+
     def status(self, instance_id: uuid.UUID) -> InstanceStatus | None:
         entry = self._entries.get(instance_id)
         return entry.status if entry is not None else None

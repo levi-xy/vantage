@@ -201,6 +201,8 @@ export type LiveMessage =
   | { type: "refresh"; instance_id: string }
   /** Reserved for M6 (alert events); nothing sends it yet. */
   | { type: "alert_event" }
+  /** Every ~2 s while connected: summed traffic of the throughput card's saved ports. */
+  | { type: "live_rate"; in_bps: number; out_bps: number; ports: number; at: string }
   | { type: "pong" };
 
 /** Body of `POST /query`. Times are Unix seconds, `step` seconds. No start/end = instant query. */
