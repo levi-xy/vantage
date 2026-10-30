@@ -21,6 +21,7 @@ pytestmark = pytest.mark.skipif(
 
 DOCKER_STUB = """#!/bin/sh
 echo "docker $*" >> "$STUB_LOG"
+[ "$1" = info ] && [ -n "${STUB_DOCKER_DOWN:-}" ] && exit 1
 case "$1 $2" in
   "volume inspect") [ -n "${STUB_VOLUME_EXISTS:-}" ] && exit 0 || exit 1 ;;
 esac
@@ -43,13 +44,17 @@ def deploy(tmp_path: Path) -> Path:
     return d
 
 
-def run(deploy: Path, *args: str, volume_exists: bool = False) -> subprocess.CompletedProcess[str]:
+def run(
+    deploy: Path, *args: str, volume_exists: bool = False, docker_down: bool = False
+) -> subprocess.CompletedProcess[str]:
     env = {
         "PATH": f"{deploy.parent / 'bin'}:/usr/bin:/bin",
         "STUB_LOG": str(deploy.parent / "stub.log"),
     }
     if volume_exists:
         env["STUB_VOLUME_EXISTS"] = "1"
+    if docker_down:
+        env["STUB_DOCKER_DOWN"] = "1"
     return subprocess.run(  # noqa: S603 -- fixed argv, test-only script under deploy/
         ["/bin/sh", str(deploy / "setup.sh"), *args],
         env=env,
@@ -131,3 +136,12 @@ def test_never_overwrites_key_even_with_force(deploy: Path) -> None:
     key = (deploy / "secrets" / "master.key").read_bytes()
     assert run(deploy, "--no-start", "--force-new-key").returncode == 0
     assert (deploy / "secrets" / "master.key").read_bytes() == key
+
+
+def test_backup_reminder_even_when_docker_fails(deploy: Path) -> None:
+    result = run(deploy, docker_down=True)
+    assert result.returncode != 0
+    assert "can't reach the Docker daemon" in result.stderr
+    assert "back up deploy/secrets/master.key" in result.stdout
+    assert "docker compose up" not in stub_log(deploy)
+    assert_no_secret_in_output(deploy, result)

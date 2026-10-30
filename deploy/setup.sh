@@ -66,6 +66,13 @@ new_secret() {  # $1 = target file, rest = openssl rand arguments
     mv "$tmp" "$target"
 }
 
+backup_reminder() {
+    [ "$key_created" -eq 1 ] || return 0
+    echo
+    echo "IMPORTANT: back up deploy/secrets/master.key now, somewhere other than this"
+    echo "server. Without it, the device credentials Vantage stores can't be decrypted."
+}
+
 key_created=0
 if [ -f secrets/master.key ]; then
     echo "Keeping existing secrets/master.key"
@@ -79,6 +86,9 @@ want to start over, re-run with --force-new-key."
     fi
     new_secret secrets/master.key -base64 32
     key_created=1
+    # From here on, remind on every exit, including a failure further down: a re-run
+    # keeps the key and wouldn't remind again.
+    trap backup_reminder EXIT
     echo "Created secrets/master.key"
 fi
 
@@ -108,16 +118,8 @@ else
     chmod 644 secrets/master.key secrets/prometheus_token
 fi
 
-backup_reminder() {
-    [ "$key_created" -eq 1 ] || return 0
-    echo
-    echo "IMPORTANT: back up deploy/secrets/master.key now, somewhere other than this"
-    echo "server. Without it, the device credentials Vantage stores can't be decrypted."
-}
-
 if [ "$start" -eq 0 ]; then
     echo "Files ready. Start Vantage with: docker compose up -d"
-    backup_reminder
     exit 0
 fi
 
@@ -170,4 +172,3 @@ else
     echo "Vantage didn't report healthy yet. Check: docker compose ps; docker compose logs backend"
     echo "Address once it's up: http://$shown_host:$port"
 fi
-backup_reminder
