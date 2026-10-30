@@ -26,7 +26,7 @@ Vantage puts your firewall, hypervisor, NAS, switches, tunnels and services on o
 - **Integrations as plugins:** each device type is a self-contained module with its form, collection logic and cards. The community can add more.
 - **Live, hardware-shaped cards:** network topology map, switch port faceplate, NAS drive bays, VM lists, tunnel and site traffic, media streams.
 - **Editable layout:** cards appear automatically for each new device; drag them into place.
-- **History and alerts:** Prometheus underneath, alert rules managed in the UI, Telegram delivery (more channels later).
+- **History and alerts:** Prometheus underneath, alert rules managed in the UI, Telegram delivery (more channels later). Telegram channels are set up on the **Alerts** page, with a "Send test message" button; the bot token is stored encrypted and never shown again.
 - **"What changed":** a timeline that links events across devices (later: AI-assisted summaries).
 
 ---

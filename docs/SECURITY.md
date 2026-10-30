@@ -326,3 +326,32 @@ short message and never reaches Prometheus:
 Prometheus' own error text is never passed on: the client sees `invalid PromQL query`
 (400), `query could not be executed` (422), `query timed out` (504),
 `metrics backend unavailable` (503) or `metrics backend error` (502).
+
+## Alert channels (Telegram)
+
+Alert channels are managed at `/api/v1/channels` (admin only, CSRF checked; the UI's
+**Alerts** page). A Telegram channel stores a chat ID (plain config) and a bot token,
+which is a secret like an instance's: encrypted with the master key into
+`channels.secrets` (bound to the row), write-only (responses carry only
+`secrets_set: {"bot_token": true|false}`, never the value or a masked fragment),
+unchanged when a PATCH omits it, and recorded in the audit log only as `"<changed>"`.
+
+Sending (`backend/app/alerts/channels.py`) is `POST
+https://api.telegram.org/bot<token>/sendMessage` through `net_guard` with
+`api.telegram.org` as the only declared cloud host, so the guard allows it only over
+HTTPS with certificate and hostname verification, and only when every address it
+resolves to is public. Redirects aren't followed, the guard's timeouts apply, and the
+text is capped at Telegram's 4,096 characters and sent as plain text (no `parse_mode`).
+
+Telegram puts the token in the URL path, so extra care keeps it out of logs and errors:
+
+- The token's format is validated (`<digits>:<letters, digits, _ and ->`), so it can't
+  add `/`, `?` or `#` and change which URL is requested.
+- Send errors are built from fixed text, the exception type and Telegram's short
+  `description`, then scrubbed of the token; an httpx exception's own text (which can
+  hold the URL) is never used or chained.
+- httpx logs every request URL at INFO level; a log filter on the `httpx` and
+  `httpcore` loggers rewrites `/bot<token>` to `/bot<redacted>`.
+
+Recommended: give the bot only what it needs (a bot that can post to one chat), and allow
+outbound HTTPS to `api.telegram.org` in your firewall only if you use Telegram alerts.
