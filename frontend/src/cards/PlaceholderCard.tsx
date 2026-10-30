@@ -1,4 +1,5 @@
 import type { Instance, InstanceStatus } from "../api";
+import { shownState, useScrapeStates } from "./metrics/scrapeStatus";
 import type { CardProps } from "./registry";
 
 const STATE_LABELS: Record<InstanceStatus["state"], string> = {
@@ -17,7 +18,7 @@ const STATE_STYLES: Record<InstanceStatus["state"], string> = {
 
 /** The instance's status as a coloured badge, with the collector's short error if any. */
 export function StatusBadge({ instance }: { instance: Instance | undefined }) {
-  const state = instance?.status.state ?? "unknown";
+  const state = shownState(instance, useScrapeStates([instance]));
   return (
     <>
       <span

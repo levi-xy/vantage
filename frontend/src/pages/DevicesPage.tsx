@@ -6,6 +6,7 @@ import { useApiClient, useUser } from "../app/session";
 import { EmptyState, PageHeader } from "../components/PageHeader";
 import { alertError, buttonPrimary, buttonSecondary } from "../components/styles";
 import { TestOutcome } from "./devices/InstanceForm";
+import { shownState, useScrapeStates } from "../cards/metrics/scrapeStatus";
 import { errorText, INSTANCES_KEY, useInstances, useIntegrations } from "./devices/queries";
 
 const STATE_LABELS: Record<InstanceStatus["state"], string> = {
@@ -151,6 +152,7 @@ export function DevicesPage() {
   const user = useUser();
   const isAdmin = user.role === "admin";
   const instances = useInstances();
+  const scrape = useScrapeStates(instances.data ?? []);
   const integrations = useIntegrations();
   const typeName = (typeId: string) =>
     integrations.data?.find((t) => t.type_id === typeId)?.name ?? typeId;
@@ -206,7 +208,7 @@ export function DevicesPage() {
               )}
             </div>
             <div className="flex flex-col gap-3 md:items-end">
-              <StatusBadge status={instance.status} />
+              <StatusBadge status={{ ...instance.status, state: shownState(instance, scrape) }} />
               {isAdmin && <AdminActions instance={instance} />}
             </div>
           </li>
