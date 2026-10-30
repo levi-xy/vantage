@@ -9,6 +9,7 @@ import { HttpCheckCard } from "./http-check/HttpCheckCard";
 import { LinuxHostCard } from "./linux-host/LinuxHostCard";
 import { PingCheckCard } from "./ping-check/PingCheckCard";
 import { PfsenseGatewaysCard } from "./pfsense-gateways/PfsenseGatewaysCard";
+import { PfsenseInterfacesCard } from "./pfsense-interfaces/PfsenseInterfacesCard";
 import { PfsenseOverviewCard } from "./pfsense-overview/PfsenseOverviewCard";
 import { PlaceholderCard } from "./PlaceholderCard";
 import { ProxmoxGuestsCard } from "./proxmox-guests/ProxmoxGuestsCard";
@@ -40,6 +41,7 @@ const CARD_COMPONENTS: Readonly<Record<string, ComponentType<CardProps>>> = {
   "http-check": HttpCheckCard,
   "linux-host": LinuxHostCard,
   "pfsense-gateways": PfsenseGatewaysCard,
+  "pfsense-interfaces": PfsenseInterfacesCard,
   "pfsense-overview": PfsenseOverviewCard,
   "ping-check": PingCheckCard,
   "proxmox-guests": ProxmoxGuestsCard,
@@ -63,6 +65,7 @@ const MIN_SIZES: Readonly<Record<string, [number, number]>> = {
   "http-check": [3, 3],
   "linux-host": [4, 4],
   "pfsense-gateways": [4, 3],
+  "pfsense-interfaces": [4, 3],
   "pfsense-overview": [4, 4],
   "ping-check": [3, 3],
   "proxmox-guests": [4, 4],

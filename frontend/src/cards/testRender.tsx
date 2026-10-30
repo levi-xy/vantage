@@ -29,6 +29,7 @@ export function renderCard(
   client: ApiClient,
   Card: ComponentType<CardProps>,
   answer: (query: string) => QueryResult,
+  instance: Instance = testInstance,
 ) {
   const fetchMock = vi.fn<typeof fetch>(async (_url, init) => {
     const { query } = JSON.parse(String(init?.body)) as { query: string };
@@ -40,7 +41,7 @@ export function renderCard(
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
-      <Card instanceId="inst-1" settings={{}} title="Card" instance={testInstance} />
+      <Card instanceId="inst-1" settings={{}} title="Card" instance={instance} />
     </QueryClientProvider>,
   );
 }

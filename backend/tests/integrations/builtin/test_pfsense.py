@@ -47,6 +47,19 @@ def assert_read_only(net: FakeNetwork) -> None:
 def test_schema_defaults() -> None:
     cfg = PfSenseConfig.model_validate({"host": "10.0.0.1"})
     assert (cfg.host, cfg.port, cfg.scheme) == ("10.0.0.1", 9273, "http")
+    assert (cfg.interface_names, cfg.hidden_interfaces) == ([], [])
+
+
+def test_interface_settings_are_cleaned() -> None:
+    cfg = PfSenseConfig.model_validate(
+        {
+            "host": "10.0.0.1",
+            "interface_names": [" igc0 =  WAN  uplink ", "lagg0.10=IoT VLAN"],
+            "hidden_interfaces": [" igc3 "],
+        }
+    )
+    assert cfg.interface_names == ["igc0=WAN uplink", "lagg0.10=IoT VLAN"]
+    assert cfg.hidden_interfaces == ["igc3"]
 
 
 @pytest.mark.parametrize(
@@ -59,6 +72,11 @@ def test_schema_defaults() -> None:
         {"host": "10.0.0.1", "port": 0},
         {"host": "10.0.0.1", "port": 65536},
         {"host": "10.0.0.1", "scheme": "ftp"},
+        {"host": "10.0.0.1", "interface_names": ["igc0"]},
+        {"host": "10.0.0.1", "interface_names": ["igc0="]},
+        {"host": "10.0.0.1", "interface_names": ["igc 0=WAN"]},
+        {"host": "10.0.0.1", "interface_names": ["igc0=" + "x" * 33]},
+        {"host": "10.0.0.1", "hidden_interfaces": ["igc0; rm"]},
         {},
     ],
 )
@@ -274,7 +292,11 @@ def test_firewall_hints_and_cards() -> None:
     [hint] = PfSense().firewall_hints(ctx)
     assert (hint.protocol, hint.port, hint.destination) == ("tcp", 9274, "10.0.0.1")
     assert "Prometheus" in hint.reason
-    assert [c.card_type for c in PfSense().cards()] == ["pfsense-overview", "pfsense-gateways"]
+    assert [c.card_type for c in PfSense().cards()] == [
+        "pfsense-overview",
+        "pfsense-interfaces",
+        "pfsense-gateways",
+    ]
 
 
 # --- end to end: API → /sd/targets -----------------------------------------------------

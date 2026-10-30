@@ -1,35 +1,36 @@
 import type { CardProps } from "../registry";
 import { CardFrame } from "../metrics/CardFrame";
-import { formatBitsPerSecond, formatPercent } from "../metrics/format";
-import { byLabel, firstSeries, firstValue } from "../metrics/promql";
+import { formatCelsius, formatDuration, formatPercent } from "../metrics/format";
+import { firstSeries, firstValue } from "../metrics/promql";
 import { StatTile } from "../metrics/StatTile";
 import { useInstantQuery, useRangeQuery } from "../metrics/useMetricQuery";
 
-// Scraped from Telegraf on pfSense (native names). Skip loopback and pf's pseudo interfaces.
-const REAL_IF = 'interface!~"lo.*|pflog.*|pfsync.*|enc.*"';
+// Scraped from Telegraf on pfSense (native names). The card type stays "pfsense-overview"
+// so dashboards saved before it became the Resources card keep it.
 type Sel = (extra?: string) => string;
 const cpuExpr = (sel: Sel) => `100 - cpu_usage_idle${sel('cpu="cpu-total"')}`;
 const memExpr = (sel: Sel) => `mem_used_percent${sel()}`;
+const diskExpr = (sel: Sel) => `disk_used_percent${sel('path="/"')}`;
 const statesExpr = (sel: Sel) => `pf_entries${sel()}`;
+// Telegraf's `temp` input, only where the hardware reports a sensor: the hottest one.
+const tempExpr = (sel: Sel) => `max(temp_temp${sel()})`;
+const uptimeExpr = (sel: Sel) => `system_uptime${sel()}`;
 
+/** CPU, memory, storage, firewall states, uptime, and temperature when there is a sensor. */
 export function PfsenseOverviewCard({ instanceId, title, instance }: CardProps) {
   const cpu = useInstantQuery(instanceId, cpuExpr);
   const mem = useInstantQuery(instanceId, memExpr);
+  const disk = useInstantQuery(instanceId, diskExpr);
   const states = useInstantQuery(instanceId, statesExpr);
-  const rx = useInstantQuery(instanceId, (sel) => `8 * rate(net_bytes_recv${sel(REAL_IF)}[5m])`);
-  const tx = useInstantQuery(instanceId, (sel) => `8 * rate(net_bytes_sent${sel(REAL_IF)}[5m])`);
+  const temp = useInstantQuery(instanceId, tempExpr);
+  const uptime = useInstantQuery(instanceId, uptimeExpr);
   const cpuSpark = useRangeQuery(instanceId, cpuExpr);
   const memSpark = useRangeQuery(instanceId, memExpr);
-  const statesSpark = useRangeQuery(instanceId, statesExpr);
 
   const cpuValue = firstValue(cpu.data);
   const memValue = firstValue(mem.data);
   const statesValue = firstValue(states.data);
-
-  const txBy = new Map(byLabel(tx.data, "interface").map((r) => [r.key, r.value] as const));
-  const interfaces = byLabel(rx.data, "interface")
-    .map((r) => ({ name: r.key, rx: r.value, tx: txBy.get(r.key) }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const tempValue = firstValue(temp.data);
 
   return (
     <CardFrame
@@ -46,24 +47,16 @@ export function PfsenseOverviewCard({ instanceId, title, instance }: CardProps) 
           value={formatPercent(memValue)}
           spark={firstSeries(memSpark.data)}
         />
+        <StatTile label="Storage" value={formatPercent(firstValue(disk.data))} />
         <StatTile
           label="States"
           value={statesValue === undefined ? "–" : String(Math.round(statesValue))}
-          spark={firstSeries(statesSpark.data)}
         />
+        <StatTile label="Uptime" value={formatDuration(firstValue(uptime.data))} />
+        {tempValue !== undefined && (
+          <StatTile label="Temperature" value={formatCelsius(tempValue)} />
+        )}
       </div>
-      {interfaces.length > 0 && (
-        <section aria-label="Interfaces" className="flex flex-col gap-1 text-sm">
-          {interfaces.map((i) => (
-            <div key={i.name} className="flex flex-wrap justify-between gap-x-3">
-              <span className="font-medium">{i.name}</span>
-              <span className="tabular-nums text-slate-600 dark:text-slate-300">
-                ↓ {formatBitsPerSecond(i.rx)} · ↑ {formatBitsPerSecond(i.tx)}
-              </span>
-            </div>
-          ))}
-        </section>
-      )}
     </CardFrame>
   );
 }

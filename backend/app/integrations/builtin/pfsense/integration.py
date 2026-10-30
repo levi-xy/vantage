@@ -13,6 +13,7 @@ Prometheus' config is fixed (Contract 4): Telegraf must answer without authentic
 """
 
 import asyncio
+import re
 from typing import ClassVar, Literal
 
 import httpx
@@ -55,6 +56,12 @@ GATEWAY_METRICS = frozenset(
 _RECOGNISED = GATEWAY_METRICS | {IFACE_METRIC, STATES_METRIC, CPU_IDLE_METRIC, MEM_TOTAL_METRIC}
 
 
+# Display settings for interfaces: OS interface names as Telegraf reports them (igc0, vtnet1,
+# lagg0.10). Used by the cards only, never as metric labels.
+MAX_INTERFACE_SETTINGS = 64
+_INTERFACE = re.compile(r"[A-Za-z0-9_.:-]{1,32}")
+
+
 class PfSenseConfig(BaseModel):
     """What the admin enters: where Telegraf's ``prometheus_client`` output listens.
 
@@ -80,10 +87,56 @@ class PfSenseConfig(BaseModel):
         description="https only if Prometheus trusts Telegraf's certificate.",
     )
 
+    interface_names: list[str] = Field(
+        default_factory=list,
+        max_length=MAX_INTERFACE_SETTINGS,
+        title="Interface names",
+        description=(
+            "Optional. One per line: the interface as Telegraf reports it, '=', and the "
+            "name to show, e.g. igc0=WAN. Interfaces without a name show as reported."
+        ),
+        examples=[["igc0=WAN", "igc1=LAN"]],
+    )
+    hidden_interfaces: list[str] = Field(
+        default_factory=list,
+        max_length=MAX_INTERFACE_SETTINGS,
+        title="Hidden interfaces",
+        description=(
+            "Optional. One per line: interfaces (as Telegraf reports them) to leave off the "
+            "dashboard, e.g. igc3. Their data is still collected."
+        ),
+        examples=[["igc3"]],
+    )
+
     @field_validator("host")
     @classmethod
     def _check_host(cls, value: str) -> str:
         return checked_host(value)
+
+    @field_validator("interface_names")
+    @classmethod
+    def _check_names(cls, values: list[str]) -> list[str]:
+        cleaned = []
+        for value in values:
+            interface, sep, name = value.partition("=")
+            interface, name = interface.strip(), " ".join(name.split())
+            if not sep or not _INTERFACE.fullmatch(interface) or not 1 <= len(name) <= 32:
+                raise ValueError(
+                    f"{value[:40]!r}: use interface=name, e.g. igc0=WAN (name up to 32 characters)"
+                )
+            if not name.isprintable():
+                raise ValueError(f"{interface}: the name has characters that can't be shown")
+            cleaned.append(f"{interface}={name}")
+        return cleaned
+
+    @field_validator("hidden_interfaces")
+    @classmethod
+    def _check_hidden(cls, values: list[str]) -> list[str]:
+        cleaned = [v.strip() for v in values]
+        for value in cleaned:
+            if not _INTERFACE.fullmatch(value):
+                raise ValueError(f"{value[:40]!r} is not an interface name like igc0")
+        return cleaned
 
     @property
     def address(self) -> str:
@@ -170,7 +223,9 @@ class PfSense(Integration):
 
     def cards(self) -> list[CardSpec]:
         return [
-            CardSpec(card_type="pfsense-overview", title="pfSense", default_size=(4, 3)),
+            # "pfsense-overview" kept as the id so saved dashboards keep the card.
+            CardSpec(card_type="pfsense-overview", title="Resources", default_size=(4, 3)),
+            CardSpec(card_type="pfsense-interfaces", title="Interfaces", default_size=(4, 3)),
             CardSpec(card_type="pfsense-gateways", title="Gateways", default_size=(4, 2)),
         ]
 
