@@ -2,6 +2,8 @@
 // (AGENTS.md hard rule 4), so every request goes to a same-origin /api/v1 path.
 
 import type {
+  AlertEvent,
+  AlertEventQuery,
   AuditEntry,
   AuditQuery,
   CardSpec,
@@ -12,6 +14,8 @@ import type {
   Credentials,
   Dashboard,
   DashboardLayout,
+  DeviceLink,
+  DeviceLinkCreate,
   Instance,
   InstanceCreate,
   InstanceTest,
@@ -214,6 +218,16 @@ export class ApiClient {
     return this.request("GET", qs ? `/audit?${qs}` : "/audit");
   }
 
+  /** Alert history, newest first; `state` filters to firing or resolved. */
+  alertEvents(query: AlertEventQuery = {}): Promise<AlertEvent[]> {
+    const params = new URLSearchParams();
+    if (query.limit !== undefined) params.set("limit", String(query.limit));
+    if (query.before_id !== undefined) params.set("before_id", String(query.before_id));
+    if (query.state !== undefined) params.set("state", query.state);
+    const qs = params.toString();
+    return this.request("GET", qs ? `/alerts/events?${qs}` : "/alerts/events");
+  }
+
   /** PromQL proxy: an instant query, or a range query when `start`, `end` and `step` are set. */
   query(request: QueryRequest): Promise<QueryResult> {
     return this.request("POST", "/query", request);
@@ -244,6 +258,20 @@ export class ApiClient {
   /** Admin only. */
   saveDashboard(id: number, layout: DashboardLayout): Promise<Dashboard> {
     return this.request("PUT", `/dashboards/${encodeURIComponent(String(id))}`, { layout });
+  }
+
+  links(): Promise<DeviceLink[]> {
+    return this.request("GET", "/links");
+  }
+
+  /** Admin only. */
+  createLink(body: DeviceLinkCreate): Promise<DeviceLink> {
+    return this.request("POST", "/links", body);
+  }
+
+  /** Admin only. */
+  deleteLink(id: number): Promise<void> {
+    return this.request("DELETE", `/links/${encodeURIComponent(String(id))}`);
   }
 
   /** Admin only. */

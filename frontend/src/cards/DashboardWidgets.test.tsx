@@ -33,6 +33,17 @@ describe("dashboard-wide cards", () => {
         "GET /instances": () => json([exampleInstance({ type_id: "pfsense" })]),
         [`GET /instances/${INSTANCE_ID}/cards`]: () => json([]),
         "GET /dashboards/1": () => json({ id: 1, name: "Default", layout: { cards: [] } }),
+        "GET /alerts/events": () =>
+          json([
+            {
+              id: 2,
+              rule_id: 1,
+              state: "firing",
+              started_at: "2026-01-01T00:00:00Z",
+              ended_at: null,
+              summary: "x",
+            },
+          ]),
         "POST /query": (body) =>
           json(
             String((body as { query: string }).query).includes("packet_loss")
@@ -44,7 +55,8 @@ describe("dashboard-wide cards", () => {
     renderApp("/", backend);
     expect(await screen.findByText("1 of 2 gateways up")).toBeInTheDocument();
     expect(screen.getByText("No port chosen.")).toBeInTheDocument();
-    expect(screen.getByText("Alerts not set up yet")).toBeInTheDocument();
+    expect(await screen.findByText("Active alerts")).toBeInTheDocument();
+    expect(await screen.findByText("1")).toBeInTheDocument();
     expect(screen.getByText("Devices healthy")).toBeInTheDocument();
   });
 });

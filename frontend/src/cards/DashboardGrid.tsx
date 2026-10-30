@@ -63,6 +63,8 @@ export interface DashboardGridProps {
   onRemove: (card: CardPlacement) => void;
   /** Open a card's settings (cards that have a settings editor). */
   onConfigure: (card: CardPlacement) => void;
+  /** Phone width: a plain list of compact cards instead of the grid (never editable). */
+  compact?: boolean;
 }
 
 export function DashboardGrid({
@@ -73,6 +75,7 @@ export function DashboardGrid({
   onChange,
   onRemove,
   onConfigure,
+  compact = false,
 }: DashboardGridProps) {
   const [breakpoint, setBreakpoint] = useState("lg");
   const canEdit = editing && breakpoint === "lg";
@@ -87,6 +90,80 @@ export function DashboardGrid({
       }),
     );
   };
+
+  const renderCard = (c: CardPlacement, compact: boolean) => {
+    const key = cardKey(c);
+    const title = c.instance_id === null ? widget(c.card_type)?.title : titles.get(key);
+    let content;
+    if (c.instance_id === null) {
+      const Widget = widget(c.card_type)?.component;
+      content = Widget ? <Widget instances={instanceList} settings={c.settings} /> : null;
+    } else {
+      const Card = cardComponent(c.card_type);
+      content = (
+        <Card
+          instanceId={c.instance_id}
+          settings={c.settings}
+          title={title ?? c.card_type}
+          instance={instances.get(c.instance_id)}
+          compact={compact}
+        />
+      );
+    }
+    return (
+      <div
+        key={key}
+        data-testid="card"
+        className={`relative rounded-lg border bg-white dark:bg-slate-900 ${
+          compact ? "" : "overflow-hidden "
+        }${
+          editing
+            ? "border-blue-400 dark:border-blue-500"
+            : "border-slate-200 dark:border-slate-800"
+        }`}
+      >
+        {content}
+        {editing && (
+          // Covers the card while editing: the card's own buttons don't react, and the
+          // cover is what you drag. Resize with the bottom-right corner.
+          <div
+            className={`${DRAG_HANDLE} absolute inset-0 flex cursor-move items-center justify-center bg-white/70 backdrop-blur-[1px] dark:bg-slate-950/70`}
+          >
+            <span className="rounded bg-white px-2 py-1 text-sm font-medium text-slate-700 shadow-sm dark:bg-slate-800 dark:text-slate-200">
+              ⠿ {title ?? c.card_type}
+            </span>
+            {c.instance_id === null && widget(c.card_type)?.settingsEditor && (
+              <button
+                type="button"
+                aria-label={`Settings of ${title ?? c.card_type}`}
+                onClick={() => onConfigure(c)}
+                className={`${NO_DRAG} absolute top-2 right-11 rounded bg-white px-2 py-0.5 text-sm text-slate-700 shadow-sm hover:bg-sky-50 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-sky-950`}
+              >
+                ⚙
+              </button>
+            )}
+            <button
+              type="button"
+              aria-label={`Remove ${title ?? c.card_type}`}
+              onClick={() => onRemove(c)}
+              className={`${NO_DRAG} absolute top-2 right-2 rounded bg-white px-2 py-0.5 text-sm text-slate-700 shadow-sm hover:bg-red-50 hover:text-red-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-red-950 dark:hover:text-red-300`}
+            >
+              ✕
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  if (compact) {
+    // Phone width: one column in reading order, each card as tall as its content.
+    return (
+      <div className="flex flex-col gap-4">
+        {[...cards].sort((a, b) => a.y - b.y || a.x - b.x).map((c) => renderCard(c, true))}
+      </div>
+    );
+  }
 
   return (
     <ResponsiveGrid
@@ -105,67 +182,7 @@ export function DashboardGrid({
       onDragStop={commit}
       onResizeStop={commit}
     >
-      {cards.map((c) => {
-        const key = cardKey(c);
-        const title = c.instance_id === null ? widget(c.card_type)?.title : titles.get(key);
-        let content;
-        if (c.instance_id === null) {
-          const Widget = widget(c.card_type)?.component;
-          content = Widget ? <Widget instances={instanceList} settings={c.settings} /> : null;
-        } else {
-          const Card = cardComponent(c.card_type);
-          content = (
-            <Card
-              instanceId={c.instance_id}
-              settings={c.settings}
-              title={title ?? c.card_type}
-              instance={instances.get(c.instance_id)}
-            />
-          );
-        }
-        return (
-          <div
-            key={key}
-            data-testid="card"
-            className={`relative overflow-hidden rounded-lg border bg-white dark:bg-slate-900 ${
-              editing
-                ? "border-blue-400 dark:border-blue-500"
-                : "border-slate-200 dark:border-slate-800"
-            }`}
-          >
-            {content}
-            {editing && (
-              // Covers the card while editing: the card's own buttons don't react, and the
-              // cover is what you drag. Resize with the bottom-right corner.
-              <div
-                className={`${DRAG_HANDLE} absolute inset-0 flex cursor-move items-center justify-center bg-white/70 backdrop-blur-[1px] dark:bg-slate-950/70`}
-              >
-                <span className="rounded bg-white px-2 py-1 text-sm font-medium text-slate-700 shadow-sm dark:bg-slate-800 dark:text-slate-200">
-                  ⠿ {title ?? c.card_type}
-                </span>
-                {c.instance_id === null && widget(c.card_type)?.settingsEditor && (
-                  <button
-                    type="button"
-                    aria-label={`Settings of ${title ?? c.card_type}`}
-                    onClick={() => onConfigure(c)}
-                    className={`${NO_DRAG} absolute top-2 right-11 rounded bg-white px-2 py-0.5 text-sm text-slate-700 shadow-sm hover:bg-sky-50 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-sky-950`}
-                  >
-                    ⚙
-                  </button>
-                )}
-                <button
-                  type="button"
-                  aria-label={`Remove ${title ?? c.card_type}`}
-                  onClick={() => onRemove(c)}
-                  className={`${NO_DRAG} absolute top-2 right-2 rounded bg-white px-2 py-0.5 text-sm text-slate-700 shadow-sm hover:bg-red-50 hover:text-red-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-red-950 dark:hover:text-red-300`}
-                >
-                  ✕
-                </button>
-              </div>
-            )}
-          </div>
-        );
-      })}
+      {cards.map((c) => renderCard(c, false))}
     </ResponsiveGrid>
   );
 }

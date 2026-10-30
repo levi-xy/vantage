@@ -9,7 +9,9 @@ Message types (``type``):
 
 * ``instance_status``: ``{instance_id, status: {state, checked_at, last_success_at, error}}``
 * ``refresh``: ``{instance_id}``, sent after each successful poll so cards refetch.
-* ``alert_event``: reserved for M6; nothing sends it yet.
+* ``alert_event``: ``{event_id, rule_id, severity, state, started_at, ended_at, summary}``,
+  when the alert evaluator (M7.1) fires or resolves a rule. Ids, times and a cleaned,
+  capped summary only.
 * ``live_rate``: ``{in_bps, out_bps, ports, at}``, the summed traffic of the dashboard
   throughput card's ports, every couple of seconds while a browser is connected
   (``app/live/rates.py``). Numbers only: no names, addresses or config.

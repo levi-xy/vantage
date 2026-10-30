@@ -318,3 +318,11 @@ async def test_notifier_sends_to_each_channel_and_never_raises(
         [good], "x"
     )
     assert_no_secrets(caplog.text)
+
+
+def test_alerts_send_through_the_channel_notifier(engine: Engine, db_url: str) -> None:
+    """The alert evaluator's notifier is the real channel sender, not the no-op."""
+    from app.alerts.channels import ChannelNotifier
+
+    with make_client(db_url) as c:
+        assert isinstance(c.app.state.notifier, ChannelNotifier)  # type: ignore[attr-defined]
