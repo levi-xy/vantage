@@ -310,14 +310,16 @@ async def test_poll_full(fake_snmp: FakeSnmp) -> None:
     assert got[("if_oper_status", "port2")].value == 2.0
     assert got[("if_speed_bits_per_second", "port1")].value == 1e9
     assert got[("if_speed_bits_per_second", "sfpplus9")].value == 10e9
-    # The admin's own text is on if_info only.
+    # The admin's own text is on if_info only; if_label is the switch's ifName, for display.
     renamed = [s for s in samples if s.name == f"{PREFIX}_if_info" and s.labels["if_index"] == "3"]
     assert renamed[0].labels == {
         "if_index": "3",
         "if_name": "port3",
         "if_descr": "Uplink to core (10G)",
         "if_alias": "to core",
+        "if_label": "Uplink to core (10G)",
     }
+    assert all("if_label" not in s.labels for s in samples if s.name != f"{PREFIX}_if_info")
     assert_read_only(fake_snmp)
 
 

@@ -77,7 +77,8 @@ export function SnmpPortsCard({ instanceId, title, instance }: CardProps) {
       const labels = infoBy.get(index);
       return {
         index,
-        name: s.labels.if_name || labels?.if_name || `if${index}`,
+        // A MikroTik port's own name (if_label) is display text on the info series only.
+        name: labels?.if_label || s.labels.if_name || labels?.if_name || `if${index}`,
         alias: labels?.if_alias ?? "",
         state,
         speed: speedBy.get(index),

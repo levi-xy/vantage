@@ -289,7 +289,7 @@ class MikroTikSwOS(Integration):
             )
         return (
             ifmib.system_samples(system, METRIC_PREFIX)
-            + ifmib.interface_samples(table, METRIC_PREFIX)
+            + ifmib.interface_samples(table, METRIC_PREFIX, label_on_info=True)
             + health_samples(health)
         )
 

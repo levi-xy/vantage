@@ -52,6 +52,16 @@ describe("snmp cards", () => {
     expect(screen.getByLabelText("Top talkers")).toHaveTextContent("250 kbit/s");
   });
 
+  it("ports show a MikroTik port's own name from if_label", async () => {
+    renderCard(client, SnmpPortsCard, (query) =>
+      query.includes("if_info")
+        ? vector([[{ ...port("1"), if_alias: "", if_label: "NAS uplink" }, "1"]])
+        : answer(query),
+    );
+    expect(await screen.findByRole("button", { name: "NAS uplink: up" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "port2: down" })).toBeInTheDocument();
+  });
+
   it("say so when there is no data", async () => {
     renderCard(client, SnmpPortsCard, () => vector([]));
     expect(await screen.findByText(/No data yet/)).toBeInTheDocument();
