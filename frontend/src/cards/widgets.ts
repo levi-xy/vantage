@@ -1,17 +1,27 @@
 // Dashboard-wide cards: cards that belong to no device ("Devices healthy" and the like).
 import type { ComponentType } from "react";
-import type { Instance } from "../api";
-import { AlertsCard, DevicesHealthCard, ThroughputCard, WanStatusCard } from "./DashboardWidgets";
+import type { CardPlacement, Instance } from "../api";
+import { AlertsCard, DevicesHealthCard, WanStatusCard } from "./DashboardWidgets";
 import type { WidgetSpec } from "./layout";
 import { minSize } from "./registry";
+import { ThroughputCard, ThroughputSettings } from "./throughput/ThroughputCard";
 
-/** What a dashboard-wide card receives: every instance, not one. */
+type Settings = CardPlacement["settings"];
+
+/** What a dashboard-wide card receives: every instance, not one, and its settings. */
 export interface WidgetProps {
   instances: Instance[];
+  settings: Settings;
+}
+
+/** A card's settings editor, shown in edit mode (the ⚙ button on the card). */
+export interface WidgetSettingsProps extends WidgetProps {
+  onChange: (settings: Settings) => void;
 }
 
 export interface Widget extends WidgetSpec {
   component: ComponentType<WidgetProps>;
+  settingsEditor?: ComponentType<WidgetSettingsProps>;
 }
 
 /** Dashboard-wide cards, in the order a fresh dashboard shows them. */
@@ -26,9 +36,10 @@ export const WIDGETS: readonly Widget[] = [
   { card_type: "wan-status", title: "WAN status", default_size: [3, 2], component: WanStatusCard },
   {
     card_type: "throughput",
-    title: "Total throughput",
+    title: "Throughput",
     default_size: [3, 2],
     component: ThroughputCard,
+    settingsEditor: ThroughputSettings,
   },
 ];
 

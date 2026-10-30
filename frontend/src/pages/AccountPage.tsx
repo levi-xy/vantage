@@ -18,6 +18,8 @@ import {
   label,
 } from "../components/styles";
 import { MAX_PASSWORD_LENGTH, newPasswordProblem, PASSWORD_HINT } from "./users/passwordRules";
+import { useUnits } from "../app/units";
+import type { RateUnit } from "../app/units";
 
 const ROLE_LABELS = { admin: "Admin", viewer: "Viewer" } as const;
 
@@ -157,6 +159,41 @@ function ChangePasswordForm() {
   );
 }
 
+function DisplaySettings() {
+  const { unit, setUnit } = useUnits();
+  const options: { value: RateUnit; label: string }[] = [
+    { value: "bits", label: "Bits per second (Mbit/s), as link speeds are quoted" },
+    { value: "bytes", label: "Bytes per second (MB/s), as downloads are shown" },
+  ];
+  return (
+    <section
+      aria-labelledby="display-title"
+      className="mb-4 max-w-lg rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"
+    >
+      <h2 id="display-title" className="mb-1 text-base font-semibold">
+        Display
+      </h2>
+      <fieldset>
+        <legend className="mb-2 text-sm text-slate-600 dark:text-slate-400">
+          Traffic rates (this browser only)
+        </legend>
+        {options.map((o) => (
+          <label key={o.value} className="flex items-center gap-2 py-0.5 text-sm">
+            <input
+              type="radio"
+              name="rate-unit"
+              value={o.value}
+              checked={unit === o.value}
+              onChange={() => setUnit(o.value)}
+            />
+            {o.label}
+          </label>
+        ))}
+      </fieldset>
+    </section>
+  );
+}
+
 export function AccountPage() {
   const user = useUser();
   return (
@@ -166,6 +203,7 @@ export function AccountPage() {
         Logged in as <span className="font-medium">{user.username}</span>{" "}
         <span className="text-slate-500 dark:text-slate-400">({ROLE_LABELS[user.role]})</span>
       </p>
+      <DisplaySettings />
       <ChangePasswordForm />
     </>
   );

@@ -1,15 +1,10 @@
 import type { CardProps } from "../registry";
 import { CardFrame, UsageBar } from "../metrics/CardFrame";
-import {
-  formatBitsPerSecond,
-  formatBytes,
-  formatCelsius,
-  formatDuration,
-  formatPercent,
-} from "../metrics/format";
+import { formatBytes, formatCelsius, formatDuration, formatPercent } from "../metrics/format";
 import { byLabel, firstSeries, firstValue } from "../metrics/promql";
 import { StatTile } from "../metrics/StatTile";
 import { useInstantQuery, useRangeQuery } from "../metrics/useMetricQuery";
+import { useUnits } from "../../app/units";
 
 // Scraped from node_exporter (native names). RAID, ZFS and sensors only exist on some hosts,
 // so those sections appear only when their queries return series.
@@ -17,6 +12,7 @@ const REAL_FS = 'fstype!~"tmpfs|devtmpfs|overlay|squashfs|ramfs|fuse.*"';
 const REAL_NIC = 'device!~"lo|veth.*|docker.*|br-.*|virbr.*"';
 
 export function LinuxHostCard({ instanceId, title, instance }: CardProps) {
+  const { formatRate } = useUnits();
   const cpuExpr = (sel: (m?: string) => string) =>
     `100 * (1 - avg(rate(node_cpu_seconds_total${sel('mode="idle"')}[5m])))`;
   const memExpr = (sel: (m?: string) => string) =>
@@ -82,12 +78,12 @@ export function LinuxHostCard({ instanceId, title, instance }: CardProps) {
         <StatTile label="Uptime" value={formatDuration(uptimeValue)} />
         <StatTile
           label="Network in"
-          value={formatBitsPerSecond(firstValue(rx.data))}
+          value={formatRate(firstValue(rx.data))}
           spark={firstSeries(rxSpark.data)}
         />
         <StatTile
           label="Network out"
-          value={formatBitsPerSecond(firstValue(tx.data))}
+          value={formatRate(firstValue(tx.data))}
           spark={firstSeries(txSpark.data)}
         />
         {hottest !== undefined && (

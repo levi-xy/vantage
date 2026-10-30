@@ -6,6 +6,7 @@ import { api } from "../api";
 import type { ApiClient } from "../api";
 import { SessionProvider } from "./session";
 import { ThemeProvider } from "./ThemeProvider";
+import { UnitsProvider } from "./units";
 
 interface AppProps {
   router: DataRouter;
@@ -19,9 +20,11 @@ export function App({ router, queryClient, client = api }: AppProps) {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <SessionProvider client={client}>
-          <RouterProvider router={router} />
-        </SessionProvider>
+        <UnitsProvider>
+          <SessionProvider client={client}>
+            <RouterProvider router={router} />
+          </SessionProvider>
+        </UnitsProvider>
       </ThemeProvider>
     </QueryClientProvider>
   );

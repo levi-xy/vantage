@@ -1,18 +1,10 @@
 import { Link } from "react-router";
 import type { ReactNode } from "react";
-import { formatBitsPerSecond } from "./metrics/format";
-import { firstValue } from "./metrics/promql";
 import { StatTile } from "./metrics/StatTile";
 import type { StatTileProps } from "./metrics/StatTile";
 import { shownState, useScrapeStates } from "./metrics/scrapeStatus";
 import { useFleetQuery } from "./metrics/useMetricQuery";
-import {
-  hasWanSource,
-  healthCounts,
-  THROUGHPUT_QUERY,
-  WAN_LOSS_QUERY,
-  wanSummary,
-} from "./overview";
+import { hasWanSource, healthCounts, WAN_LOSS_QUERY, wanSummary } from "./overview";
 import type { WidgetProps } from "./widgets";
 
 function Stat({ note, children }: { note?: string; children: ReactNode }) {
@@ -69,18 +61,6 @@ export function WanStatusCard({ instances }: WidgetProps) {
   return (
     <Stat>
       <StatTile label="WAN status" value={value} tone={tone} />
-    </Stat>
-  );
-}
-
-export function ThroughputCard() {
-  const throughput = useFleetQuery(THROUGHPUT_QUERY);
-  return (
-    <Stat note="Hosts and SNMP devices">
-      <StatTile
-        label="Total throughput"
-        value={throughput.isError ? "—" : formatBitsPerSecond(firstValue(throughput.data))}
-      />
     </Stat>
   );
 }

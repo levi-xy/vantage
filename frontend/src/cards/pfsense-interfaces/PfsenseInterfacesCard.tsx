@@ -1,12 +1,13 @@
 import type { CardProps } from "../registry";
 import { CardFrame } from "../metrics/CardFrame";
-import { formatBitsPerSecond } from "../metrics/format";
 import { byLabel } from "../metrics/promql";
 import { useInstantQuery } from "../metrics/useMetricQuery";
 import { interfaceSettings, REAL_IF } from "./interfaceSettings";
+import { useUnits } from "../../app/units";
 
 /** Traffic per interface, under the names set in the pfSense device settings. */
 export function PfsenseInterfacesCard({ instanceId, title, instance }: CardProps) {
+  const { formatRate } = useUnits();
   const rx = useInstantQuery(instanceId, (sel) => `8 * rate(net_bytes_recv${sel(REAL_IF)}[5m])`);
   const tx = useInstantQuery(instanceId, (sel) => `8 * rate(net_bytes_sent${sel(REAL_IF)}[5m])`);
   const settings = interfaceSettings(instance);
@@ -32,7 +33,7 @@ export function PfsenseInterfacesCard({ instanceId, title, instance }: CardProps
               {r.name}
             </span>
             <span className="text-slate-600 tabular-nums dark:text-slate-300">
-              ↓ {formatBitsPerSecond(r.rx)} · ↑ {formatBitsPerSecond(r.tx)}
+              ↓ {formatRate(r.rx)} · ↑ {formatRate(r.tx)}
             </span>
           </div>
         ))}
