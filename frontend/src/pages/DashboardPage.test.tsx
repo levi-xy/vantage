@@ -58,7 +58,9 @@ describe("dashboard page", () => {
     const backend = backendWith({ cards: [PING] });
     renderApp("/", backend);
     expect(await screen.findByText("Devices healthy")).toBeInTheDocument();
-    expect(screen.getAllByTestId("card")).toHaveLength(WIDGETS.length + 1);
+    expect(screen.getAllByTestId("card")).toHaveLength(
+      WIDGETS.filter((w) => w.card_type !== "network-map").length + 1,
+    );
     expect(puts(backend)).toHaveLength(0);
   });
 

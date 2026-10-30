@@ -8,6 +8,8 @@ import type {
   Credentials,
   Dashboard,
   DashboardLayout,
+  DeviceLink,
+  DeviceLinkCreate,
   Instance,
   InstanceCreate,
   InstanceTest,
@@ -240,6 +242,20 @@ export class ApiClient {
   /** Admin only. */
   saveDashboard(id: number, layout: DashboardLayout): Promise<Dashboard> {
     return this.request("PUT", `/dashboards/${encodeURIComponent(String(id))}`, { layout });
+  }
+
+  links(): Promise<DeviceLink[]> {
+    return this.request("GET", "/links");
+  }
+
+  /** Admin only. */
+  createLink(body: DeviceLinkCreate): Promise<DeviceLink> {
+    return this.request("POST", "/links", body);
+  }
+
+  /** Admin only. */
+  deleteLink(id: number): Promise<void> {
+    return this.request("DELETE", `/links/${encodeURIComponent(String(id))}`);
   }
 
   /** Admin only. */

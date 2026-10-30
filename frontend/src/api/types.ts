@@ -194,6 +194,18 @@ export interface Dashboard {
   layout: DashboardLayout;
 }
 
+/** `GET/POST /links`: a connection between two instances, drawn on the network map. */
+export interface DeviceLink {
+  id: number;
+  a_instance_id: string;
+  b_instance_id: string;
+  label: string | null;
+  a_port: string | null;
+  b_port: string | null;
+}
+
+export type DeviceLinkCreate = Omit<DeviceLink, "id">;
+
 /** Pushes on `WS /api/v1/ws`. Server to client only; never carries config or secrets. */
 export type LiveMessage =
   | { type: "instance_status"; instance_id: string; status: InstanceStatus }

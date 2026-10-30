@@ -4,6 +4,7 @@ import type { CardPlacement, Instance } from "../api";
 import { AlertsCard, DevicesHealthCard, WanStatusCard } from "./DashboardWidgets";
 import type { WidgetSpec } from "./layout";
 import { minSize } from "./registry";
+import { NetworkMapCard, NetworkMapSettings } from "./network-map/NetworkMapCard";
 import { ThroughputCard, ThroughputSettings } from "./throughput/ThroughputCard";
 
 type Settings = CardPlacement["settings"];
@@ -40,6 +41,13 @@ export const WIDGETS: readonly Widget[] = [
     default_size: [3, 2],
     component: ThroughputCard,
     settingsEditor: ThroughputSettings,
+  },
+  {
+    card_type: "network-map",
+    title: "Network map",
+    default_size: [6, 4],
+    component: NetworkMapCard,
+    settingsEditor: NetworkMapSettings,
   },
 ];
 
