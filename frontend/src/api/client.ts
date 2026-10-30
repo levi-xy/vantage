@@ -2,6 +2,8 @@
 // (AGENTS.md hard rule 4), so every request goes to a same-origin /api/v1 path.
 
 import type {
+  AlertEvent,
+  AlertEventQuery,
   AuditEntry,
   AuditQuery,
   CardSpec,
@@ -208,6 +210,16 @@ export class ApiClient {
     if (query.before_id !== undefined) params.set("before_id", String(query.before_id));
     const qs = params.toString();
     return this.request("GET", qs ? `/audit?${qs}` : "/audit");
+  }
+
+  /** Alert history, newest first; `state` filters to firing or resolved. */
+  alertEvents(query: AlertEventQuery = {}): Promise<AlertEvent[]> {
+    const params = new URLSearchParams();
+    if (query.limit !== undefined) params.set("limit", String(query.limit));
+    if (query.before_id !== undefined) params.set("before_id", String(query.before_id));
+    if (query.state !== undefined) params.set("state", query.state);
+    const qs = params.toString();
+    return this.request("GET", qs ? `/alerts/events?${qs}` : "/alerts/events");
   }
 
   /** PromQL proxy: an instant query, or a range query when `start`, `end` and `step` are set. */

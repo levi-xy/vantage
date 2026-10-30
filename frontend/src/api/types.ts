@@ -61,6 +61,25 @@ export interface AuditEntry {
   changes: Record<string, unknown>;
 }
 
+export type AlertState = "firing" | "resolved";
+
+/** `GET /alerts/events`, newest first. */
+export interface AlertEvent {
+  id: number;
+  rule_id: number;
+  state: AlertState;
+  started_at: string;
+  ended_at: string | null;
+  summary: string;
+}
+
+export interface AlertEventQuery {
+  /** 1 to 200; the backend defaults to 50. */
+  limit?: number;
+  before_id?: number;
+  state?: AlertState;
+}
+
 export interface AuditQuery {
   /** 1 to 200; the backend defaults to 50. */
   limit?: number;
@@ -199,8 +218,17 @@ export type LiveMessage =
   | { type: "instance_status"; instance_id: string; status: InstanceStatus }
   /** Sent after each successful poll: refetch what you show for this instance. */
   | { type: "refresh"; instance_id: string }
-  /** Reserved for M6 (alert events); nothing sends it yet. */
-  | { type: "alert_event" }
+  /** An alert fired or resolved: ids, times and a short summary only. */
+  | {
+      type: "alert_event";
+      event_id: number;
+      rule_id: number;
+      severity: string;
+      state: AlertState;
+      started_at: string;
+      ended_at: string | null;
+      summary: string;
+    }
   /** Every ~2 s while connected: summed traffic of the throughput card's saved ports. */
   | { type: "live_rate"; in_bps: number; out_bps: number; ports: number; at: string }
   | { type: "pong" };

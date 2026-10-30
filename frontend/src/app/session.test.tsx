@@ -266,7 +266,7 @@ describe("logout", () => {
     const routes = backend
       .requests()
       .map((r) => r.route)
-      .filter((r) => r !== "POST /query");
+      .filter((r) => r !== "POST /query" && !r.startsWith("GET /alerts/events"));
     expect(routes.at(-1)).toBe("GET /me");
   });
 
