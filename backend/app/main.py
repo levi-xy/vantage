@@ -9,8 +9,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app import __version__
+from app.alerts.channels import ChannelNotifier, default_client_factory
 from app.alerts.evaluator import AlertEvaluator
-from app.alerts.notifier import NullNotifier
 from app.api import api_router
 from app.api.auth import LOGIN_LIMITS, LOGIN_WINDOW_SECONDS
 from app.api.deps import SAFE_METHODS
@@ -122,8 +122,12 @@ def create_app(
         hub=app.state.event_hub,
     )
 
-    # Alerts (M7.1): the notifier is swapped for the real channel sender by M7.2.
-    app.state.notifier = NullNotifier()
+    # Alerts: firing/resolved notifications go to the rule's channels (Telegram, M7.2).
+    app.state.notifier = ChannelNotifier(
+        session_factory=app.state.session_factory,
+        secret_box=secret_box,
+        client_factory=default_client_factory,
+    )
     app.state.alert_evaluator = AlertEvaluator(
         session_factory=app.state.session_factory,
         prometheus=lambda: app.state.prometheus,

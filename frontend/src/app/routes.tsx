@@ -1,5 +1,6 @@
 import type { RouteObject } from "react-router";
 import { AccountPage } from "../pages/AccountPage";
+import { AlertsPage } from "../pages/AlertsPage";
 import { AuditPage } from "../pages/AuditPage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { DevicesPage } from "../pages/DevicesPage";
@@ -51,6 +52,14 @@ export const routes: RouteObject[] = [
         element: (
           <RequireRole role="admin">
             <EditDevicePage />
+          </RequireRole>
+        ),
+      },
+      {
+        path: "alerts",
+        element: (
+          <RequireRole role="admin">
+            <AlertsPage />
           </RequireRole>
         ),
       },

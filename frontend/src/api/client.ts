@@ -7,6 +7,10 @@ import type {
   AuditEntry,
   AuditQuery,
   CardSpec,
+  Channel,
+  ChannelCreate,
+  ChannelTestResult,
+  ChannelUpdate,
   Credentials,
   Dashboard,
   DashboardLayout,
@@ -288,6 +292,31 @@ export class ApiClient {
   /** Admin only. Tests the saved config. */
   testInstance(id: string): Promise<TestResult> {
     return this.request("POST", `/instances/${encodeURIComponent(id)}/test`);
+  }
+
+  /** Admin only. Alert channels; responses never carry the bot token. */
+  channels(): Promise<Channel[]> {
+    return this.request("GET", "/channels");
+  }
+
+  /** Admin only. */
+  createChannel(body: ChannelCreate): Promise<Channel> {
+    return this.request("POST", "/channels", body);
+  }
+
+  /** Admin only. An omitted bot token keeps the stored one. */
+  updateChannel(id: number, body: ChannelUpdate): Promise<Channel> {
+    return this.request("PATCH", `/channels/${encodeURIComponent(String(id))}`, body);
+  }
+
+  /** Admin only. */
+  deleteChannel(id: number): Promise<void> {
+    return this.request("DELETE", `/channels/${encodeURIComponent(String(id))}`);
+  }
+
+  /** Admin only. Sends a fixed test message to the channel. */
+  testChannel(id: number): Promise<ChannelTestResult> {
+    return this.request("POST", `/channels/${encodeURIComponent(String(id))}/test`);
   }
 
   /** Admin only. Tests a config that hasn't been saved. */

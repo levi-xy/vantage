@@ -265,3 +265,33 @@ export interface QueryResult {
   series: QuerySeries[];
   warnings: string[];
 }
+
+/** An alert channel (`GET /channels`, admin only). The bot token is write-only. */
+export interface Channel {
+  id: number;
+  type: "telegram";
+  name: string;
+  /** Non-secret settings only: `{chat_id}`. */
+  config: { chat_id?: string };
+  /** Whether each secret is stored (`{bot_token: true}`). Never the value. */
+  secrets_set: Record<string, boolean>;
+}
+
+/** Body of `POST /channels`. */
+export interface ChannelCreate {
+  type: "telegram";
+  name: string;
+  config: { chat_id: string; bot_token: string };
+}
+
+/** Body of `PATCH /channels/{id}`. An omitted `bot_token` keeps the stored one. */
+export interface ChannelUpdate {
+  name?: string;
+  config?: { chat_id?: string; bot_token?: string };
+}
+
+/** Result of `POST /channels/{id}/test`. */
+export interface ChannelTestResult {
+  ok: boolean;
+  message: string;
+}
