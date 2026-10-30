@@ -99,11 +99,13 @@ async def live(ws: WebSocket) -> None:
     ):
         await ws.close(CLOSE_POLICY)
         return
+    await ws.accept()
+    # Subscribe only once the handshake is done: an aborted handshake can't leave a
+    # subscriber behind and use up the hub's connection cap.
     sub = hub.subscribe()
     if sub is None:
         await ws.close(CLOSE_TRY_AGAIN)
         return
-    await ws.accept()
     # The first of the three to finish decides the close code; the others are cancelled.
     # An anyio task group (not bare asyncio tasks) so cancellation from the server or the
     # test client's cancel scope reaches every part and none escapes it.
