@@ -27,6 +27,11 @@ export interface CardProps {
   title: string;
   /** The instance, when it is loaded (always, for cards on the dashboard). */
   instance: Instance | undefined;
+  /**
+   * Phone width: the card is as tall as its content. Show a summary first; a card with a
+   * lot of detail (all ports) can offer a button to expand it.
+   */
+  compact?: boolean;
 }
 
 /**
