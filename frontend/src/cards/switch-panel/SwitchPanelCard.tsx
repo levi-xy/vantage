@@ -3,7 +3,7 @@ import { useUnits } from "../../app/units";
 import { CardFrame } from "../metrics/CardFrame";
 import type { CardProps } from "../registry";
 import { describe, TILE, useSnmpPorts } from "../snmp-ports/ports";
-import { isSfp, panelBlocks, panelSummary } from "./panel";
+import { isSfp, panelBlocks } from "./panel";
 
 /** The switch's front panel: ports where they sit on the device, coloured by state. */
 export function SwitchPanelCard({ instanceId, title, instance }: CardProps) {
@@ -20,11 +20,10 @@ export function SwitchPanelCard({ instanceId, title, instance }: CardProps) {
       error={error}
       empty={ports.length === 0}
     >
-      <p className="text-sm font-medium">{panelSummary(ports)}</p>
       <div
         role="group"
         aria-label="Front panel"
-        className="flex flex-wrap items-start gap-3 rounded-md bg-slate-100 p-2 dark:bg-slate-800"
+        className="flex w-fit max-w-full flex-wrap items-start gap-3 rounded-md bg-slate-100 p-2 dark:bg-slate-800"
       >
         {panelBlocks(ports).map((block, b) => (
           <div
@@ -54,9 +53,11 @@ export function SwitchPanelCard({ instanceId, title, instance }: CardProps) {
           </div>
         ))}
       </div>
-      <p className="min-h-5 text-xs text-slate-600 dark:text-slate-300" aria-live="polite">
-        {chosen ? describe(chosen, formatRate) : "Tap a port for details."}
-      </p>
+      {chosen && (
+        <p className="text-xs text-slate-600 dark:text-slate-300" aria-live="polite">
+          {describe(chosen, formatRate)}
+        </p>
+      )}
     </CardFrame>
   );
 }

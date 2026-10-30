@@ -1062,7 +1062,7 @@ def test_api_create_test_read_and_update(admin: TestClient, fake_snmp: FakeSnmp)
     assert cards.json() == [
         {"card_type": "snmp-overview", "title": "SNMP device", "default_size": [2, 2]},
         {"card_type": "snmp-ports", "title": "Ports", "default_size": [4, 2]},
-        {"card_type": "switch-panel", "title": "Front panel", "default_size": [8, 4]},
+        {"card_type": "switch-panel", "title": "Front panel", "default_size": [6, 3]},
     ]
     # Switch to v3 on an edit: the stored community stays (unused), the keys are added.
     patched = admin.patch(

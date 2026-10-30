@@ -1,4 +1,4 @@
-import { isSfp, panelBlocks, panelSummary } from "./panel";
+import { isSfp, panelBlocks } from "./panel";
 
 describe("switch front panel", () => {
   it("lays 28 ports out as 8-8-8-4, odd ports on the bottom, even on top", () => {
@@ -15,18 +15,6 @@ describe("switch front panel", () => {
     expect(where(9)).toEqual([1, 2]); // next block starts again
     expect(where(27)).toEqual([2, 2]); // the 4-port block is 2 columns wide
     expect(where(28)).toEqual([2, 1]);
-  });
-
-  it("summarises up and down ports, not disabled ones", () => {
-    expect(
-      panelSummary([
-        { index: "1", state: "up" },
-        { index: "5", state: "down" },
-        { index: "6", state: "disabled" },
-        { index: "12", state: "down" },
-      ]),
-    ).toBe("1 of 4 up · down: 5, 12");
-    expect(panelSummary([{ index: "1", state: "up" }])).toBe("1 of 1 up");
   });
 
   it("tells SFP cages by name or a 10G speed", () => {
