@@ -75,7 +75,7 @@ const MIN_SIZES: Readonly<Record<string, [number, number]>> = {
   "smart-disks": [4, 3],
   "snmp-overview": [3, 3],
   "snmp-ports": [4, 4],
-  "switch-panel": [6, 4],
+  "switch-panel": [6, 3],
 };
 const DEFAULT_MIN_SIZE: [number, number] = [3, 2];
 
