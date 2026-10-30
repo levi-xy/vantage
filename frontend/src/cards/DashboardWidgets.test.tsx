@@ -1,7 +1,7 @@
 import { screen } from "@testing-library/react";
 import { exampleMe, fakeBackend, json, mockSystemTheme, renderApp } from "../test-utils";
 import { exampleInstance, INSTANCE_ID } from "../pages/devices/testFixtures";
-import { hasWanSource, healthCounts, THROUGHPUT_QUERY, wanSummary } from "./overview";
+import { hasWanSource, healthCounts, wanSummary } from "./overview";
 
 beforeEach(() => mockSystemTheme(false));
 
@@ -25,17 +25,8 @@ describe("overview helpers", () => {
   });
 });
 
-describe("throughput query", () => {
-  it("uses the counters' _total names and guards each sum", () => {
-    expect(THROUGHPUT_QUERY).toContain("if_in_bytes_total");
-    expect(THROUGHPUT_QUERY).toContain("if_out_bytes_total");
-    expect(THROUGHPUT_QUERY).toContain("node_network_receive_bytes_total");
-    expect(THROUGHPUT_QUERY.match(/or vector\(0\)/g)).toHaveLength(4);
-  });
-});
-
 describe("dashboard-wide cards", () => {
-  it("shows on an old layout, with WAN and throughput from fleet queries", async () => {
+  it("shows on an old layout, with WAN from a fleet query", async () => {
     const backend = fakeBackend({
       session: exampleMe("admin"),
       routes: {
@@ -52,7 +43,7 @@ describe("dashboard-wide cards", () => {
     });
     renderApp("/", backend);
     expect(await screen.findByText("1 of 2 gateways up")).toBeInTheDocument();
-    expect(await screen.findByText("2.5 Mbit/s")).toBeInTheDocument();
+    expect(screen.getByText("No port chosen.")).toBeInTheDocument();
     expect(screen.getByText("Alerts not set up yet")).toBeInTheDocument();
     expect(screen.getByText("Devices healthy")).toBeInTheDocument();
   });

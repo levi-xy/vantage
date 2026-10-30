@@ -29,6 +29,13 @@ export function formatBitsPerSecond(value: number | undefined): string {
     : DASH;
 }
 
+/** A rate given in bits per second, shown in bytes: 2_500_000 -> "312.5 kB/s". */
+export function formatBytesPerSecond(bitsPerSecond: number | undefined): string {
+  return finite(bitsPerSecond)
+    ? scaled(bitsPerSecond / 8, ["B/s", "kB/s", "MB/s", "GB/s", "TB/s"], 1000)
+    : DASH;
+}
+
 /** `value` is already a percentage (0 to 100). */
 export function formatPercent(value: number | undefined): string {
   return finite(value) ? `${value >= 10 ? value.toFixed(0) : value.toFixed(1)}%` : DASH;

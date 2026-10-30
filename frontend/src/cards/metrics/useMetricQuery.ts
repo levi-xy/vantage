@@ -68,3 +68,18 @@ export function useFleetQuery(expr: string) {
     refetchInterval: INSTANT_REFETCH_MS,
   });
 }
+
+/** Range query over the whole fleet (dashboard-wide cards); refetches every 30 s. */
+export function useFleetRangeQuery(
+  expr: string,
+  windowSeconds: number = DEFAULT_WINDOW_SECONDS,
+  enabled = true,
+) {
+  const client = useApiClient();
+  return useQuery<QueryResult>({
+    queryKey: ["query", "fleet-range", expr, windowSeconds],
+    queryFn: () => client.query({ query: expr, ...rangeWindow(windowSeconds) }),
+    refetchInterval: RANGE_REFETCH_MS,
+    enabled,
+  });
+}

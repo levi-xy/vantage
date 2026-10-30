@@ -10,7 +10,7 @@ import {
   LAYOUT_VERSION,
   prepareLayout,
 } from "../cards/layout";
-import { cardMinSize, WIDGETS } from "../cards/widgets";
+import { cardMinSize, widget, WIDGETS } from "../cards/widgets";
 import type { AvailableCard } from "../cards/layout";
 import { EmptyState, PageHeader } from "../components/PageHeader";
 import { alertError, buttonPrimary, buttonSecondary } from "../components/styles";
@@ -118,6 +118,36 @@ function AddCardPanel({
   );
 }
 
+function CardSettingsPanel({
+  card,
+  instances,
+  onChange,
+  onClose,
+}: {
+  card: CardPlacement | undefined;
+  instances: Instance[];
+  onChange: (settings: CardPlacement["settings"]) => void;
+  onClose: () => void;
+}) {
+  const spec = card && card.instance_id === null ? widget(card.card_type) : undefined;
+  const Editor = spec?.settingsEditor;
+  if (!card || !spec || !Editor) return null;
+  return (
+    <section
+      aria-label={`${spec.title} settings`}
+      className="mb-4 flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold">{spec.title} settings</h2>
+        <button type="button" className={buttonSecondary} onClick={onClose}>
+          Close
+        </button>
+      </div>
+      <Editor instances={instances} settings={card.settings} onChange={onChange} />
+    </section>
+  );
+}
+
 export function DashboardPage() {
   const api = useApiClient();
   const queryClient = useQueryClient();
@@ -131,6 +161,8 @@ export function DashboardPage() {
   // While editing: the layout being edited, saved only on Done.
   const [draft, setDraft] = useState<CardPlacement[] | null>(null);
   const [adding, setAdding] = useState(false);
+  // The card whose settings are open, by cardKey (edit mode only).
+  const [configuring, setConfiguring] = useState<string | null>(null);
 
   const instanceList = instances.data ?? [];
   const cardQueries = useQueries({
@@ -182,6 +214,7 @@ export function DashboardPage() {
   const stopEditing = () => {
     setDraft(null);
     setAdding(false);
+    setConfiguring(null);
   };
   const done = () => {
     if (draft) save.mutate(draft);
@@ -246,6 +279,10 @@ export function DashboardPage() {
         editing={editing}
         onChange={setDraft}
         onRemove={(card) => setDraft(shown.filter((c) => cardKey(c) !== cardKey(card)))}
+        onConfigure={(card) => {
+          setAdding(false);
+          setConfiguring(cardKey(card));
+        }}
       />
     );
   }
@@ -257,6 +294,16 @@ export function DashboardPage() {
         <p role="alert" className={`mb-4 ${alertError}`}>
           {errorText(save.error)}
         </p>
+      )}
+      {editing && draft && configuring && (
+        <CardSettingsPanel
+          card={draft.find((c) => cardKey(c) === configuring)}
+          instances={instanceList}
+          onChange={(settings) =>
+            setDraft(draft.map((c) => (cardKey(c) === configuring ? { ...c, settings } : c)))
+          }
+          onClose={() => setConfiguring(null)}
+        />
       )}
       {editing && adding && draft && (
         <AddCardPanel

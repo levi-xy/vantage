@@ -43,19 +43,3 @@ export function wanSummary(result: QueryResult | undefined): { up: number; total
   }
   return { up, total: series.length };
 }
-
-/**
- * Ballpark total throughput, in bits per second: rx + tx summed over every instance that has
- * them: node_exporter interface rates (loopback and virtual NICs excluded) and SNMP interface
- * rates (SNMP devices and SwOS switches). pfSense (`net_bytes_*`) is not included yet. SNMP interfaces are not filtered, so a
- * device that counts both a bridge and its member ports is counted twice. Reads 0 when no
- * source has data.
- */
-const REAL_NIC = 'device!~"lo|veth.*|docker.*|br-.*|virbr.*"';
-const rate = (selector: string) => `(sum(rate(${selector}[5m])) or vector(0))`;
-const SNMP_IF = (dir: "in" | "out") =>
-  `{__name__=~"vantage_(snmp_device|mikrotik_swos)_if_${dir}_bytes_total"}`;
-export const THROUGHPUT_QUERY =
-  `8 * (${rate(`node_network_receive_bytes_total{${REAL_NIC}}`)}` +
-  ` + ${rate(`node_network_transmit_bytes_total{${REAL_NIC}}`)}` +
-  ` + ${rate(SNMP_IF("in"))} + ${rate(SNMP_IF("out"))})`;

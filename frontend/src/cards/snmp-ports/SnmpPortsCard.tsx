@@ -6,6 +6,7 @@ import { formatBitsPerSecond } from "../metrics/format";
 import { parseValue } from "../metrics/promql";
 import { useInstantQuery } from "../metrics/useMetricQuery";
 import { IF_DOWN, IF_UP, snmpMetric } from "../snmp-overview/snmpMetrics";
+import { useUnits } from "../../app/units";
 
 type PortState = "up" | "down" | "disabled";
 
@@ -39,12 +40,13 @@ function speedText(bps: number | undefined): string {
   return bps ? formatBitsPerSecond(bps) : "–";
 }
 
-function describe(p: Port): string {
+function describe(p: Port, formatRate: (bps: number | undefined) => string): string {
   const name = p.alias ? `${p.name} (${p.alias})` : p.name;
-  return `${name}: ${p.state}, ${speedText(p.speed)}, in ${formatBitsPerSecond(p.inBps)}, out ${formatBitsPerSecond(p.outBps)}`;
+  return `${name}: ${p.state}, ${speedText(p.speed)}, in ${formatRate(p.inBps)}, out ${formatRate(p.outBps)}`;
 }
 
 export function SnmpPortsCard({ instanceId, title, instance }: CardProps) {
+  const { formatRate } = useUnits();
   const oper = useInstantQuery(instanceId, (sel) => snmpMetric(sel, "if_oper_status"));
   const admin = useInstantQuery(instanceId, (sel) => snmpMetric(sel, "if_admin_status"));
   const speed = useInstantQuery(instanceId, (sel) => snmpMetric(sel, "if_speed_bits_per_second"));
@@ -114,7 +116,7 @@ export function SnmpPortsCard({ instanceId, title, instance }: CardProps) {
             type="button"
             aria-pressed={selected === p.index}
             aria-label={`${p.name}: ${p.state}`}
-            title={describe(p)}
+            title={describe(p, formatRate)}
             onClick={() => setSelected(selected === p.index ? null : p.index)}
             className={`flex flex-col items-center rounded border px-1 py-1 text-xs leading-tight ${TILE[p.state]} ${selected === p.index ? "ring-2 ring-blue-500" : ""}`}
           >
@@ -127,7 +129,7 @@ export function SnmpPortsCard({ instanceId, title, instance }: CardProps) {
       </div>
 
       <p className="min-h-5 text-xs text-slate-600 dark:text-slate-300" aria-live="polite">
-        {chosen ? describe(chosen) : "Tap a port for details."}
+        {chosen ? describe(chosen, formatRate) : "Tap a port for details."}
       </p>
 
       {talkers.length > 0 && (
@@ -136,7 +138,7 @@ export function SnmpPortsCard({ instanceId, title, instance }: CardProps) {
           {talkers.map(({ port, total }) => (
             <div key={port.index} className="flex justify-between gap-2">
               <span className="truncate">{port.name}</span>
-              <span className="tabular-nums">{formatBitsPerSecond(total)}</span>
+              <span className="tabular-nums">{formatRate(total)}</span>
             </div>
           ))}
         </section>

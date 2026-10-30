@@ -61,6 +61,8 @@ export interface DashboardGridProps {
   /** Called with the new placements after a move or resize, in edit mode. */
   onChange: (cards: CardPlacement[]) => void;
   onRemove: (card: CardPlacement) => void;
+  /** Open a card's settings (cards that have a settings editor). */
+  onConfigure: (card: CardPlacement) => void;
 }
 
 export function DashboardGrid({
@@ -70,6 +72,7 @@ export function DashboardGrid({
   editing,
   onChange,
   onRemove,
+  onConfigure,
 }: DashboardGridProps) {
   const [breakpoint, setBreakpoint] = useState("lg");
   const canEdit = editing && breakpoint === "lg";
@@ -108,7 +111,7 @@ export function DashboardGrid({
         let content;
         if (c.instance_id === null) {
           const Widget = widget(c.card_type)?.component;
-          content = Widget ? <Widget instances={instanceList} /> : null;
+          content = Widget ? <Widget instances={instanceList} settings={c.settings} /> : null;
         } else {
           const Card = cardComponent(c.card_type);
           content = (
@@ -140,6 +143,16 @@ export function DashboardGrid({
                 <span className="rounded bg-white px-2 py-1 text-sm font-medium text-slate-700 shadow-sm dark:bg-slate-800 dark:text-slate-200">
                   ⠿ {title ?? c.card_type}
                 </span>
+                {c.instance_id === null && widget(c.card_type)?.settingsEditor && (
+                  <button
+                    type="button"
+                    aria-label={`Settings of ${title ?? c.card_type}`}
+                    onClick={() => onConfigure(c)}
+                    className={`${NO_DRAG} absolute top-2 right-11 rounded bg-white px-2 py-0.5 text-sm text-slate-700 shadow-sm hover:bg-sky-50 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-sky-950`}
+                  >
+                    ⚙
+                  </button>
+                )}
                 <button
                   type="button"
                   aria-label={`Remove ${title ?? c.card_type}`}
