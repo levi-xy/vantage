@@ -49,6 +49,36 @@ const CARD_COMPONENTS: Readonly<Record<string, ComponentType<CardProps>>> = {
   "snmp-ports": SnmpPortsCard,
 };
 
+/**
+ * The smallest size (grid width, height) at which each card shows everything without
+ * scrolling. Cards can be made bigger, never smaller. Types not listed use DEFAULT_MIN_SIZE.
+ * Dashboard-wide cards (`DashboardWidgets.tsx`) use their default size as the minimum.
+ */
+const MIN_SIZES: Readonly<Record<string, [number, number]>> = {
+  cloudflared: [4, 3],
+  "cloudflare-tunnels": [4, 3],
+  "cloudflare-zones": [4, 3],
+  "emby-libraries": [4, 3],
+  "emby-overview": [4, 3],
+  "http-check": [3, 3],
+  "linux-host": [4, 4],
+  "pfsense-gateways": [4, 3],
+  "pfsense-overview": [4, 4],
+  "ping-check": [3, 3],
+  "proxmox-guests": [4, 4],
+  "proxmox-node": [4, 4],
+  "smart-disks": [4, 3],
+  "snmp-overview": [3, 3],
+  "snmp-ports": [4, 4],
+};
+const DEFAULT_MIN_SIZE: [number, number] = [3, 2];
+
+export function minSize(cardType: string): [number, number] {
+  return Object.hasOwn(MIN_SIZES, cardType)
+    ? (MIN_SIZES[cardType] as [number, number])
+    : DEFAULT_MIN_SIZE;
+}
+
 export function cardComponent(cardType: string): ComponentType<CardProps> {
   return Object.hasOwn(CARD_COMPONENTS, cardType)
     ? (CARD_COMPONENTS[cardType] as ComponentType<CardProps>)

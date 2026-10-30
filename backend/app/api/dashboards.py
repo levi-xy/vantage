@@ -1,8 +1,11 @@
 """Dashboards (M5.2): ``GET/PUT /dashboards/{id}``.
 
 A dashboard stores its card layout as JSON: a bounded list of cards, each placed on a
-12-column grid. GET is open to any user; PUT is admin only (CSRF is enforced by the
-session dependency) and audited. Dashboard 1, "Default", is created on its first GET.
+12-column grid. A card belongs to an instance, or to no instance (``instance_id`` null:
+a dashboard-wide card such as "Devices healthy"). GET is open to any user; PUT is admin
+only (CSRF is enforced by the session dependency). Layout saves are not audited
+(maintainer decision, 2026-10-30: too noisy for a cosmetic change). Dashboard 1,
+"Default", is created on its first GET.
 """
 
 import json
@@ -13,7 +16,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import AdminDep, AuthDep, DbDep
-from app.core import audit
 from app.models import Dashboard
 
 router = APIRouter()
@@ -28,10 +30,10 @@ SettingKey = Annotated[str, Field(max_length=64)]
 
 
 class CardPlacement(BaseModel):
-    """One card: which instance and card type, where it sits, and its settings."""
+    """One card: which instance (or none) and card type, where it sits, and its settings."""
 
     model_config = ConfigDict(extra="forbid")
-    instance_id: Annotated[str, Field(min_length=1, max_length=64)]
+    instance_id: Annotated[str, Field(min_length=1, max_length=64)] | None
     card_type: Annotated[str, Field(min_length=1, max_length=64)]
     x: Annotated[int, Field(ge=0, lt=GRID_COLUMNS)]
     y: Annotated[int, Field(ge=0, le=10_000)]
@@ -42,6 +44,8 @@ class CardPlacement(BaseModel):
 
 class Layout(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    # Bumped by the frontend when it upgrades a saved layout (2 = dashboard-wide cards).
+    version: Annotated[int, Field(ge=1, le=100)] = 1
     cards: Annotated[list[CardPlacement], Field(max_length=MAX_CARDS)] = []
 
 
@@ -80,7 +84,9 @@ def get_dashboard(dashboard_id: int, _auth: AuthDep, db: DbDep) -> DashboardOut:
 
 
 @router.put("/dashboards/{dashboard_id}")
-def put_dashboard(dashboard_id: int, body: DashboardPut, auth: AdminDep, db: DbDep) -> DashboardOut:
+def put_dashboard(
+    dashboard_id: int, body: DashboardPut, _auth: AdminDep, db: DbDep
+) -> DashboardOut:
     layout = body.layout.model_dump(mode="json")
     if len(json.dumps(layout)) > MAX_LAYOUT_BYTES:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "layout is too large")
@@ -88,14 +94,5 @@ def put_dashboard(dashboard_id: int, body: DashboardPut, auth: AdminDep, db: DbD
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "dashboard not found")
     row.layout = layout
-    audit.record(
-        db,
-        actor_type=audit.ActorType.USER,
-        action=audit.Action.UPDATE,
-        target_type="dashboard",
-        target_id=row.id,
-        user_id=auth.user.id,
-        changes={"cards": len(body.layout.cards)},
-    )
     db.commit()
     return _out(row)

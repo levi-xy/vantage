@@ -48,7 +48,7 @@ def viewer_client(admin: TestClient, db: Session) -> TestClient:
 def test_default_dashboard_is_created_on_first_get(admin: TestClient) -> None:
     r = admin.get(f"{API}/dashboards/1")
     assert r.status_code == 200
-    assert r.json() == {"id": 1, "name": "Default", "layout": {"cards": []}}
+    assert r.json() == {"id": 1, "name": "Default", "layout": {"version": 1, "cards": []}}
     assert admin.get(f"{API}/dashboards/2").status_code == 404
 
 
@@ -63,9 +63,16 @@ def test_admin_saves_layout_and_viewer_reads_it(admin: TestClient, db: Session) 
     viewer = viewer_client(admin, db)
     assert viewer.get(f"{API}/dashboards/1").json()["layout"]["cards"] == [CARD]
 
-    entry = db.scalars(select(AuditLog).where(AuditLog.target_type == "dashboard")).one()
-    assert entry.changes == {"cards": 1}
-    assert entry.actor_type.value == "user"
+    # Layout saves are not audited (too noisy).
+    assert db.scalars(select(AuditLog).where(AuditLog.target_type == "dashboard")).all() == []
+
+
+def test_dashboard_wide_cards_have_no_instance(admin: TestClient) -> None:
+    admin.get(f"{API}/dashboards/1")
+    widget = {**CARD, "instance_id": None, "card_type": "devices-health"}
+    r = admin.put(f"{API}/dashboards/1", json={"layout": {"version": 2, "cards": [widget, CARD]}})
+    assert r.status_code == 200
+    assert r.json()["layout"] == {"version": 2, "cards": [widget, CARD]}
 
 
 def test_viewer_cannot_save_and_csrf_is_required(admin: TestClient, db: Session) -> None:
@@ -86,6 +93,8 @@ def test_invalid_layouts_are_refused(admin: TestClient) -> None:
     admin.get(f"{API}/dashboards/1")
     bad = [
         {"cards": [{**CARD, "w": 0}]},
+        {"cards": [{**CARD, "instance_id": ""}]},
+        {"version": 0, "cards": []},
         {"cards": [{**CARD, "x": 12}]},
         {"cards": [{**CARD, "extra": 1}]},
         {"cards": [{**CARD, "settings": {"k": {"nested": 1}}}]},
