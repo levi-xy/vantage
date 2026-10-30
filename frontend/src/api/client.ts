@@ -4,6 +4,9 @@
 import type {
   AlertEvent,
   AlertEventQuery,
+  AlertRule,
+  AlertRuleInput,
+  AlertTemplate,
   AuditEntry,
   AuditQuery,
   CardSpec,
@@ -226,6 +229,29 @@ export class ApiClient {
     if (query.state !== undefined) params.set("state", query.state);
     const qs = params.toString();
     return this.request("GET", qs ? `/alerts/events?${qs}` : "/alerts/events");
+  }
+
+  /** Admin only. */
+  alertRules(): Promise<AlertRule[]> {
+    return this.request("GET", "/alerts/rules");
+  }
+
+  /** Admin only. A refused expression comes back as a 422 with the reason. */
+  createAlertRule(body: AlertRuleInput): Promise<AlertRule> {
+    return this.request("POST", "/alerts/rules", body);
+  }
+
+  updateAlertRule(id: number, body: Partial<AlertRuleInput>): Promise<AlertRule> {
+    return this.request("PATCH", `/alerts/rules/${encodeURIComponent(String(id))}`, body);
+  }
+
+  deleteAlertRule(id: number): Promise<void> {
+    return this.request("DELETE", `/alerts/rules/${encodeURIComponent(String(id))}`);
+  }
+
+  /** Admin only. Suggested rules. */
+  alertTemplates(): Promise<AlertTemplate[]> {
+    return this.request("GET", "/alerts/templates");
   }
 
   /** PromQL proxy: an instant query, or a range query when `start`, `end` and `step` are set. */

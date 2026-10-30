@@ -4,6 +4,9 @@ import { API_BASE } from "../api";
 import type { Instance, LiveMessage } from "../api";
 import { INSTANCES_KEY } from "../pages/devices/queries";
 
+/** Every alert-events query is keyed under this. */
+export const ALERTS_KEY = ["alerts"] as const;
+
 export type LiveState = "connecting" | "live" | "reconnecting";
 
 const MIN_DELAY_MS = 1_000;
@@ -49,6 +52,9 @@ export function applyMessage(queryClient: QueryClient, raw: unknown): void {
         receivedAt: Date.now(),
       });
     }
+  } else if (msg.type === "alert_event") {
+    // The firing list, the history and the dashboard's Active alerts card.
+    void queryClient.invalidateQueries({ queryKey: ALERTS_KEY });
   } else if (msg.type === "refresh") {
     // The list (status) and everything keyed under this instance.
     void queryClient.invalidateQueries({ queryKey: INSTANCES_KEY, exact: true });
