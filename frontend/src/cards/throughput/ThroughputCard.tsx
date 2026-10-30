@@ -20,7 +20,7 @@ import {
 import type { Instance } from "../../api";
 
 /** Every port Vantage has traffic counters for, named as the cards name them. */
-function usePortOptions(instances: Instance[]) {
+export function usePortOptions(instances: Instance[]) {
   const pfsense = useFleetQuery(PORT_LIST_QUERIES.pfsense);
   const snmp = useFleetQuery(PORT_LIST_QUERIES.snmp);
   const node = useFleetQuery(PORT_LIST_QUERIES.node);
