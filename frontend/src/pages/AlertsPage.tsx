@@ -1,4 +1,4 @@
-// Admin-only alerts page (M7.2): the notification channels. M7.4 adds rules and history.
+// Alerts page: firing and history for everyone; rules, templates and channels for admins.
 //
 // The bot token is write-only: its input is a password field that is never pre-filled
 // and is cleared after every submit; the page shows only whether a token is set.
@@ -8,7 +8,9 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import { ApiError } from "../api";
 import type { Channel, ChannelTestResult } from "../api";
-import { useApiClient } from "../app/session";
+import { useApiClient, useUser } from "../app/session";
+import { EventsSection } from "./alerts/EventsSection";
+import { RulesSection } from "./alerts/RulesSection";
 import { EmptyState, PageHeader } from "../components/PageHeader";
 import {
   alertError,
@@ -266,7 +268,7 @@ function ChannelRow({ channel }: { channel: Channel }) {
   );
 }
 
-export function AlertsPage() {
+function ChannelsSection() {
   const api = useApiClient();
   const channels = useQuery({ queryKey: CHANNELS_KEY, queryFn: () => api.channels() });
 
@@ -300,7 +302,6 @@ export function AlertsPage() {
 
   return (
     <>
-      <PageHeader title="Alerts" />
       <section aria-labelledby="channels-title" className="space-y-4">
         <h2 id="channels-title" className="text-base font-semibold">
           Channels
@@ -316,5 +317,21 @@ export function AlertsPage() {
         </div>
       </section>
     </>
+  );
+}
+
+export function AlertsPage() {
+  const isAdmin = useUser().role === "admin";
+  return (
+    <div className="space-y-8">
+      <PageHeader title="Alerts" />
+      <EventsSection />
+      {isAdmin && (
+        <>
+          <RulesSection />
+          <ChannelsSection />
+        </>
+      )}
+    </div>
   );
 }
