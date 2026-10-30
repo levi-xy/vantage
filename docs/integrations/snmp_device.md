@@ -70,7 +70,7 @@ An agent that hides sysDescr and sysName fails the connection test with a "not r
 
 **Firewall:** `udp` to the configured port (161 by default), from the Vantage backend for both polls and connection tests, plus the replies back. The device's SNMP access list (community ACL, `snmpd.conf` `rocommunity ... <source>`, RouterOS `addresses`) must allow the backend's address.
 
-**Cards:** `snmp-overview`, "SNMP device", 2 by 2: `info`, `uptime_seconds`, `interfaces`/`interfaces_polled`, `vantage_instance_up`. `snmp-ports`, "Ports", 4 by 2: per-interface `if_oper_status`, `if_admin_status`, `rate(if_in_bytes_total)`/`rate(if_out_bytes_total)`, errors and discards, speed, and `if_info` for names. The card components are frontend work (M5.5, with the switch faceplate).
+**Cards:** `snmp-overview`, "SNMP device", 2 by 2: `info`, `uptime_seconds`, `interfaces`/`interfaces_polled`, `vantage_instance_up`. `snmp-ports`, "Ports", 4 by 2: per-interface `if_oper_status`, `if_admin_status`, `rate(if_in_bytes_total)`/`rate(if_out_bytes_total)`, errors and discards, speed, and `if_info` for names. `switch-panel`, "Front panel", 8 by 4: the same port data laid out like a switch's front (blocks of 8, odd ports on the bottom, even on top), with an up/down summary.
 
 **Limits and caveats:**
 

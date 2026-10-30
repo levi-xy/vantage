@@ -300,6 +300,7 @@ class MikroTikSwOS(Integration):
         return [
             CardSpec(card_type="snmp-overview", title="SwOS switch", default_size=(2, 2)),
             CardSpec(card_type="snmp-ports", title="Ports", default_size=(4, 2)),
+            CardSpec(card_type="switch-panel", title="Front panel", default_size=(8, 4)),
         ]
 
     def firewall_hints(self, ctx: InstanceContext) -> list[FirewallHint]:

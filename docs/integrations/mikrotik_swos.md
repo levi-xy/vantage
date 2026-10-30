@@ -36,7 +36,7 @@ Free-form text (`sys_name`, `sys_descr`, `if_descr`, `if_alias`, `if_label`) is 
 
 **Firewall:** `udp` to the configured port (161), from the Vantage backend, plus the replies back; and the backend's address in SwOS's SNMP allowed addresses.
 
-**Cards:** `snmp-overview` and `snmp-ports`, shared with `snmp_device` (frontend work in M5.5, with the switch faceplate).
+**Cards:** `snmp-overview`, `snmp-ports` and `switch-panel` ("Front panel", 8 by 4, minimum 6 by 4), shared with `snmp_device`. The front panel lays the ports out in ifIndex order in blocks of 8 (a 28-port switch: 8, 8, 8, 4), each block two rows with odd ports on the bottom and even ports on top; SFP/SFP+ cages (a `sfp` name or a 10G+ speed) are drawn square. Ports show the switch's own names (`if_label`).
 
 **Not read (on purpose):** PoE (`mtxrPOE`), SFP/DDM optics and per-port VLAN or bridge tables. Whether SwOS answers them is unknown, and none is needed for status and traffic.
 
