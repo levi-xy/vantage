@@ -15,6 +15,16 @@ export function liveUrl(loc: Pick<Location, "protocol" | "host"> = window.locati
 }
 
 /** Apply one push to the query cache. Unknown or malformed messages are ignored. */
+/** The throughput card's live rate, as last pushed (query cache only, never fetched). */
+export const LIVE_RATE_KEY = ["live", "rate"] as const;
+export interface LiveRate {
+  inBps: number;
+  outBps: number;
+  /** How many of the chosen ports the backend could read this time. */
+  ports: number;
+  receivedAt: number;
+}
+
 export function applyMessage(queryClient: QueryClient, raw: unknown): void {
   if (typeof raw !== "string") return;
   let msg: LiveMessage;
@@ -30,6 +40,15 @@ export function applyMessage(queryClient: QueryClient, raw: unknown): void {
     queryClient.setQueryData<Instance>([...INSTANCES_KEY, msg.instance_id], (old) =>
       old ? { ...old, status: msg.status } : old,
     );
+  } else if (msg.type === "live_rate") {
+    if (typeof msg.in_bps === "number" && typeof msg.out_bps === "number") {
+      queryClient.setQueryData<LiveRate>(LIVE_RATE_KEY, {
+        inBps: msg.in_bps,
+        outBps: msg.out_bps,
+        ports: typeof msg.ports === "number" ? msg.ports : 0,
+        receivedAt: Date.now(),
+      });
+    }
   } else if (msg.type === "refresh") {
     // The list (status) and everything keyed under this instance.
     void queryClient.invalidateQueries({ queryKey: INSTANCES_KEY, exact: true });

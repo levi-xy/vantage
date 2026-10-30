@@ -198,7 +198,7 @@ All routes under `/api/v1`, JSON, session auth, CSRF token on state-changing req
 | CRUD | `/alerts/rules`, `/channels` | admin | Alerts |
 | GET | `/alerts/events` | any | Alert history |
 | GET | `/audit` | admin | Audit log, newest first: `limit` (1–200, default 50), `before_id` (keyset paging); each entry carries `actor_type` |
-| WS | `/ws` | any | Live pushes: instance status changes, alert events, card data refresh hints |
+| WS | `/ws` | any | Live pushes: instance status changes, alert events, card data refresh hints, and (maintainer-approved 2026-10-30) `live_rate`: the summed in/out bits per second of the dashboard throughput card's ports, about every 2 s while a browser is connected (numbers only; not stored) |
 
 User management: the last admin can't be demoted or deleted (409), and an admin can't delete their own account (409; another admin has to). Every user change (create, role, password reset or change, delete) is audited, the password only as `"<changed>"`.
 

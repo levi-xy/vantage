@@ -8,6 +8,8 @@ import {
   renderApp,
 } from "../test-utils";
 import type { Instance } from "../api";
+import { QueryClient } from "@tanstack/react-query";
+import { applyMessage, LIVE_RATE_KEY } from "./live";
 
 const nas = {
   id: "i-1",
@@ -92,5 +94,18 @@ describe("live updates", () => {
     await screen.findByText("nas-1");
     act(() => sock(0).open());
     expect(localStorage.length).toBe(0);
+  });
+});
+
+describe("live rates", () => {
+  it("keeps the pushed throughput rate, and ignores a malformed one", () => {
+    const queryClient = new QueryClient();
+    applyMessage(
+      queryClient,
+      JSON.stringify({ type: "live_rate", in_bps: 5000, out_bps: 2000, ports: 1, at: "x" }),
+    );
+    expect(queryClient.getQueryData(LIVE_RATE_KEY)).toMatchObject({ inBps: 5000, outBps: 2000 });
+    applyMessage(queryClient, JSON.stringify({ type: "live_rate", in_bps: "lots" }));
+    expect(queryClient.getQueryData(LIVE_RATE_KEY)).toMatchObject({ inBps: 5000 });
   });
 });
