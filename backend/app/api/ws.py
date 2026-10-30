@@ -7,9 +7,11 @@ used, which stops cross-site WebSocket hijacking. The client can only send ``pin
 
 import asyncio
 import logging
+from collections.abc import Awaitable
 from datetime import timedelta
 from urllib.parse import urlsplit
 
+import anyio
 from fastapi import APIRouter, WebSocket
 from sqlalchemy.orm import Session, sessionmaker
 from starlette.concurrency import run_in_threadpool
@@ -102,22 +104,27 @@ async def live(ws: WebSocket) -> None:
         await ws.close(CLOSE_TRY_AGAIN)
         return
     await ws.accept()
-    tasks = [
-        asyncio.create_task(_sender(ws, sub)),
-        asyncio.create_task(_receiver(ws, sub)),
-        asyncio.create_task(_watcher(ws, sub, token)),
-    ]
+    # The first of the three to finish decides the close code; the others are cancelled.
+    # An anyio task group (not bare asyncio tasks) so cancellation from the server or the
+    # test client's cancel scope reaches every part and none escapes it.
     code = CLOSE_POLICY
+
+    async def first(coro: Awaitable[int | None], scope: anyio.CancelScope) -> None:
+        nonlocal code
+        try:
+            result = await coro
+            code = result or CLOSE_POLICY
+        except Exception:  # the peer went away, or a send failed
+            code = CLOSE_POLICY
+        scope.cancel()
+
     try:
-        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for task in done:
-            if not task.cancelled() and task.exception() is None:
-                code = task.result() or CLOSE_POLICY
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(first, _sender(ws, sub), tg.cancel_scope)
+            tg.start_soon(first, _receiver(ws, sub), tg.cancel_scope)
+            tg.start_soon(first, _watcher(ws, sub, token), tg.cancel_scope)
     finally:
         hub.unsubscribe(sub)
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
     try:
         await ws.close(code)
     except Exception:  # the peer already closed
