@@ -30,7 +30,7 @@ export function SwitchPanelCard({ instanceId, title, instance }: CardProps) {
           <div
             key={b}
             className="grid grid-rows-2 gap-1"
-            style={{ gridTemplateColumns: `repeat(${Math.ceil(block.length / 2)}, 2.25rem)` }}
+            style={{ gridTemplateColumns: `repeat(${Math.ceil(block.length / 2)}, 2rem)` }}
           >
             {block.map(({ port, column, row }) => {
               const sfp = isSfp(port);
