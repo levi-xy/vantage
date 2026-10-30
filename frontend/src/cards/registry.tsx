@@ -27,6 +27,11 @@ export interface CardProps {
   title: string;
   /** The instance, when it is loaded (always, for cards on the dashboard). */
   instance: Instance | undefined;
+  /**
+   * Phone width: the card is as tall as its content. Show a summary first; a card with a
+   * lot of detail (all ports) can offer a button to expand it.
+   */
+  compact?: boolean;
 }
 
 /**
@@ -75,7 +80,7 @@ const MIN_SIZES: Readonly<Record<string, [number, number]>> = {
   "smart-disks": [4, 3],
   "snmp-overview": [3, 3],
   "snmp-ports": [4, 4],
-  "switch-panel": [6, 4],
+  "switch-panel": [6, 3],
 };
 const DEFAULT_MIN_SIZE: [number, number] = [3, 2];
 

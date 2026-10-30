@@ -30,14 +30,6 @@ export function panelBlocks<T>(ports: T[]): Placed<T>[][] {
   return blocks;
 }
 
-/** "26 of 28 up · down: 5, 12" (disabled ports don't count as down). */
-export function panelSummary(ports: Pick<Port, "index" | "state">[]): string {
-  const up = ports.filter((p) => p.state === "up").length;
-  const down = ports.filter((p) => p.state === "down").map((p) => p.index);
-  const text = `${up} of ${ports.length} up`;
-  return down.length ? `${text} · down: ${down.join(", ")}` : text;
-}
-
 /** An SFP/SFP+ cage rather than a copper jack: by its stable name or a 10G+ speed. */
 export function isSfp(port: Pick<Port, "id" | "speed">): boolean {
   return /sfp/i.test(port.id) || (port.speed ?? 0) >= 10e9;
