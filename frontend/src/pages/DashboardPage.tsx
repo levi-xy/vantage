@@ -1,30 +1,138 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef } from "react";
-import type { CardPlacement, Dashboard } from "../api";
+import { useState, useSyncExternalStore } from "react";
+import type { CardPlacement, Dashboard, Instance } from "../api";
 import { useApiClient, useUser } from "../app/session";
-import { OverviewRow } from "../cards/OverviewRow";
 import { DashboardGrid } from "../cards/DashboardGrid";
-import { cardKey, mergeLayout } from "../cards/layout";
+import {
+  addCard,
+  cardKey,
+  DESKTOP_MIN_WIDTH,
+  LAYOUT_VERSION,
+  prepareLayout,
+} from "../cards/layout";
+import { cardMinSize, WIDGETS } from "../cards/widgets";
 import type { AvailableCard } from "../cards/layout";
 import { EmptyState, PageHeader } from "../components/PageHeader";
-import { alertError } from "../components/styles";
+import { alertError, buttonPrimary, buttonSecondary } from "../components/styles";
 import { errorText, useInstances } from "./devices/queries";
 
-/** The one dashboard there is for now (the backend creates it on first read). */
+/** The one dashboard there is (the backend creates it on first read). */
 const DASHBOARD_ID = 1;
 const DASHBOARD_KEY = ["dashboards", DASHBOARD_ID] as const;
+
+function subscribeResize(onChange: () => void) {
+  window.addEventListener("resize", onChange);
+  return () => window.removeEventListener("resize", onChange);
+}
+
+/** Editing is offered on desktop widths only (the phone layout is one fixed column). */
+function useIsDesktop() {
+  return useSyncExternalStore(subscribeResize, () => window.innerWidth >= DESKTOP_MIN_WIDTH);
+}
+
+interface Addable {
+  key: string;
+  card: { instance_id: string | null; card_type: string };
+  title: string;
+  size: [number, number];
+}
+
+/** The cards that can still be added, grouped: dashboard-wide first, then per device. */
+function addableGroups(
+  shown: CardPlacement[],
+  instances: Instance[],
+  available: AvailableCard[],
+): { name: string; cards: Addable[] }[] {
+  const placed = new Set(shown.map(cardKey));
+  const sized = (card: Addable["card"], defaultSize: [number, number]): [number, number] => {
+    const [minW, minH] = cardMinSize(card.card_type, card.instance_id);
+    return [Math.max(defaultSize[0], minW), Math.max(defaultSize[1], minH)];
+  };
+  const groups = [
+    {
+      name: "Dashboard",
+      cards: WIDGETS.map((w) => {
+        const card = { instance_id: null, card_type: w.card_type };
+        return { key: cardKey(card), card, title: w.title, size: sized(card, w.default_size) };
+      }),
+    },
+    ...instances.map((instance) => ({
+      name: instance.name,
+      cards: available
+        .filter((a) => a.instanceId === instance.id)
+        .map(({ spec }) => {
+          const card = { instance_id: instance.id, card_type: spec.card_type };
+          return {
+            key: cardKey(card),
+            card,
+            title: spec.title,
+            size: sized(card, spec.default_size),
+          };
+        }),
+    })),
+  ];
+  return groups
+    .map((g) => ({ ...g, cards: g.cards.filter((c) => !placed.has(c.key)) }))
+    .filter((g) => g.cards.length > 0);
+}
+
+function AddCardPanel({
+  groups,
+  onAdd,
+}: {
+  groups: ReturnType<typeof addableGroups>;
+  onAdd: (a: Addable) => void;
+}) {
+  return (
+    <section
+      aria-label="Add a card"
+      className="mb-4 flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"
+    >
+      <h2 className="text-sm font-semibold">Add a card</h2>
+      {groups.length === 0 ? (
+        <p className="text-sm text-slate-600 dark:text-slate-400">
+          Every card is on the dashboard. Add a device to get more.
+        </p>
+      ) : (
+        groups.map((g) => (
+          <div key={g.name} className="flex flex-col gap-1.5">
+            <span className="text-xs tracking-wide text-slate-500 uppercase dark:text-slate-400">
+              {g.name}
+            </span>
+            <div className="flex flex-wrap gap-2">
+              {g.cards.map((a) => (
+                <button
+                  key={a.key}
+                  type="button"
+                  className={buttonSecondary}
+                  onClick={() => onAdd(a)}
+                >
+                  + {a.title}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))
+      )}
+    </section>
+  );
+}
 
 export function DashboardPage() {
   const api = useApiClient();
   const queryClient = useQueryClient();
   const isAdmin = useUser().role === "admin";
+  const isDesktop = useIsDesktop();
   const instances = useInstances();
   const dashboard = useQuery({
     queryKey: DASHBOARD_KEY,
     queryFn: () => api.dashboard(DASHBOARD_ID),
   });
+  // While editing: the layout being edited, saved only on Done.
+  const [draft, setDraft] = useState<CardPlacement[] | null>(null);
+  const [adding, setAdding] = useState(false);
 
-  const instanceList = useMemo(() => instances.data ?? [], [instances.data]);
+  const instanceList = instances.data ?? [];
   const cardQueries = useQueries({
     queries: instanceList.map((i) => ({
       queryKey: ["instances", i.id, "cards"],
@@ -35,17 +143,17 @@ export function DashboardPage() {
   });
 
   const save = useMutation({
-    mutationFn: (cards: CardPlacement[]) => api.saveDashboard(DASHBOARD_ID, { cards }),
+    mutationFn: (cards: CardPlacement[]) =>
+      api.saveDashboard(DASHBOARD_ID, { version: LAYOUT_VERSION, cards }),
     // Show the new layout at once so the grid doesn't snap back while the request runs.
     onMutate: (cards) => {
       queryClient.setQueryData<Dashboard>(DASHBOARD_KEY, (old) =>
-        old ? { ...old, layout: { cards } } : old,
+        old ? { ...old, layout: { version: LAYOUT_VERSION, cards } } : old,
       );
     },
     onError: () => queryClient.invalidateQueries({ queryKey: DASHBOARD_KEY }),
   });
 
-  // The saved layout plus the cards of instances it doesn't have yet.
   const available: AvailableCard[] = [];
   const loaded = new Set<string>();
   const titles = new Map<string, string>();
@@ -59,20 +167,47 @@ export function DashboardPage() {
     }
   });
   const known = new Set(instanceList.map((i) => i.id));
-  const merged =
+  const saved =
     dashboard.data && instances.data
-      ? mergeLayout(dashboard.data.layout.cards, available, known, loaded)
+      ? prepareLayout(dashboard.data.layout, WIDGETS, available, known, loaded)
       : null;
 
-  // Admins save the additions once; the key stops a failing save from retrying in a loop.
-  const attempted = useRef("");
-  const mergedJson = merged?.changed ? JSON.stringify(merged.cards) : "";
-  const { mutate } = save;
-  useEffect(() => {
-    if (!isAdmin || !merged?.changed || mergedJson === attempted.current) return;
-    attempted.current = mergedJson;
-    mutate(merged.cards);
-  }, [isAdmin, merged, mergedJson, mutate]);
+  const editing = draft !== null && isAdmin && isDesktop;
+  const shown = editing ? draft : saved;
+
+  const startEditing = (openAdd: boolean) => {
+    setDraft(saved ?? []);
+    setAdding(openAdd);
+  };
+  const stopEditing = () => {
+    setDraft(null);
+    setAdding(false);
+  };
+  const done = () => {
+    if (draft) save.mutate(draft);
+    stopEditing();
+  };
+
+  let actions = null;
+  if (isAdmin && isDesktop && saved) {
+    actions = editing ? (
+      <div className="flex gap-2">
+        <button type="button" className={buttonSecondary} onClick={() => setAdding(!adding)}>
+          {adding ? "Hide card list" : "Add card"}
+        </button>
+        <button type="button" className={buttonSecondary} onClick={stopEditing}>
+          Cancel
+        </button>
+        <button type="button" className={buttonPrimary} onClick={done}>
+          Done
+        </button>
+      </div>
+    ) : (
+      <button type="button" className={buttonSecondary} onClick={() => startEditing(false)}>
+        Edit dashboard
+      </button>
+    );
+  }
 
   let body;
   if (instances.isPending || dashboard.isPending) {
@@ -87,29 +222,48 @@ export function DashboardPage() {
         {errorText(instances.error ?? dashboard.error)}
       </p>
     );
-  } else if (!instanceList.length) {
-    body = <EmptyState>No cards yet. Add a device to get started.</EmptyState>;
-  } else if (merged) {
+  } else if (shown && shown.length === 0 && !editing) {
+    body = (
+      <EmptyState>
+        <p>The dashboard is empty.</p>
+        {isAdmin && isDesktop && (
+          <button
+            type="button"
+            className={`mt-3 ${buttonPrimary}`}
+            onClick={() => startEditing(true)}
+          >
+            Add your first card
+          </button>
+        )}
+      </EmptyState>
+    );
+  } else if (shown) {
     body = (
       <DashboardGrid
-        cards={merged.cards}
+        cards={shown}
         instances={new Map(instanceList.map((i) => [i.id, i]))}
         titles={titles}
-        editable={isAdmin}
-        onChange={(cards) => save.mutate(cards)}
+        editing={editing}
+        onChange={setDraft}
+        onRemove={(card) => setDraft(shown.filter((c) => cardKey(c) !== cardKey(card)))}
       />
     );
   }
 
   return (
     <>
-      <PageHeader title="Dashboard" />
+      <PageHeader title="Dashboard">{actions}</PageHeader>
       {save.isError && (
         <p role="alert" className={`mb-4 ${alertError}`}>
           {errorText(save.error)}
         </p>
       )}
-      {instances.data && <OverviewRow instances={instances.data} />}
+      {editing && adding && draft && (
+        <AddCardPanel
+          groups={addableGroups(draft, instanceList, available)}
+          onAdd={(a) => setDraft(addCard(draft, a.card, a.size))}
+        />
+      )}
       {body}
     </>
   );

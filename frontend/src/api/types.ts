@@ -167,9 +167,12 @@ export interface CardSpec {
   default_size: [number, number];
 }
 
-/** One card on a dashboard: which instance and card type, where it sits, and its settings. */
+/**
+ * One card on a dashboard: which instance and card type, where it sits, and its settings.
+ * `instance_id` is null for a dashboard-wide card ("Devices healthy" and the like).
+ */
 export interface CardPlacement {
-  instance_id: string;
+  instance_id: string | null;
   card_type: string;
   x: number;
   y: number;
@@ -179,6 +182,8 @@ export interface CardPlacement {
 }
 
 export interface DashboardLayout {
+  /** 1 (or absent): saved before dashboard-wide cards were cards. See `cards/layout.ts`. */
+  version?: number;
   cards: CardPlacement[];
 }
 

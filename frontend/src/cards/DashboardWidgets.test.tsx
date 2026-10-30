@@ -34,8 +34,8 @@ describe("throughput query", () => {
   });
 });
 
-describe("overview row", () => {
-  it("shows the tiles, with WAN and throughput from fleet queries", async () => {
+describe("dashboard-wide cards", () => {
+  it("shows on an old layout, with WAN and throughput from fleet queries", async () => {
     const backend = fakeBackend({
       session: exampleMe("admin"),
       routes: {
