@@ -61,7 +61,7 @@ export function ThroughputCard({ instances, settings }: WidgetProps) {
   );
   const label = ports.map((p) => names.get(portKey(p)) ?? p.iface).join(", ");
   return (
-    <div className="flex h-full min-w-0 flex-col gap-1 p-4">
+    <div className="flex h-full min-w-0 flex-col gap-0.5 px-4 py-3">
       <span className="truncate text-xs text-slate-500 dark:text-slate-400" title={label}>
         Throughput · {label}
       </span>
