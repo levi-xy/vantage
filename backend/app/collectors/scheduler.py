@@ -51,6 +51,41 @@ REFRESH_SECONDS = 30.0
 _SCRUBBED = "<redacted>"
 
 
+def instance_context(
+    cls: type[Integration],
+    spec: "PollSpec",
+    box: SecretBox,
+    guards: ic.NetGuardFactory,
+) -> tuple[dict[str, str], InstanceContext]:
+    """The decrypted secrets and the guarded context for one instance.
+
+    Raises :class:`_PollError` with a secret-free description when that can't be done.
+    """
+    try:
+        secrets = ic.decrypt(box, spec.instance_id, spec.secrets)
+    except DecryptionError:
+        raise _PollError(
+            "stored secrets can't be decrypted (was the master key changed?)"
+        ) from None
+    try:
+        config: BaseModel = cls.config_schema.model_validate({**spec.config, **secrets})
+    except ValidationError:
+        # The error would echo the input, secrets included: say only that it's invalid.
+        raise _PollError("stored config is not valid for this integration") from None
+    try:
+        guard = guards(cls)
+    except Exception as exc:
+        raise _PollError(f"network guard unavailable ({type(exc).__name__})") from None
+    ctx = InstanceContext(
+        instance_id=spec.instance_id,
+        name=spec.name,
+        config=config,
+        labels=spec.labels,
+        net_guard=guard,
+    )
+    return secrets, ctx
+
+
 def polls(cls: type[Integration]) -> bool:
     """Whether the integration has anything to poll (overrides the default no-op)."""
     return cls.poll is not Integration.poll
@@ -295,29 +330,7 @@ class PollScheduler:
     def _context(
         self, cls: type[Integration], spec: PollSpec
     ) -> tuple[dict[str, str], InstanceContext]:
-        try:
-            secrets = ic.decrypt(self._box, spec.instance_id, spec.secrets)
-        except DecryptionError:
-            raise _PollError(
-                "stored secrets can't be decrypted (was the master key changed?)"
-            ) from None
-        try:
-            config: BaseModel = cls.config_schema.model_validate({**spec.config, **secrets})
-        except ValidationError:
-            # The error would echo the input, secrets included: say only that it's invalid.
-            raise _PollError("stored config is not valid for this integration") from None
-        try:
-            guard = self._guards(cls)
-        except Exception as exc:
-            raise _PollError(f"network guard unavailable ({type(exc).__name__})") from None
-        ctx = InstanceContext(
-            instance_id=spec.instance_id,
-            name=spec.name,
-            config=config,
-            labels=spec.labels,
-            net_guard=guard,
-        )
-        return secrets, ctx
+        return instance_context(cls, spec, self._box, self._guards)
 
     @staticmethod
     async def _poll(

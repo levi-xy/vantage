@@ -25,6 +25,7 @@ from app.core.net_guard import NetGuard, NetPolicy
 from app.core.prometheus_auth import PrometheusToken, load_prometheus_token
 from app.integrations.instance_config import NetGuardFactory, default_net_guard_factory
 from app.integrations.registry import Registry, builtin_registry
+from app.live.rates import LiveRates
 from app.query.proxy import PrometheusClient
 from app.sd.targets import router as sd_router
 
@@ -53,10 +54,13 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         poller: PollScheduler = app.state.poller
+        live_rates: LiveRates = app.state.live_rates
         poller.start()
+        live_rates.start()
         try:
             yield
         finally:
+            await live_rates.stop()
             await poller.stop()
             await app.state.prometheus.aclose()
             engine.dispose()
@@ -96,6 +100,15 @@ def create_app(
     app.state.metrics_registry = make_registry(app.state.metrics_store)
     app.state.event_hub = EventHub()
     app.state.poller = PollScheduler(
+        session_factory=app.state.session_factory,
+        registry=app.state.registry,
+        secret_box=secret_box,
+        net_guard_factory=app.state.net_guard_factory,
+        store=app.state.metrics_store,
+        hub=app.state.event_hub,
+    )
+    # Live traffic rates of the throughput card's ports, pushed on /ws while browsers are open.
+    app.state.live_rates = LiveRates(
         session_factory=app.state.session_factory,
         registry=app.state.registry,
         secret_box=secret_box,

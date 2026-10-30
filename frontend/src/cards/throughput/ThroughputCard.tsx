@@ -1,3 +1,7 @@
+import { useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { LIVE_RATE_KEY } from "../../app/live";
+import type { LiveRate } from "../../app/live";
 import { useUnits } from "../../app/units";
 import { firstSeries, firstValue } from "../metrics/promql";
 import { StatTile } from "../metrics/StatTile";
@@ -31,7 +35,36 @@ function usePortOptions(instances: Instance[]) {
   };
 }
 
-/** In and out traffic of the ports the admin chose (summed), with the last hour. */
+// A pushed live rate older than this is stale; the card falls back to Prometheus.
+const LIVE_MAX_AGE_MS = 8_000;
+
+/** The current time, updated every second. */
+function useNow(): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  return now;
+}
+
+/** The last live rate pushed on /ws, while it is fresh. */
+function useLiveRate(): LiveRate | undefined {
+  const now = useNow();
+  const live = useQuery<LiveRate>({
+    queryKey: LIVE_RATE_KEY,
+    queryFn: () => Promise.reject(new Error("pushed only")),
+    enabled: false,
+    refetchInterval: false,
+  });
+  const fresh = live.data && now - live.data.receivedAt < LIVE_MAX_AGE_MS;
+  return fresh ? live.data : undefined;
+}
+
+/**
+ * In and out traffic of the ports the admin chose (summed), with the last hour. While the
+ * backend pushes live rates (every ~2 s), those replace Prometheus' 2-minute average.
+ */
 export function ThroughputCard({ instances, settings }: WidgetProps) {
   const { formatRate } = useUnits();
   const ports = portsFromSettings(settings);
@@ -43,6 +76,9 @@ export function ThroughputCard({ instances, settings }: WidgetProps) {
   const rxSpark = useFleetRangeQuery(inExpr, undefined, chosen);
   const txSpark = useFleetRangeQuery(outExpr, undefined, chosen);
   const { groups } = usePortOptions(instances);
+  // Live only when every chosen port was read; a partial sum would look like the total.
+  const pushed = useLiveRate();
+  const live = pushed && pushed.ports === ports.length ? pushed : undefined;
 
   if (!chosen) {
     return (
@@ -63,17 +99,25 @@ export function ThroughputCard({ instances, settings }: WidgetProps) {
   return (
     <div className="flex h-full min-w-0 flex-col gap-0.5 px-4 py-3">
       <span className="truncate text-xs text-slate-500 dark:text-slate-400" title={label}>
+        {live && (
+          <span
+            className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 align-middle"
+            aria-label="live"
+          />
+        )}
         Throughput · {label}
       </span>
       <div className="grid grid-cols-2 gap-3">
         <StatTile
           label="↓ In"
-          value={rx.isError ? "—" : formatRate(firstValue(rx.data))}
+          value={live ? formatRate(live.inBps) : rx.isError ? "—" : formatRate(firstValue(rx.data))}
           spark={firstSeries(rxSpark.data)}
         />
         <StatTile
           label="↑ Out"
-          value={tx.isError ? "—" : formatRate(firstValue(tx.data))}
+          value={
+            live ? formatRate(live.outBps) : tx.isError ? "—" : formatRate(firstValue(tx.data))
+          }
           spark={firstSeries(txSpark.data)}
         />
       </div>

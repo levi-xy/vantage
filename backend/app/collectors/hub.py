@@ -10,6 +10,9 @@ Message types (``type``):
 * ``instance_status``: ``{instance_id, status: {state, checked_at, last_success_at, error}}``
 * ``refresh``: ``{instance_id}``, sent after each successful poll so cards refetch.
 * ``alert_event``: reserved for M6; nothing sends it yet.
+* ``live_rate``: ``{in_bps, out_bps, ports, at}``, the summed traffic of the dashboard
+  throughput card's ports, every couple of seconds while a browser is connected
+  (``app/live/rates.py``). Numbers only: no names, addresses or config.
 """
 
 import asyncio
@@ -61,6 +64,10 @@ class EventHub:
         sub = Subscriber()
         self._subscribers.add(sub)
         return sub
+
+    @property
+    def subscriber_count(self) -> int:
+        return len(self._subscribers)
 
     def unsubscribe(self, sub: Subscriber) -> None:
         self._subscribers.discard(sub)
