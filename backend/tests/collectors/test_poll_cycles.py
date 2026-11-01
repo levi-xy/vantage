@@ -6,6 +6,7 @@ import json
 import logging
 import uuid
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Any, ClassVar
 
 import httpx
@@ -234,6 +235,51 @@ async def test_cycles_stay_on_schedule_after_retries(
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
     assert Scripted.starts == [0.0, 15.0, 60.0, 120.0, 135.0, 180.0]
+
+
+async def test_late_wakeups_do_not_drift_the_schedule(
+    scheduler: PollScheduler, spec: PollSpec, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def late_sleep(seconds: float) -> None:  # the event loop wakes 0.5 s late
+        await CLOCK.sleep(seconds + 0.5)
+
+    monkeypatch.setattr(scheduler, "_sleep", late_sleep)
+    Scripted.script = [(2, "ok")] * 5
+    task = asyncio.create_task(scheduler._run(spec))
+    try:
+        async with asyncio.timeout(5):
+            while len(Scripted.starts) < 5:  # noqa: ASYNC110 (driven by the fake clock)
+                await asyncio.sleep(0)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    # Each start is 0.5 s late, but the lateness doesn't add up: still on the 60 s slots.
+    assert Scripted.starts == [0.0, 60.5, 120.5, 180.5, 240.5]
+
+
+async def test_an_overrun_starts_the_next_cycle_at_once(
+    scheduler: PollScheduler, spec: PollSpec
+) -> None:
+    Scripted.script = [(75, "ok"), (0, "ok"), (0, "ok")]  # the first cycle overruns
+    task = asyncio.create_task(scheduler._run(spec))
+    try:
+        async with asyncio.timeout(5):
+            while len(Scripted.starts) < 3:  # noqa: ASYNC110 (driven by the fake clock)
+                await asyncio.sleep(0)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    assert Scripted.starts == [0.0, 75.0, 120.0]  # right away, then back on the slots
+
+
+def test_seeding_never_overwrites_a_real_success(store: MetricsStore) -> None:
+    instance_id = uuid.uuid4()
+    store.track(instance_id, {})
+    real = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+    store.record_success(instance_id, "scripted", [], at=real, duration_seconds=0.1)
+    older = real.timestamp() - 3600  # Prometheus answered after the first poll
+    assert store.seed_last_success({instance_id: older}) == 0
+    assert getattr(store.status(instance_id), "last_success_at", None) == real
 
 
 async def test_seeding_fills_last_success_at(store: MetricsStore) -> None:

@@ -266,7 +266,7 @@ Time from a device failing to `down` at the default N = 3 (the spread is where i
 | 60 s, worst case (one extra cycle, e.g. a retry that still got through as the device went down) | 250 s | 280 s | 300 s |
 | 5 min | about 10–16 min | | |
 
-Fewer cycles detect sooner and flap more; one cycle restores the old behaviour (`down` on the first failed cycle).
+Fewer cycles detect sooner and flap more; one cycle restores the old behaviour (`down` on the first failed cycle). Editing an instance restarts its poll task but keeps its failed-cycle count and state (the collector keeps the instance's entry), so an edit neither resets a device that is going down nor makes it `pending` again.
 
 ### Choosing the poll interval
 

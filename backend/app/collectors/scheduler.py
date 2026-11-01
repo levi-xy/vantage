@@ -285,11 +285,12 @@ class PollScheduler:
             return
         integration = cls()
         interval = self.interval_for(integration)
+        # Fixed schedule: cycles start on planned slots one interval apart, so neither a
+        # retry (it ends before the next slot) nor a late wake-up of the event loop shifts
+        # them. A cycle that ran past its slot is followed by the next one right away.
+        next_start = self._clock()
         while True:
-            # Fixed schedule: the next cycle starts one interval after this one started,
-            # however long a retry took (a retry ends before then), or right away if an
-            # attempt ran past it.
-            next_start = self._clock() + interval
+            next_start = max(next_start + interval, self._clock())
             try:
                 await self.poll_once(spec, integration, interval=interval, next_start=next_start)
             except Exception as exc:  # poll_once doesn't raise; keep the loop alive anyway
