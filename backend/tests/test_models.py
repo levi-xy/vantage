@@ -150,8 +150,9 @@ def test_enum_columns_reject_unknown_values_at_db_level(
             s.add(rule)
             s.commit()
             stmt = text(
-                "INSERT INTO alert_events (rule_id, state, started_at, summary) "
-                "VALUES (:rule_id, :bad, :ts, '')"
+                "INSERT INTO alert_events (rule_id, fingerprint, labels, rule_name, severity, "
+                "state, started_at, summary) VALUES (:rule_id, 'f', '{}', 'r', 'warning', "
+                ":bad, :ts, '')"
             ).bindparams(rule_id=rule.id, bad=bad, ts=datetime.now(UTC))
         elif table == "users":
             stmt = text(
@@ -194,17 +195,54 @@ def test_link_requires_existing_instances(session: Session) -> None:
         session.commit()
 
 
-def test_deleting_rule_cascades_to_events(session: Session) -> None:
+def test_one_open_event_per_rule_and_fingerprint(session: Session) -> None:
+    """The partial unique index: a second firing (rule, fingerprint) is refused; resolved
+    duplicates (history) and other fingerprints are fine."""
+    rule = AlertRule(name="r", expr="up == 0", severity="warning")
+    session.add(rule)
+    session.commit()
+
+    def event(fp: str, state: AlertState) -> AlertEvent:
+        return AlertEvent(
+            rule_id=rule.id,
+            fingerprint=fp,
+            rule_name="r",
+            severity="warning",
+            state=state,
+            started_at=datetime.now(UTC),
+        )
+
+    session.add_all([event("f1", AlertState.RESOLVED), event("f1", AlertState.RESOLVED)])
+    session.add_all([event("f1", AlertState.FIRING), event("f2", AlertState.FIRING)])
+    session.commit()
+    session.add(event("f1", AlertState.FIRING))
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_deleting_rule_row_keeps_its_events(session: Session) -> None:
+    """P0-3a: events outlive their rule (ON DELETE SET NULL), with their snapshots."""
     rule = AlertRule(name="r", expr="up == 0", severity="warning", channel_ids=[1, 2])
     session.add(rule)
     session.flush()
-    session.add(AlertEvent(rule_id=rule.id, state=AlertState.FIRING, started_at=datetime.now(UTC)))
+    session.add(
+        AlertEvent(
+            rule_id=rule.id,
+            fingerprint="f",
+            rule_name="r",
+            severity="warning",
+            state=AlertState.FIRING,
+            started_at=datetime.now(UTC),
+        )
+    )
     session.commit()
     assert session.get(AlertRule, rule.id).channel_ids == [1, 2]  # type: ignore[union-attr]
 
     session.execute(AlertRule.__table__.delete().where(AlertRule.id == rule.id))
     session.commit()
-    assert session.scalars(select(AlertEvent)).all() == []
+    session.expire_all()
+    event = session.scalars(select(AlertEvent)).one()
+    assert event.rule_id is None and event.rule_name == "r"
 
 
 def test_audit_entries_survive_user_deletion(session: Session) -> None:

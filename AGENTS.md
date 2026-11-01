@@ -154,8 +154,8 @@ class Integration(ABC):
 | `instances` | id (uuid), type_id, name (unique), site, tags (json), enabled, config (json, non-secret fields only), secrets (encrypted blob), created_at, updated_at |
 | `links` | id, a_instance_id, b_instance_id, label, a_port, b_port (for the network map) |
 | `dashboards` | id, name, layout (json: card positions and per-card settings) |
-| `alert_rules` | id, name, expr (PromQL), for_seconds, severity, instance_id (nullable), channel_ids, enabled |
-| `alert_events` | id, rule_id, state (`firing` / `resolved`), started_at, ended_at, summary |
+| `alert_rules` | id, name, expr (PromQL), for_seconds, severity, instance_id (nullable), channel_ids, enabled, deleted_at (nullable; soft delete), revision (maintainer-approved 2026-11-01) |
+| `alert_events` | id, rule_id (nullable, FK `alert_rules` ON DELETE SET NULL), fingerprint, labels (json), instance_id (nullable, FK `instances` ON DELETE SET NULL), rule_name, severity, state (`firing` / `resolved`), started_at, ended_at, end_reason (nullable: `recovered` / `rule_disabled` / `rule_deleted` / `rule_changed` / `closed_by_user`), summary (maintainer-approved 2026-11-01) |
 | `channels` | id, type (`telegram`), name, config (json), secrets (encrypted blob) |
 | `audit_log` | id, user_id, actor_type (`user` / `cli` / `system`), action (`create` / `update` / `delete` / `login` / `logout` / `login_failed`), target_type, target_id, at, changes (json, **secret fields replaced with `"<changed>"`**) |
 | `settings` | key, value (json) |
@@ -167,6 +167,7 @@ class Integration(ABC):
 - A login refused (429) because the account is locked writes an `audit_log` entry: `action=login_failed`, the user as target, `changes` = `{"username": <stored username>, "locked": true}` (never the submitted username or password). At most one per account per minute, best effort; refusals by the per-client limit or for unknown usernames aren't audited.
 - `audit_log.actor_type` says who acted, and every audit write sets it: `user` = a request through the API (`user_id` is the logged-in user), `cli` = the admin CLI on the server, `system` = the backend itself. `cli` and `system` entries never have a `user_id`.
 - `sessions` holds one row per login session. The cookie carries a random token; the database stores only its SHA-256 hash, so a copy of the database can't be used to log in. Deleting a row ends that session: logout, a new login on the same browser, password reset, expiry or idle timeout, and user deletion (cascade).
+- Alerts (maintainer-approved 2026-11-01): an alert is one series of a rule's result, identified by (rule_id, fingerprint); `app/alerts/labels.py` defines the fingerprint (SHA-256 over the series' identity labels: every label except `__*`, `job`, `instance`, `vantage_instance`, `vantage_site`, `vantage_integration`, the integrations' display labels and sensitive-looking names). A partial unique index allows one `firing` event per (rule_id, fingerprint). `rule_name`, `severity`, `labels` and `instance_id` are snapshots taken when the event opens; `labels` holds only filtered labels (sensitive values `"<redacted>"`, URLs without credentials or query, at most 16). Events from before this change have `fingerprint = "legacy"`. No rule operation deletes an event row: deleting a rule sets `deleted_at` and closes its open events. Every rule change bumps `revision`.
 - The master key is read from `VANTAGE_MASTER_KEY_FILE` (preferred) or `VANTAGE_MASTER_KEY`. The app refuses to start without it.
 
 ---
@@ -195,10 +196,11 @@ All routes under `/api/v1`, JSON, session auth, CSRF token on state-changing req
 | POST | `/query` | any | PromQL proxy: `{query, start?, end?, step?}`; backend enforces limits and rejects queries over the time/size budget |
 | GET/PUT | `/dashboards/{id}` | any / admin | Layout |
 | CRUD | `/links` | any / admin | Network map links |
-| CRUD | `/alerts/rules`, `/channels` | admin | Alerts |
-| GET | `/alerts/events` | any | Alert history |
+| CRUD | `/alerts/rules`, `/channels` | admin | Alerts. Rule edits close affected open events in the same transaction (maintainer-approved 2026-11-01): a new expression (ignoring whitespace) closes all (`rule_changed`), a new scope closes those outside it (`rule_changed`), disabling closes all (`rule_disabled`), DELETE is a soft delete that closes all (`rule_deleted`; a second DELETE is 404, deleted rules are never listed); name, severity, `for_seconds` and channels keep them. One message per rule goes to its channels when events were closed |
+| GET | `/alerts/events` | any | Alert history; each event carries `instance_id`, `rule_name`, `severity`, `labels`, `fingerprint` and `end_reason` (maintainer-approved 2026-11-01); `rule_id` is null once the rule is deleted |
+| POST | `/alerts/events/{id}/close` | admin | Close an open event by hand (`end_reason = closed_by_user`), audited; 404 if unknown, 409 if already closed (maintainer-approved 2026-11-01) |
 | GET | `/audit` | admin | Audit log, newest first: `limit` (1–200, default 50), `before_id` (keyset paging); each entry carries `actor_type` |
-| WS | `/ws` | any | Live pushes: instance status changes, alert events, card data refresh hints, and (maintainer-approved 2026-10-30) `live_rate`: the summed in/out bits per second of the dashboard throughput card's ports, about every 2 s while a browser is connected (numbers only; not stored) |
+| WS | `/ws` | any | Live pushes: instance status changes, alert events (each with `instance_id` and `fingerprint`, maintainer-approved 2026-11-01), card data refresh hints, and (maintainer-approved 2026-10-30) `live_rate`: the summed in/out bits per second of the dashboard throughput card's ports, about every 2 s while a browser is connected (numbers only; not stored) |
 
 User management: the last admin can't be demoted or deleted (409), and an admin can't delete their own account (409; another admin has to). Every user change (create, role, password reset or change, delete) is audited, the password only as `"<changed>"`.
 

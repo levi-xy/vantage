@@ -231,6 +231,11 @@ export class ApiClient {
     return this.request("GET", qs ? `/alerts/events?${qs}` : "/alerts/events");
   }
 
+  /** Admin only. Closes an open event by hand; 409 if it is already closed. */
+  closeAlertEvent(id: number): Promise<AlertEvent> {
+    return this.request("POST", `/alerts/events/${encodeURIComponent(String(id))}/close`);
+  }
+
   /** Admin only. */
   alertRules(): Promise<AlertRule[]> {
     return this.request("GET", "/alerts/rules");

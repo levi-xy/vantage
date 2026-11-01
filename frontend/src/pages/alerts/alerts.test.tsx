@@ -3,6 +3,7 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { applyMessage } from "../../app/live";
 import { exampleMe, fakeBackend, json, mockSystemTheme, renderApp } from "../../test-utils";
 import type { FakeBackendOptions } from "../../test-utils";
+import { exampleInstance, INSTANCE_ID } from "../devices/testFixtures";
 
 beforeEach(() => {
   mockSystemTheme(false);
@@ -18,9 +19,15 @@ const CHANNEL = {
 const FIRING_EVENT = {
   id: 7,
   rule_id: 1,
+  instance_id: null,
+  rule_name: "Gateway down",
+  severity: "critical",
+  labels: { vantage_instance: "nas-1" },
+  fingerprint: "f".repeat(32),
   state: "firing",
   started_at: "2026-10-30T10:00:00Z",
   ended_at: null,
+  end_reason: null,
   summary: "nas-1 is down",
 };
 const TEMPLATE = {
@@ -124,6 +131,52 @@ describe("alerts page: events and rules", () => {
     expect(screen.queryByRole("heading", { name: "Rules" })).toBeNull();
     const routes = backend.requests().map((r) => r.route);
     expect(routes.some((r) => /alerts\/rules|templates|channels/.test(r))).toBe(false);
+  });
+
+  it("names the device, links to it and lets an admin close an open event", async () => {
+    const linked = { ...FIRING_EVENT, instance_id: INSTANCE_ID, labels: {} };
+    const closed = {
+      ...FIRING_EVENT,
+      id: 6,
+      state: "resolved",
+      labels: {},
+      ended_at: "2026-10-30T11:00:00Z",
+      end_reason: "rule_changed",
+    };
+    const backend = adminBackend({
+      "GET /instances": () => json([exampleInstance({ name: "fw-a" })]),
+      "GET /alerts/events": () => json([linked, closed]),
+      "POST /alerts/events/7/close": () => json({ ...linked, state: "resolved" }),
+    });
+    renderApp("/alerts", backend);
+    const firing = await screen.findByRole("list", { name: "Firing alerts" });
+    expect(await within(firing).findByRole("link", { name: "fw-a" })).toHaveAttribute(
+      "href",
+      `/devices/${INSTANCE_ID}`,
+    );
+    expect(within(firing).getAllByText("Gateway down").length).toBeGreaterThan(0);
+    const history = screen.getByRole("list", { name: "Alert history" });
+    expect(within(history).getByText("—")).toBeInTheDocument();
+    expect(within(history).getByText(/rule changed/)).toBeInTheDocument();
+    expect(within(history).queryByRole("button", { name: /Close alert/ })).toBeNull();
+
+    fireEvent.click(within(firing).getByRole("button", { name: "Close alert 7" }));
+    expect(backend.requests().some((r) => r.route.includes("/close"))).toBe(false);
+    fireEvent.click(within(firing).getByRole("button", { name: "Confirm closing alert 7" }));
+    await waitFor(() =>
+      expect(backend.requests().some((r) => r.route === "POST /alerts/events/7/close")).toBe(true),
+    );
+  });
+
+  it("shows no Close button to a viewer", async () => {
+    const backend = fakeBackend({
+      session: exampleMe("viewer"),
+      routes: { "GET /alerts/events": () => json([FIRING_EVENT]) },
+    });
+    renderApp("/alerts", backend);
+    const firing = await screen.findByRole("list", { name: "Firing alerts" });
+    expect(within(firing).getByText("nas-1")).toBeInTheDocument();
+    expect(within(firing).queryByRole("button", { name: /Close alert/ })).toBeNull();
   });
 
   it("refetches events when an alert_event is pushed", () => {

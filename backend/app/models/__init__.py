@@ -3,7 +3,7 @@
 Importing this package registers all tables on ``Base.metadata``.
 """
 
-from app.models.alert import AlertEvent, AlertRule, AlertState
+from app.models.alert import AlertEvent, AlertRule, AlertState, EndReason
 from app.models.audit import ActorType, AuditLog
 from app.models.channel import Channel, ChannelType
 from app.models.dashboard import Dashboard
@@ -23,6 +23,7 @@ __all__ = [
     "Channel",
     "ChannelType",
     "Dashboard",
+    "EndReason",
     "Instance",
     "Link",
     "LoginFailure",
