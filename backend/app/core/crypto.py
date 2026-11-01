@@ -55,21 +55,31 @@ def load_master_key(env: Mapping[str, str] | None = None) -> bytes:
     env = os.environ if env is None else env
     key_file = env.get(KEY_FILE_ENV, "").strip()
     if key_file:
-        try:
-            raw = Path(key_file).read_bytes().decode("ascii")
-        except (OSError, UnicodeDecodeError):
-            raise MasterKeyError(f"{KEY_FILE_ENV} is set but the file can't be read") from None
-        return _decode_key(raw, KEY_FILE_ENV)
+        return read_key_file(Path(key_file), f"{KEY_FILE_ENV} is set but the file", KEY_FILE_ENV)
 
     raw = env.get(KEY_ENV, "")
     if not raw.strip():
         raise MasterKeyError(
             f"No master key. Set {KEY_FILE_ENV} (preferred) or {KEY_ENV} to {_KEY_FORMAT_HINT}."
         )
-    return _decode_key(raw, KEY_ENV)
+    return decode_key(raw, KEY_ENV)
 
 
-def _decode_key(raw: str, source: str) -> bytes:
+def read_key_file(path: Path, file_label: str, source: str) -> bytes:
+    """Read a key file (``openssl rand -base64 32`` output). Raises ``MasterKeyError``.
+
+    ``file_label`` and ``source`` name the file in messages ("the new key file"); the
+    path and the file's content are never included.
+    """
+    try:
+        raw = path.read_bytes().decode("ascii")
+    except (OSError, UnicodeDecodeError):
+        raise MasterKeyError(f"{file_label} can't be read") from None
+    return decode_key(raw, source)
+
+
+def decode_key(raw: str, source: str) -> bytes:
+    """Decode a base64 master key. ``source`` names where it came from in the message."""
     try:
         key = base64.b64decode(raw.strip(), validate=True)
     except (binascii.Error, ValueError):
