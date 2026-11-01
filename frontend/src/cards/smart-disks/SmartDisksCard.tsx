@@ -1,4 +1,5 @@
 import type { CardProps } from "../registry";
+import { cardFreshness } from "../metrics/freshness";
 import { CardFrame } from "../metrics/CardFrame";
 import { formatCelsius, formatDuration } from "../metrics/format";
 import { byLabel } from "../metrics/promql";
@@ -32,6 +33,7 @@ export function SmartDisksCard({ instanceId, title, instance }: CardProps) {
       instance={instance}
       loading={status.isPending}
       error={status.error ?? temperature.error}
+      freshness={cardFreshness(info, status, temperature, powerOn)}
       empty={statuses.length === 0}
       emptyHint="No disks reported. Check that smartctl_exporter can read the disks."
     >

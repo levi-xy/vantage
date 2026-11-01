@@ -1,6 +1,9 @@
+import { useContext } from "react";
 import type { ReactNode } from "react";
 import type { Instance } from "../../api";
 import { StatusBadge } from "../PlaceholderCard";
+import { FRESH, formatAsOf, StaleContext } from "./freshness";
+import type { Freshness } from "./freshness";
 
 export interface CardFrameProps {
   title: string;
@@ -13,6 +16,8 @@ export interface CardFrameProps {
   empty: boolean;
   /** Shown when `empty`: what to check. */
   emptyHint?: string;
+  /** How old the shown values are: `cardFreshness(...)` of the card's instant queries. */
+  freshness?: Freshness;
   children: ReactNode;
 }
 
@@ -24,9 +29,18 @@ export function CardFrame({
   error,
   empty,
   emptyHint = "No data yet. Prometheus may not have scraped this device.",
+  freshness = FRESH,
   children,
 }: CardFrameProps) {
-  let body: ReactNode = children;
+  const stale = freshness.kind === "stale";
+  let body: ReactNode = stale ? (
+    // A past value: greyed, and never green or red as if it were current.
+    <div data-stale="true" className="opacity-60 grayscale">
+      <StaleContext.Provider value>{children}</StaleContext.Provider>
+    </div>
+  ) : (
+    children
+  );
   if (error) {
     body = (
       <p role="alert" className="text-sm text-red-700 dark:text-red-400">
@@ -36,7 +50,8 @@ export function CardFrame({
   } else if (loading) {
     body = <p className="text-sm text-slate-500 dark:text-slate-400">Loading…</p>;
   } else if (empty) {
-    body = <p className="text-sm text-slate-500 dark:text-slate-400">{emptyHint}</p>;
+    const hint = freshness.kind === "missing" ? freshness.note : emptyHint;
+    body = <p className="text-sm text-slate-500 dark:text-slate-400">{hint}</p>;
   }
   return (
     <div className="flex h-full flex-col gap-2 overflow-auto p-4">
@@ -48,6 +63,11 @@ export function CardFrame({
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <StatusBadge instance={instance} />
+        {stale && !error && (
+          <span className="text-xs text-slate-500 dark:text-slate-400">
+            as of {formatAsOf(freshness.asOf)}
+          </span>
+        )}
       </div>
       {body}
     </div>
@@ -65,7 +85,14 @@ export function UsageBar({
   text: string;
 }) {
   const clamped = Math.min(100, Math.max(0, percent));
-  const color = clamped >= 90 ? "bg-red-500" : clamped >= 75 ? "bg-amber-500" : "bg-blue-500";
+  const stale = useContext(StaleContext);
+  const color = stale
+    ? "bg-slate-400 dark:bg-slate-500"
+    : clamped >= 90
+      ? "bg-red-500"
+      : clamped >= 75
+        ? "bg-amber-500"
+        : "bg-blue-500";
   return (
     <div className="flex flex-col gap-0.5">
       <div className="flex justify-between gap-2 text-xs">

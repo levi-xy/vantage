@@ -1,4 +1,5 @@
 import type { CardProps } from "../registry";
+import { cardFreshness } from "../metrics/freshness";
 import { CardFrame } from "../metrics/CardFrame";
 import { formatPercent } from "../metrics/format";
 import { byLabel, firstValue } from "../metrics/promql";
@@ -42,6 +43,7 @@ export function ProxmoxGuestsCard({ instanceId, title, instance }: CardProps) {
       instance={instance}
       loading={running.isPending}
       error={running.error}
+      freshness={cardFreshness(running, cpu, mem, info, omitted)}
       empty={guests.length === 0}
       emptyHint="No guests reported yet."
     >

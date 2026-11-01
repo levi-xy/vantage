@@ -1,7 +1,32 @@
 // Fleet-wide numbers for the overview row. Pure functions, so they're easy to test.
 
 import type { Instance, QueryResult } from "../api";
+import { freshFor, POLL_INTERVAL_SECONDS, sourceOf } from "./metrics/freshness";
 import { parseValue } from "./metrics/promql";
+
+/**
+ * Enabled devices whose data isn't fresh: polled ones without a success in the last
+ * 2 x interval + 30 s, scraped ones whose target is down. New (pending) devices don't count.
+ */
+export function withoutFreshData(
+  instances: Instance[],
+  scrape: Map<string, Instance["status"]["state"]>,
+  nowMs: number = Date.now(),
+): number {
+  let count = 0;
+  for (const i of instances) {
+    if (!i.enabled) continue;
+    const source = sourceOf(i);
+    if (source.kind === "scraped") {
+      if (scrape.get(i.id) === "down") count += 1;
+    } else if (source.kind === "polled") {
+      const last = source.lastSuccess;
+      if (last === null ? !source.pending : nowMs / 1000 - last > freshFor(POLL_INTERVAL_SECONDS))
+        count += 1;
+    }
+  }
+  return count;
+}
 
 export interface HealthCounts {
   up: number;

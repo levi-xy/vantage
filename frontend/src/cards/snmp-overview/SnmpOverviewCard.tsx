@@ -1,4 +1,5 @@
 import type { CardProps } from "../registry";
+import { cardFreshness } from "../metrics/freshness";
 import { CardFrame } from "../metrics/CardFrame";
 import { formatDuration } from "../metrics/format";
 import { byLabel, firstValue } from "../metrics/promql";
@@ -27,6 +28,7 @@ export function SnmpOverviewCard({ instanceId, title, instance }: CardProps) {
       instance={instance}
       loading={info.isPending && uptime.isPending}
       error={info.error ?? uptime.error}
+      freshness={cardFreshness(info, uptime, oper)}
       empty={!labels && uptimeValue === undefined}
     >
       <div>

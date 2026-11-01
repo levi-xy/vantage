@@ -1,7 +1,8 @@
 import { screen } from "@testing-library/react";
 import { exampleMe, fakeBackend, json, mockSystemTheme, renderApp } from "../test-utils";
 import { exampleInstance, INSTANCE_ID } from "../pages/devices/testFixtures";
-import { hasWanSource, healthCounts, wanSummary } from "./overview";
+import type { Instance } from "../api";
+import { hasWanSource, healthCounts, wanSummary, withoutFreshData } from "./overview";
 
 beforeEach(() => mockSystemTheme(false));
 
@@ -22,6 +23,23 @@ describe("overview helpers", () => {
     expect(wanSummary(result(["0", "100", "20"]))).toEqual({ up: 2, total: 3 });
     expect(hasWanSource([up])).toBe(false);
     expect(hasWanSource([exampleInstance({ type_id: "pfsense" })])).toBe(true);
+  });
+
+  it("counts devices without fresh data", () => {
+    const now = Date.parse("2026-01-02T03:10:00Z");
+    const status = (state: Instance["status"]["state"], last: string | null) => ({
+      state,
+      checked_at: null,
+      last_success_at: last,
+      error: null,
+    });
+    const fresh = exampleInstance({ status: status("up", "2026-01-02T03:09:00Z") });
+    const old = exampleInstance({ status: status("down", "2026-01-02T03:00:00Z") });
+    const pending = exampleInstance({ status: status("pending", null) });
+    const scraped = exampleInstance({ id: "scraped", status: status("unknown", null) });
+    const disabled = exampleInstance({ enabled: false, status: status("unknown", null) });
+    const scrape = new Map([["scraped", "down" as const]]);
+    expect(withoutFreshData([fresh, old, pending, scraped, disabled], scrape, now)).toBe(2);
   });
 });
 

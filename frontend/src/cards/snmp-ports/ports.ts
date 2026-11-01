@@ -1,6 +1,7 @@
 // Port data shared by the SNMP cards (Ports, Switch panel): one row per interface.
 import type { QueryResult } from "../../api";
 import { formatBitsPerSecond } from "../metrics/format";
+import { cardFreshness } from "../metrics/freshness";
 import { parseValue } from "../metrics/promql";
 import { useInstantQuery } from "../metrics/useMetricQuery";
 import { IF_DOWN, IF_UP, snmpMetric } from "../snmp-overview/snmpMetrics";
@@ -89,5 +90,6 @@ export function useSnmpPorts(instanceId: string) {
       };
     })
     .sort((a, b) => Number(a.index) - Number(b.index));
-  return { ports, loading: oper.isPending, error: oper.error };
+  const freshness = cardFreshness(oper, admin, speed, rx, tx, info);
+  return { ports, loading: oper.isPending, error: oper.error, freshness };
 }

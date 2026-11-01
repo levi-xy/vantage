@@ -1,4 +1,5 @@
 import type { CardProps } from "../registry";
+import { cardFreshness } from "../metrics/freshness";
 import { CardFrame } from "../metrics/CardFrame";
 import { formatMs } from "../metrics/format";
 import { firstSeries, firstValue } from "../metrics/promql";
@@ -25,6 +26,7 @@ export function HttpCheckCard({ instanceId, title, instance }: CardProps) {
       instance={instance}
       loading={success.isPending}
       error={success.error ?? status.error ?? duration.error}
+      freshness={cardFreshness(success, status, duration)}
       empty={up === undefined}
     >
       <div className="grid grid-cols-3 gap-3">

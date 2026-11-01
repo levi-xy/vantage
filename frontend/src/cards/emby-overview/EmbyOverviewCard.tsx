@@ -1,4 +1,5 @@
 import type { CardProps } from "../registry";
+import { cardFreshness } from "../metrics/freshness";
 import { CardFrame } from "../metrics/CardFrame";
 import { byLabel, firstSeries } from "../metrics/promql";
 import { StatTile } from "../metrics/StatTile";
@@ -36,6 +37,7 @@ export function EmbyOverviewCard({ instanceId, title, instance }: CardProps) {
       instance={instance}
       loading={scalars.isPending}
       error={scalars.error ?? streams.error}
+      freshness={cardFreshness(scalars, info, streams)}
       empty={value.size === 0}
       emptyHint="No Emby metrics yet. Check the instance status and the API key."
     >
