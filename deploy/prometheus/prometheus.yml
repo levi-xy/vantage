@@ -8,7 +8,14 @@ global:
 scrape_configs:
   # Exporter targets for every enabled instance, served by the backend.
   # Each target carries its own __metrics_path__ and __scheme__ labels.
+  # Generic per-scrape limits (not device-specific; AGENTS.md Contract 4, approved
+  # 2026-11-01): a misbehaving or hostile exporter can't flood Prometheus. A scrape over
+  # a limit fails as a whole and its target shows as down.
   - job_name: vantage-targets
+    sample_limit: 50000
+    label_limit: 64
+    label_value_length_limit: 2048
+    body_size_limit: 16MB
     http_sd_configs:
       - url: http://backend:8000/sd/targets
         refresh_interval: 60s

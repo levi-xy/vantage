@@ -2,6 +2,78 @@
 
 This file collects Vantage's security rules. The hard rules are in `AGENTS.md`.
 
+## Threat model
+
+Vantage is a self-hosted, read-only dashboard for a household or a small team. It runs
+as a Docker Compose stack (frontend nginx, backend, Prometheus) on one host and reads
+devices on private networks.
+
+**Assets**, most valuable first:
+
+- **Device credentials** (API tokens, passwords, SNMP communities and keys) and the
+  **Telegram bot token**: encrypted at rest with the master key, write-only in the API.
+- **The master key** (`deploy/secrets/master.key`): decrypts every stored credential.
+- **Admin accounts and sessions**: an admin can add devices, which makes the backend
+  connect to internal addresses (within the network guard's policy).
+- **The Prometheus token**: lets its holder read `/sd/targets` and `/metrics`.
+- **Inventory and metrics**: device names, addresses, ports, traffic. Readable by every
+  logged-in user, not meant for anyone else.
+- **Availability** of the dashboard and of alerting.
+
+**Attackers** considered:
+
+- **Someone on the network** who can reach the dashboard port but has no account:
+  password guessing, session theft over plain HTTP, request forgery.
+- **A web page an admin visits**: cross-site requests, cross-site WebSocket hijacking,
+  DNS rebinding.
+- **A logged-in viewer** trying to become admin, read secrets, or slow the backend down
+  for everyone.
+- **A compromised or hostile device or exporter**: oversized or malformed answers,
+  redirects, slow responses.
+- **A compromised admin account**: limited to what an admin can do through the API; it
+  must not yield stored secrets, connections outside the guard's policy, or code
+  execution.
+
+Out of scope: anyone with a shell on the Docker host or in its `docker` group (they can
+read the master key and the database), a malicious image or upstream dependency, and
+physical access.
+
+**Trust boundaries:**
+
+1. **Browser → frontend nginx → backend.** Everything from the browser is untrusted.
+   Only the frontend port is published; the backend and Prometheus aren't.
+2. **Backend → devices and cloud APIs.** Every outbound connection goes through
+   `net_guard` (below); device answers are untrusted input.
+3. **Prometheus → exporters.** Prometheus connects on its own, outside `net_guard`:
+   `/sd/targets` hands it only targets the guard accepts, and the scrape job carries
+   size limits.
+4. **Backend ↔ Prometheus.** Prometheus reads `/sd/targets` and `/metrics` with the
+   Prometheus token; the backend queries Prometheus on the compose network only.
+5. **Host shell → containers.** The admin CLI trusts anyone who can run
+   `docker compose exec`.
+
+## Controls in short
+
+- **Authentication:** Argon2id password hashes; sessions are random tokens in an
+  httpOnly, `SameSite=Strict`, `Secure` (by default) cookie, stored only as a SHA-256
+  hash, with an absolute and an idle timeout; per-user and per-client login limits.
+- **Authorisation:** two roles (`admin`, `viewer`) checked on every route; the last admin
+  can't be removed.
+- **Request forgery:** a CSRF token on every state-changing request, cross-site writes
+  refused by `Sec-Fetch-Site`, the WebSocket's `Origin` must match `Host`, and the
+  optional `VANTAGE_PUBLIC_HOSTS` allowlist refuses API requests for unknown host names
+  (DNS rebinding).
+- **Secrets:** AES-GCM under the master key, bound to their row, never in a response,
+  log line, error message or audit entry.
+- **Outbound connections:** the SSRF guard: public addresses denied unless declared, no
+  automatic redirects, fixed timeouts.
+- **Resource limits:** the query budget and concurrency caps, WebSocket caps, bounded
+  queues, Prometheus scrape limits.
+- **Transport:** HTTPS by default (self-signed unless you bring a certificate).
+- **Containers:** non-root users, every capability dropped, `no-new-privileges`,
+  read-only root filesystems, secrets as files with tight modes.
+- **Audit:** every change, login and lockout is in `audit_log`, secrets redacted.
+
 ## Audit redaction rules
 
 Every create, update and delete writes an `audit_log` row through
@@ -382,6 +454,20 @@ short message and never reaches Prometheus:
 | Prometheus' answer | 8 MiB |
 | Time | 10 s evaluation timeout in Prometheus, 15 s for the whole call |
 
+An instant query can still return a matrix (a range selector such as `up[30d]`), which
+the step budget doesn't bound: the points-per-series limit is applied to that answer too.
+The series limit is also sent to Prometheus as its `limit` parameter, which Prometheus
+honours from 3.2 on (the compose file pins 3.2.1); the backend counts the series again
+either way.
+
+**Concurrency.** At most 6 queries run at once over all users, and at most 2 per login
+session. A query over either cap gets 429 (`Retry-After: 1`) at once, without waiting.
+The frontend runs at most 2 queries at a time per tab and retries a 429 after a short
+random wait. The alert evaluator has its own Prometheus client (its own connection pool)
+and doesn't count against these caps, so browser queries can't starve alert evaluation.
+A rule whose query fails keeps its current state; the failure is logged once (the rule
+id and the proxy's short message, never Prometheus' text), and so is the recovery.
+
 Prometheus' own error text is never passed on: the client sees `invalid PromQL query`
 (400), `query could not be executed` (422), `query timed out` (504),
 `metrics backend unavailable` (503) or `metrics backend error` (502).
@@ -409,8 +495,89 @@ Telegram puts the token in the URL path, so extra care keeps it out of logs and 
 - Send errors are built from fixed text, the exception type and Telegram's short
   `description`, then scrubbed of the token; an httpx exception's own text (which can
   hold the URL) is never used or chained.
-- httpx logs every request URL at INFO level; a log filter on the `httpx` and
-  `httpcore` loggers rewrites `/bot<token>` to `/bot<redacted>`.
+- httpx logs every request URL at INFO level. The backend sets the `httpx` and
+  `httpcore` loggers to WARNING when it starts, so those lines aren't written at all;
+  a log filter on both loggers still rewrites `/bot<token>` to `/bot<redacted>` if
+  their level is ever lowered.
 
 Recommended: give the bot only what it needs (a bot that can post to one chat), and allow
 outbound HTTPS to `api.telegram.org` in your firewall only if you use Telegram alerts.
+
+## Live updates (WebSocket)
+
+`/api/v1/ws` uses the session cookie with the same expiry and idle rules as the HTTP
+API, re-checked every 30 s while the socket is open. A socket whose session ended is
+closed with code 4401; the frontend then stops reconnecting and returns to the login
+page (it also asks `GET /me` when a handshake fails, since a refused handshake looks
+like a network error to the browser). The handshake needs an `Origin` that matches
+`Host` (cross-site WebSocket hijacking). At most 200 sockets are open in total and 8 per
+login session; a socket over a cap is closed with 1013 before it receives anything.
+Each socket has a bounded queue, and a client that doesn't keep up is dropped. Clients
+can only send `ping`.
+
+## Host allowlist (DNS rebinding)
+
+A web page can rebind its own host name to the dashboard's address and then send
+requests the browser treats as same-origin for that page. Over HTTPS the certificate
+check normally stops this; over plain HTTP (`VANTAGE_HTTPS=false`) nothing does, and
+before the first admin exists `/setup` is open to whoever gets there first.
+
+Set `VANTAGE_PUBLIC_HOSTS` to the names the dashboard is reached by (comma-separated,
+`host` or `host:port`, IPv6 in brackets; a name without a port allows any port). The
+backend then answers 400 to any `/api/*` request, and refuses the WebSocket handshake,
+when the `Host` header isn't listed. Unset, any `Host` is accepted, so existing installs
+keep working. Strongly recommended with `VANTAGE_HTTPS=false`: `setup.sh` warns when
+HTTPS is off and the list is empty. `/healthz`, `/sd/targets` and `/metrics` aren't
+affected (Prometheus reaches them by their compose name).
+
+## Prometheus scrape limits
+
+The `vantage-targets` job in `deploy/prometheus/prometheus.yml` carries generic limits
+(AGENTS.md Contract 4): at most 50,000 samples, 64 labels per series, 2,048 characters
+per label value and a 16 MB body per scrape. A scrape over a limit fails as a whole and
+the target shows as down, so one broken or hostile exporter can't fill Prometheus'
+memory or disk. Nothing device-specific is in that file.
+
+## Accepted risks
+
+Known and deliberately accepted; listed so nobody rediscovers them as bugs.
+
+- **Login timing.** For an existing username, login writes a `login_failures` row before
+  the Argon2 check; an unknown username only runs a dummy Argon2 check. The difference
+  is a few milliseconds against tens of milliseconds of hashing, and both answer the
+  same 401/429, but it could hint at which usernames exist.
+- **Account lockout as denial of service.** Anyone who can reach the login form can lock
+  an account's password login with 5 wrong guesses per 15 minutes. Recover with
+  `docker compose exec backend python -m app.cli unlock <username>`; existing sessions
+  keep working.
+- **Viewers see everything that isn't secret.** Every logged-in user can read every
+  metric through `/query` and every instance's non-secret config, including host names,
+  ports and URL query strings. Never put a credential in a URL; use the secret fields.
+- **Admins can reach the compose network.** It is RFC 1918, which the guard allows, so
+  an admin can point a device at the Prometheus or frontend container (and, through
+  nginx, at the API). Such requests carry no session or Prometheus token, Prometheus'
+  admin API is off, and the backend's own addresses are denied, so they reveal no more
+  than the metrics a logged-in admin can already query.
+- **Scrape targets and DNS.** Prometheus resolves host names itself when scraping, after
+  `/sd/targets` checked them, so only IP-literal scrape targets are fully protected
+  against DNS rebinding. Use IP addresses for exporters where that matters.
+- **SNMP v1/v2c is cleartext and spoofable.** The community string crosses the network
+  readable, and answers can be forged by anyone on the path. Prefer SNMPv3 with
+  authentication and privacy.
+- **Restore trusts the file's content.** `app.cli restore` checks structure and types
+  strictly, but users, roles, password hashes and devices come back as stored. Only
+  restore backups you made yourself and kept safe.
+- **Reverse proxies must pass `Host` unchanged.** The WebSocket `Origin` check (and
+  `VANTAGE_PUBLIC_HOSTS`) compare against the `Host` header the backend receives. A
+  proxy in front of Vantage must keep it: nginx `proxy_set_header Host $http_host`,
+  Apache `ProxyPreserveHost On`, Traefik `passHostHeader: true` (its default).
+  Otherwise live updates are refused.
+- **One backend worker only.** Rate limits, the query and WebSocket caps, instance
+  status and the alert evaluator live in one process's memory. Several workers or
+  replicas would multiply the limits and duplicate alerts; the image runs one.
+- **Non-root installs leave secret files readable inside private directories.**
+  Without root, `setup.sh` can't give `master.key`, `prometheus_token` and `tls.key` to
+  the container users, so they are mode 0644 inside 0700 directories. Other host users
+  can't enter the directories, but members of the `docker` group can read the files
+  (they can read everything in the containers anyway). Run `setup.sh` as root for
+  owner-only modes.

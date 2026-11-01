@@ -214,7 +214,7 @@ Outside `/api/v1`:
 ## Contract 4: Prometheus bootstrap
 
 `deploy/prometheus/prometheus.yml` is fixed and contains only:
-- a job using `http_sd_configs` pointed at `http://backend:8000/sd/targets` with bearer auth
+- a job using `http_sd_configs` pointed at `http://backend:8000/sd/targets` with bearer auth. It carries generic, non-device-specific scrape limits (maintainer-approved 2026-11-01): `sample_limit: 50000`, `label_limit: 64`, `label_value_length_limit: 2048`, `body_size_limit: 16MB`
 - a job scraping `http://backend:8000/metrics` with bearer auth
 - Prometheus self-scrape
 
