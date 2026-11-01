@@ -5,23 +5,38 @@ running it once as an instant query through the same guarded proxy (and budget) 
 browser's queries use: invalid PromQL or a result over budget is refused with 422. If
 Prometheus itself is down the rule is saved unchecked; the evaluator keeps trying.
 Events: any logged-in user, newest first, paged with ``limit`` / ``before_id`` like ``/audit``.
+
+Rule edits and open events (P0-3a, maintainer-approved 2026-11-01): the edit, the events
+it closes and the audit entry commit in one transaction, and ``revision`` goes up. A new
+expression (ignoring whitespace) closes every open event (``rule_changed``); a new scope
+closes the events outside it (``rule_changed``); disabling closes all (``rule_disabled``);
+deleting is a soft delete that closes all (``rule_deleted``). Name, severity, ``for`` and
+channels keep them. No rule operation deletes an event row. When events were closed, one
+message per rule goes to its channels after the commit, best effort.
 """
 
+import logging
 import uuid
 from datetime import datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.alerts.evaluator import clean, close_events, event_message, normalize_expr
+from app.alerts.labels import stored_labels
 from app.alerts.templates import TEMPLATES, RuleTemplate
 from app.api.deps import AdminDep, AuthDep, DbDep
 from app.api.query import PrometheusDep
+from app.collectors.hub import EventHub
 from app.core import audit
-from app.models import AlertEvent, AlertRule, AlertState, Channel, Instance
+from app.core.db import utcnow
+from app.models import AlertEvent, AlertRule, AlertState, Channel, EndReason, Instance
 from app.query.proxy import MAX_QUERY_LENGTH, QueryError, QueryRequest
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -68,10 +83,18 @@ class RuleOut(BaseModel):
 
 class EventOut(BaseModel):
     id: int
-    rule_id: int
+    # None once the rule is deleted.
+    rule_id: int | None
+    instance_id: uuid.UUID | None
+    # Snapshots taken when the event opened.
+    rule_name: str
+    severity: str
+    labels: dict[str, str]
+    fingerprint: str
     state: AlertState
     started_at: datetime
     ended_at: datetime | None
+    end_reason: EndReason | None
     summary: str
 
 
@@ -88,13 +111,31 @@ def _out(rule: AlertRule) -> RuleOut:
     )
 
 
+def _event_out(event: AlertEvent, rule_gone: bool) -> EventOut:
+    return EventOut(
+        id=event.id,
+        rule_id=None if rule_gone else event.rule_id,
+        instance_id=event.instance_id,
+        rule_name=event.rule_name,
+        severity=event.severity,
+        # Already filtered when stored; filtered again so no raw sensitive value can leave.
+        labels=stored_labels({str(k): str(v) for k, v in (event.labels or {}).items()}),
+        fingerprint=event.fingerprint,
+        state=event.state,
+        started_at=event.started_at,
+        ended_at=event.ended_at,
+        end_reason=event.end_reason,
+        summary=event.summary,
+    )
+
+
 def _snapshot(rule: AlertRule) -> dict[str, object]:
     return _out(rule).model_dump(mode="json", exclude={"id"})
 
 
 def _get(db: Session, rule_id: int) -> AlertRule:
     rule = db.get(AlertRule, rule_id)
-    if rule is None:
+    if rule is None or rule.deleted_at is not None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "alert rule not found")
     return rule
 
@@ -120,9 +161,62 @@ async def _check_expr(prometheus: PrometheusDep, expr: str) -> None:
             raise _unprocessable(f"expr refused: {exc.message}") from None
 
 
+def _firing(db: Session, rule_id: int) -> list[AlertEvent]:
+    return list(
+        db.scalars(
+            select(AlertEvent).where(
+                AlertEvent.rule_id == rule_id, AlertEvent.state == AlertState.FIRING
+            )
+        )
+    )
+
+
+def _to_close(
+    db: Session, rule: AlertRule, before: dict[str, object]
+) -> tuple[EndReason, list[AlertEvent]] | None:
+    """Which open events an edit closes, and why (called after the edit is applied)."""
+    if before["enabled"] and not rule.enabled:
+        return EndReason.RULE_DISABLED, _firing(db, rule.id)
+    if normalize_expr(str(before["expr"])) != normalize_expr(rule.expr):
+        return EndReason.RULE_CHANGED, _firing(db, rule.id)
+    if before["instance_id"] != (str(rule.instance_id) if rule.instance_id else None):
+        if rule.instance_id is None:  # widened to every instance: all still in scope
+            return None
+        out = [e for e in _firing(db, rule.id) if e.instance_id != rule.instance_id]
+        return EndReason.RULE_CHANGED, out
+    return None
+
+
+_CLOSED_TEXT = {
+    EndReason.RULE_CHANGED: "Rule changed: {n} open {alerts} closed, re-checking",
+    EndReason.RULE_DISABLED: "Rule disabled: {n} open {alerts} closed",
+    EndReason.RULE_DELETED: "Rule deleted: {n} open {alerts} closed",
+}
+
+
+async def _after_close(
+    request: Request, rule: AlertRule, reason: EndReason, closed: list[AlertEvent]
+) -> None:
+    """After the commit: live pushes, then one best-effort message for the rule."""
+    if not closed:
+        return
+    hub: EventHub = request.app.state.event_hub
+    for event in closed:
+        hub.publish(event_message(event))
+    n = len(closed)
+    text = _CLOSED_TEXT[reason].format(n=n, alerts="alert" if n == 1 else "alerts")
+    try:
+        await request.app.state.notifier.send(
+            list(rule.channel_ids), f"{clean(rule.name, 80)}: {text}"
+        )
+    except Exception as exc:  # the edit is committed; a broken channel can't undo it
+        log.warning("rule change notification failed (%s)", type(exc).__name__)
+
+
 @router.get("/alerts/rules")
 def list_rules(_auth: AdminDep, db: DbDep) -> list[RuleOut]:
-    return [_out(r) for r in db.scalars(select(AlertRule).order_by(AlertRule.id))]
+    stmt = select(AlertRule).where(AlertRule.deleted_at.is_(None)).order_by(AlertRule.id)
+    return [_out(r) for r in db.scalars(stmt)]
 
 
 @router.get("/alerts/rules/{rule_id}")
@@ -154,7 +248,12 @@ async def create_rule(
 
 @router.patch("/alerts/rules/{rule_id}")
 async def update_rule(
-    rule_id: int, body: RulePatch, auth: AdminDep, db: DbDep, prometheus: PrometheusDep
+    rule_id: int,
+    body: RulePatch,
+    auth: AdminDep,
+    db: DbDep,
+    prometheus: PrometheusDep,
+    request: Request,
 ) -> RuleOut:
     rule = _get(db, rule_id)
     before = _snapshot(rule)
@@ -170,7 +269,12 @@ async def update_rule(
         setattr(rule, key, value)
     db.flush()
     changes = audit.diff(before, _snapshot(rule))
+    closing = _to_close(db, rule, before) if changes else None
+    closed: list[AlertEvent] = []
     if changes:
+        rule.revision += 1
+        if closing is not None:
+            closed = close_events(db, closing[1], closing[0], utcnow())
         audit.record(
             db,
             actor_type=audit.ActorType.USER,
@@ -181,12 +285,19 @@ async def update_rule(
             changes=changes,
         )
     db.commit()
+    if closing is not None:
+        await _after_close(request, rule, closing[0], closed)
     return _out(rule)
 
 
 @router.delete("/alerts/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_rule(rule_id: int, auth: AdminDep, db: DbDep) -> Response:
+async def delete_rule(rule_id: int, auth: AdminDep, db: DbDep, request: Request) -> Response:
+    """Soft delete: the rule disappears from the API and the evaluator, its events stay."""
     rule = _get(db, rule_id)
+    now = utcnow()
+    rule.deleted_at = now
+    rule.revision += 1
+    closed = close_events(db, _firing(db, rule.id), EndReason.RULE_DELETED, now)
     audit.record(
         db,
         actor_type=audit.ActorType.USER,
@@ -196,8 +307,8 @@ def delete_rule(rule_id: int, auth: AdminDep, db: DbDep) -> Response:
         user_id=auth.user.id,
         changes={"name": rule.name},
     )
-    db.delete(rule)  # its events go with it (ON DELETE CASCADE)
     db.commit()
+    await _after_close(request, rule, EndReason.RULE_DELETED, closed)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -210,22 +321,45 @@ def list_events(
     state: AlertState | None = None,
 ) -> list[EventOut]:
     """Newest first. Page backwards by passing the last ``id`` seen as ``before_id``."""
-    stmt = select(AlertEvent).order_by(AlertEvent.id.desc()).limit(limit)
+    stmt = (
+        select(AlertEvent, AlertRule.deleted_at, AlertRule.id)
+        .outerjoin(AlertRule, AlertRule.id == AlertEvent.rule_id)
+        .order_by(AlertEvent.id.desc())
+        .limit(limit)
+    )
     if before_id is not None:
         stmt = stmt.where(AlertEvent.id < before_id)
     if state is not None:
         stmt = stmt.where(AlertEvent.state == state)
     return [
-        EventOut(
-            id=e.id,
-            rule_id=e.rule_id,
-            state=e.state,
-            started_at=e.started_at,
-            ended_at=e.ended_at,
-            summary=e.summary,
-        )
-        for e in db.scalars(stmt)
+        _event_out(e, rule_id is None or deleted_at is not None)
+        for e, deleted_at, rule_id in db.execute(stmt)
     ]
+
+
+@router.post("/alerts/events/{event_id}/close")
+def close_event(event_id: int, auth: AdminDep, db: DbDep, request: Request) -> EventOut:
+    """Close an open event by hand (``end_reason = closed_by_user``). If the series is
+    still in the rule's result, the evaluator counts ``for`` again from now."""
+    event = db.get(AlertEvent, event_id)
+    if event is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "alert event not found")
+    if not close_events(db, [event], EndReason.CLOSED_BY_USER, utcnow()):
+        raise HTTPException(status.HTTP_409_CONFLICT, "alert event is already closed")
+    audit.record(
+        db,
+        actor_type=audit.ActorType.USER,
+        action=audit.Action.UPDATE,
+        target_type="alert_event",
+        target_id=event.id,
+        user_id=auth.user.id,
+        changes={"state": "resolved", "end_reason": EndReason.CLOSED_BY_USER.value},
+    )
+    db.commit()
+    hub: EventHub = request.app.state.event_hub
+    hub.publish(event_message(event))
+    rule = db.get(AlertRule, event.rule_id) if event.rule_id is not None else None
+    return _event_out(event, rule is None or rule.deleted_at is not None)
 
 
 @router.get("/alerts/templates")

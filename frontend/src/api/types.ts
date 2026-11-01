@@ -63,13 +63,26 @@ export interface AuditEntry {
 
 export type AlertState = "firing" | "resolved";
 
-/** `GET /alerts/events`, newest first. */
+export type AlertEndReason =
+  "recovered" | "rule_disabled" | "rule_deleted" | "rule_changed" | "closed_by_user";
+
+/** `GET /alerts/events`, newest first. One event per (rule, series) episode. */
 export interface AlertEvent {
   id: number;
-  rule_id: number;
+  /** null once the rule is deleted. */
+  rule_id: number | null;
+  /** The device, when the series named an existing instance. */
+  instance_id: string | null;
+  /** Snapshots taken when the event opened. */
+  rule_name: string;
+  severity: string;
+  /** Filtered by the backend: sensitive values are "<redacted>". */
+  labels: Record<string, string>;
+  fingerprint: string;
   state: AlertState;
   started_at: string;
   ended_at: string | null;
+  end_reason: AlertEndReason | null;
   summary: string;
 }
 
@@ -263,7 +276,9 @@ export type LiveMessage =
   | {
       type: "alert_event";
       event_id: number;
-      rule_id: number;
+      rule_id: number | null;
+      instance_id: string | null;
+      fingerprint: string;
       severity: string;
       state: AlertState;
       started_at: string;

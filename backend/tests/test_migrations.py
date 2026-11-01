@@ -9,8 +9,10 @@ from sqlalchemy import Engine, inspect, text
 from sqlalchemy.exc import IntegrityError
 
 import app.models  # noqa: F401
+from app.api.deps import CSRF_HEADER
 from app.core.db import Base, make_engine
 from tests.conftest import alembic_config
+from tests.test_auth import do_setup, make_client
 
 EXPECTED_TABLES = {
     "users",
@@ -158,5 +160,50 @@ def test_0005_rewrites_only_untouched_ping_rules(db_url: str) -> None:
             "for_seconds": {"old": 180, "new": 300},
         }
         assert changes[1] == {"expr": {"old": old, "new": new}}
+    finally:
+        eng.dispose()
+
+
+def test_0006_keeps_legacy_events_readable(db_url: str) -> None:
+    """Existing events become fingerprint "legacy" with their rule's name and severity, and
+    still list through the API; a second open event per rule is resolved for the index."""
+    cfg = alembic_config(db_url)
+    command.upgrade(cfg, "0005")
+    eng = make_engine(db_url)
+    try:
+        with eng.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO alert_rules "
+                    "(id, name, expr, for_seconds, severity, channel_ids, enabled) "
+                    "VALUES (1, 'Gateway', 'up == 0', 0, 'critical', '[]', true)"
+                )
+            )
+            for event_id, state in ((1, "resolved"), (2, "firing"), (3, "firing")):
+                conn.execute(
+                    text(
+                        "INSERT INTO alert_events (id, rule_id, state, started_at, summary) "
+                        "VALUES (:id, 1, :state, :at, 'old')"
+                    ),
+                    {"id": event_id, "state": state, "at": STAMP},
+                )
+        command.upgrade(cfg, "head")
+        with make_client(db_url) as client:
+            client.headers[CSRF_HEADER] = do_setup(client)["csrf_token"]
+            events = client.get("/api/v1/alerts/events").json()
+        assert [(e["id"], e["state"], e["fingerprint"]) for e in events] == [
+            (3, "firing", "legacy"),
+            (2, "resolved", "legacy"),
+            (1, "resolved", "legacy"),
+        ]
+        assert {(e["rule_id"], e["rule_name"], e["severity"]) for e in events} == {
+            (1, "Gateway", "critical")
+        }
+        assert events[1]["end_reason"] == "rule_changed" and events[2]["end_reason"] is None
+
+        # Downgrade keeps the events that still have their rule.
+        command.downgrade(cfg, "0005")
+        with eng.connect() as conn:
+            assert conn.execute(text("SELECT count(*) FROM alert_events")).scalar() == 3
     finally:
         eng.dispose()
