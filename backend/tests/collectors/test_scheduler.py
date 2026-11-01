@@ -59,7 +59,14 @@ class Poller(FakeIntegration):
         return 0  # clamped up to the scheduler's minimum
 
 
-class Raiser(FakeIntegration):
+class Fast(FakeIntegration):
+    """Polled at the scheduler's (tiny) minimum interval: too short for a retry."""
+
+    def poll_interval_seconds(self) -> int:
+        return 0
+
+
+class Raiser(Fast):
     type_id = "raiser"
 
     async def poll(self, ctx: InstanceContext) -> list[Sample]:
@@ -78,7 +85,7 @@ class Hanger(FakeIntegration):
         return 0  # the poll is cut off after min(interval, 60 s)
 
 
-class HttpTimeout(FakeIntegration):
+class HttpTimeout(Fast):
     type_id = "http_timeout"
 
     async def poll(self, ctx: InstanceContext) -> list[Sample]:
@@ -86,7 +93,7 @@ class HttpTimeout(FakeIntegration):
         raise httpx.ReadTimeout(f"timed out at https://10.0.0.10/?token={token}")
 
 
-class Guarded(FakeIntegration):
+class Guarded(Fast):
     type_id = "guarded"
 
     async def poll(self, ctx: InstanceContext) -> list[Sample]:
@@ -94,7 +101,7 @@ class Guarded(FakeIntegration):
         return []
 
 
-class PingFails(FakeIntegration):
+class PingFails(Fast):
     type_id = "ping_fails"
 
     async def poll(self, ctx: InstanceContext) -> list[Sample]:
@@ -106,7 +113,7 @@ class Unanswered(PollFailure):
     pass
 
 
-class PollFails(FakeIntegration):
+class PollFails(Fast):
     """Raises a PollFailure: its message, written to be shown, becomes the status."""
 
     type_id = "poll_fails"
@@ -142,7 +149,7 @@ BRANCHES: dict[str, Any] = {
 }
 
 
-class Blabber(FakeIntegration):
+class Blabber(Fast):
     """Fails in the branch named by the instance; garbage returns its config as text."""
 
     type_id = "blabber"
@@ -153,14 +160,14 @@ class Blabber(FakeIntegration):
         raise BRANCHES[ctx.name]
 
 
-class Garbage(FakeIntegration):
+class Garbage(Fast):
     type_id = "garbage"
 
     async def poll(self, ctx: InstanceContext) -> list[Sample]:
         return "not a list"  # type: ignore[return-value]
 
 
-class Leaky(FakeIntegration):
+class Leaky(Fast):
     """Buggy: puts its secret in a label value."""
 
     type_id = "leaky"
@@ -222,7 +229,9 @@ def box() -> SecretBox:
 
 @pytest.fixture
 def store() -> MetricsStore:
-    return MetricsStore()
+    # One failed cycle is enough here: these tests are about error texts and isolation
+    # (cycle counting is in test_poll_cycles.py).
+    return MetricsStore(down_after_failed_cycles=1)
 
 
 @pytest.fixture

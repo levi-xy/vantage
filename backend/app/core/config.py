@@ -5,6 +5,7 @@ loaded by the services that use them (M1.2, M2.3).
 """
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import lru_cache
@@ -15,6 +16,12 @@ from app.core.client_address import IPNetwork, TrustedProxiesError, parse_truste
 DEFAULT_DATABASE_URL = "sqlite:///./vantage.db"
 # The bundled Prometheus on the compose network (deploy/docker-compose.yml).
 DEFAULT_PROMETHEUS_URL = "http://prometheus:9090"
+# Matches compose's default for Prometheus' --storage.tsdb.retention.time.
+DEFAULT_PROMETHEUS_RETENTION = "30d"
+# An instance goes down after this many failed poll cycles in a row.
+DEFAULT_DOWN_AFTER_FAILED_CYCLES = 3
+# A Prometheus duration, e.g. 30d, 720h or 1y2w.
+_DURATION = re.compile(r"(?:[0-9]+(?:ms|s|m|h|d|w|y))+")
 
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off", ""}
@@ -41,6 +48,11 @@ class Settings:
     # Where the /query proxy reaches Prometheus (VANTAGE_PROMETHEUS_URL). Server config only:
     # no request can change it.
     prometheus_url: str = DEFAULT_PROMETHEUS_URL
+    # How far back Prometheus keeps history (VANTAGE_PROMETHEUS_RETENTION, the same variable
+    # compose passes to Prometheus). Used once at startup to seed last_success_at.
+    prometheus_retention: str = DEFAULT_PROMETHEUS_RETENTION
+    # Failed poll cycles in a row before an instance is down (VANTAGE_DOWN_AFTER_FAILED_CYCLES).
+    down_after_failed_cycles: int = DEFAULT_DOWN_AFTER_FAILED_CYCLES
 
 
 def _parse_bool(name: str, raw: str) -> bool:
@@ -102,6 +114,13 @@ def _validate_prometheus_url(raw: str) -> str:
     return url
 
 
+def _validate_retention(raw: str) -> str:
+    value = raw.strip() or DEFAULT_PROMETHEUS_RETENTION
+    if not _DURATION.fullmatch(value):
+        raise ConfigError("VANTAGE_PROMETHEUS_RETENTION must be a Prometheus duration like 30d")
+    return value
+
+
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     env = os.environ if env is None else env
     database_url = _validate_database_url(
@@ -122,6 +141,14 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     except TrustedProxiesError as exc:
         raise ConfigError(str(exc)) from None
     prometheus_url = _validate_prometheus_url(env.get("VANTAGE_PROMETHEUS_URL", ""))
+    prometheus_retention = _validate_retention(env.get("VANTAGE_PROMETHEUS_RETENTION", ""))
+    down_after_failed_cycles = _parse_int(
+        "VANTAGE_DOWN_AFTER_FAILED_CYCLES",
+        env.get("VANTAGE_DOWN_AFTER_FAILED_CYCLES", ""),
+        DEFAULT_DOWN_AFTER_FAILED_CYCLES,
+        1,
+        10,
+    )
     return Settings(
         database_url=database_url,
         api_docs=api_docs,
@@ -130,6 +157,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         session_idle_minutes=session_idle_minutes,
         trusted_proxies=trusted_proxies,
         prometheus_url=prometheus_url,
+        prometheus_retention=prometheus_retention,
+        down_after_failed_cycles=down_after_failed_cycles,
     )
 
 

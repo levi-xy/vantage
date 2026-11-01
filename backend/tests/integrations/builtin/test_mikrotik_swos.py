@@ -454,7 +454,7 @@ async def collect(engine: Engine, config: dict[str, Any]) -> tuple[MetricsStore,
         config=stored,
         secrets=ic.encrypt(box, instance_id, secrets),
     )
-    store = MetricsStore()
+    store = MetricsStore(down_after_failed_cycles=1)  # one cycle: these test the error text
     scheduler = PollScheduler(
         session_factory=make_session_factory(engine),
         registry=Registry([MikroTikSwOS]),
@@ -463,7 +463,7 @@ async def collect(engine: Engine, config: dict[str, Any]) -> tuple[MetricsStore,
         store=store,
     )
     store.track(spec.instance_id, spec.labels)
-    await scheduler.poll_once(spec, MikroTikSwOS())
+    await scheduler.poll_once(spec, MikroTikSwOS(), next_start=0.0)  # no time left: no retry
     return store, spec
 
 

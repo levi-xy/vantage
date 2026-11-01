@@ -119,6 +119,10 @@ Open the address, create the admin account in the setup wizard, then add your fi
 
 Metric history: Prometheus keeps 30 days of history or 10 GB on disk, whichever limit is reached first. When the size cap is hit, Prometheus drops the oldest data first, so with many devices you may get less than 30 days. Change the limits with `VANTAGE_PROMETHEUS_RETENTION` (default `30d`) and `VANTAGE_PROMETHEUS_RETENTION_SIZE` (default `10GB`) in `.env`, then `docker compose up -d`.
 
+Device down detection: a polled device is marked down after 3 failed poll cycles in a row (one quick retry per cycle), so a single timeout doesn't flip it. At the default 60 s interval that takes about 2–4 minutes, at 5-minute intervals 10–16 minutes. Change it with `VANTAGE_DOWN_AFTER_FAILED_CYCLES` (1 to 10) in `.env`; the timing is in [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md#poll-cycles-the-retry-and-down).
+
+**Upgrade note (poll cycles):** the "instance down" alert templates for polled integrations now use `for` 0 s, because the collector already waits N cycles. Rules you created from the old templates keep `for` 180 s and are not changed automatically: edit them on the **Alerts** page and set `for` to 0, or they wait 3 more minutes on top.
+
 Backups: `docker compose exec -T backend python -m app.cli backup - > vantage-backup.json.gz` (restore with `app.cli restore`). The master key is not in the backup; keep its own copy. `app.cli rotate-master-key` re-encrypts every stored secret with a new key. See [docs/SECURITY.md](docs/SECURITY.md#backup-restore-and-master-key-rotation).
 
 ## Development

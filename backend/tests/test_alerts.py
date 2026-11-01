@@ -228,13 +228,18 @@ async def test_dead_ping_host_fires_instance_down(
     add_rule(db, name=tpl.name, expr=tpl.expr, for_seconds=tpl.for_seconds)
     rec, clock = Recorder(), Clock()
     ev, _ = make_eval(engine, prom, rec, clock)
-    # What the collector exports once poll() raises NoReply: vantage_instance_up 0.
+    # What the collector exports once poll() has raised NoReply for N cycles in a row:
+    # vantage_instance_up 0. The collector already waited, so the template fires at once.
+    assert tpl.for_seconds == 0
     prom.vector = [{"vantage_instance": "nas-ping", "vantage_integration": "ping_check"}]
     await ev.tick()
-    assert rec.sent == []
-    clock.now += timedelta(seconds=tpl.for_seconds + 1)
-    await ev.tick()
     assert [text for _, text in rec.sent] == [f"FIRING: {tpl.name} (critical): nas-ping"]
+
+
+def test_down_templates_wait_only_for_scrape_only_integrations() -> None:
+    down = {t.id: t.for_seconds for t in TEMPLATES if t.id.startswith("instance-down-")}
+    assert down["instance-down-snmp_device"] == 0  # vantage_instance_up: N cycles already
+    assert down["instance-down-pfsense"] == 180  # Prometheus' up flips on one failed scrape
 
 
 async def test_blip_shorter_than_for_does_not_fire(

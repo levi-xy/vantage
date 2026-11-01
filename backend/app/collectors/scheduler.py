@@ -5,8 +5,15 @@ list every ``refresh_seconds`` and starts, restarts (after an edit) or stops tas
 Only integrations that override ``Integration.poll`` are polled; scrape-only ones are
 Prometheus' job (service discovery, M2.3).
 
-Isolation: a poll that raises, hangs or returns garbage marks only its own instance
-``down``; every other task keeps running. Error descriptions stored in the status and
+Poll cycles (P0-7): every interval starts one cycle on a fixed schedule. A cycle makes
+one attempt (one ``poll()`` call, cut off after ``min(interval, 60 s)``) and, after a
+fast failure, at most one retry 10 s later, cut off 1 s before the next cycle. There is
+no retry after a whole-attempt timeout, a ``net_guard`` refusal or an unreadable stored
+config, nor when less than 20 s remain before the next cycle. The store counts failed
+cycles: the instance goes ``down`` only after N of them in a row.
+
+Isolation: a poll that raises, hangs or returns garbage affects only its own instance;
+every other task keeps running. Error descriptions stored in the status and
 written to the log never include exception messages, which can carry URLs, headers or
 response bodies (and so secrets). Only the exception type, the SSRF guard's or ping
 client's own message (host and reason), or the message of a ``PollFailure`` (written by
@@ -15,9 +22,8 @@ the integration to be shown) is kept, and decrypted secret values are scrubbed f
 
 import asyncio
 import logging
-import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -45,6 +51,12 @@ MIN_POLL_INTERVAL_SECONDS = 10.0
 MAX_POLL_INTERVAL_SECONDS = 86_400.0
 # A single poll is cut off after min(interval, this).
 MAX_POLL_TIMEOUT_SECONDS = 60.0
+# A fast failure is retried once, this long after it, within the same cycle...
+RETRY_DELAY_SECONDS = 10.0
+# ...only when at least this long is left before the next cycle starts...
+RETRY_MIN_REMAINING_SECONDS = 20.0
+# ...and the retry is cut off this long before the next cycle starts.
+RETRY_CUTOFF_SECONDS = 1.0
 # How often the instance list is re-read to pick up added, edited or removed instances.
 REFRESH_SECONDS = 30.0
 
@@ -65,13 +77,13 @@ def instance_context(
         secrets = ic.decrypt(box, spec.instance_id, spec.secrets)
     except DecryptionError:
         raise _PollError(
-            "stored secrets can't be decrypted (was the master key changed?)"
+            "stored secrets can't be decrypted (was the master key changed?)", retry=False
         ) from None
     try:
         config: BaseModel = cls.config_schema.model_validate({**spec.config, **secrets})
     except ValidationError:
         # The error would echo the input, secrets included: say only that it's invalid.
-        raise _PollError("stored config is not valid for this integration") from None
+        raise _PollError("stored config is not valid for this integration", retry=False) from None
     try:
         guard = guards(cls)
     except Exception as exc:
@@ -126,9 +138,21 @@ class _PollError(Exception):
     cut first could leave a fragment of a secret that the scrub no longer matches.
     """
 
-    def __init__(self, text: str, *, limit: int | None = None) -> None:
+    def __init__(self, text: str, *, limit: int | None = None, retry: bool = True) -> None:
         super().__init__(text)
         self.limit = limit
+        self.retry = retry
+
+
+@dataclass(frozen=True)
+class _Attempt:
+    """The outcome of one ``poll()`` call: samples, or a safe error text."""
+
+    duration: float
+    samples: list[Sample] | None = None
+    secrets: dict[str, str] = field(default_factory=dict, repr=False)
+    error: str | None = None
+    retry: bool = False
 
 
 @dataclass
@@ -149,6 +173,9 @@ class PollScheduler:
         hub: EventHub | None = None,
         refresh_seconds: float = REFRESH_SECONDS,
         min_interval_seconds: float = MIN_POLL_INTERVAL_SECONDS,
+        max_poll_timeout_seconds: float = MAX_POLL_TIMEOUT_SECONDS,
+        clock: Callable[[], float] | None = None,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._session_factory = session_factory
         self._registry = registry
@@ -158,6 +185,10 @@ class PollScheduler:
         self._hub = hub
         self._refresh = refresh_seconds
         self._min_interval = min_interval_seconds
+        self._max_timeout = max_poll_timeout_seconds
+        # Tests pass a fake clock and sleep; production uses the event loop's clock.
+        self._clock = clock or (lambda: asyncio.get_running_loop().time())
+        self._sleep = sleep
         self._jobs: dict[uuid.UUID, _Job] = {}
         self._supervisor: asyncio.Task[None] | None = None
 
@@ -254,48 +285,61 @@ class PollScheduler:
             return
         integration = cls()
         interval = self.interval_for(integration)
-        loop = asyncio.get_running_loop()
+        # Fixed schedule: cycles start on planned slots one interval apart, so neither a
+        # retry (it ends before the next slot) nor a late wake-up of the event loop shifts
+        # them. A cycle that ran past its slot is followed by the next one right away.
+        next_start = self._clock()
         while True:
-            started = loop.time()
+            next_start = max(next_start + interval, self._clock())
             try:
-                await self.poll_once(spec, integration, interval=interval)
+                await self.poll_once(spec, integration, interval=interval, next_start=next_start)
             except Exception as exc:  # poll_once doesn't raise; keep the loop alive anyway
                 log.error("poll task of instance %s: %s", spec.instance_id, type(exc).__name__)
-            await asyncio.sleep(max(0.0, interval - (loop.time() - started)))
+            await self._sleep(max(0.0, next_start - self._clock()))
 
     async def poll_once(
-        self, spec: PollSpec, integration: Integration, *, interval: float | None = None
+        self,
+        spec: PollSpec,
+        integration: Integration,
+        *,
+        interval: float | None = None,
+        next_start: float | None = None,
     ) -> None:
-        """Run one poll and record the result. Never raises (except on cancellation)."""
+        """Run one poll cycle (an attempt, maybe a retry) and record its result.
+
+        ``next_start`` is when the next cycle starts (clock time); by default one interval
+        from now. Never raises (except on cancellation).
+        """
         interval = self.interval_for(integration) if interval is None else interval
-        timeout = min(interval, MAX_POLL_TIMEOUT_SECONDS)
-        secrets: dict[str, str] = {}
-        started = time.monotonic()
-        try:
-            secrets, ctx = self._context(type(integration), spec)
-            samples = await self._poll(integration, ctx, timeout)
-        except _PollError as exc:
-            text = _scrub(str(exc), secrets)  # scrub first, then cap
-            if exc.limit is not None:
-                text = text[: exc.limit]
-            self._failed(spec, text, time.monotonic() - started)
+        next_start = self._clock() + interval if next_start is None else next_start
+        timeout = min(interval, self._max_timeout)
+        attempt = await self._attempt(spec, integration, timeout)
+        if (
+            attempt.error is not None
+            and attempt.retry
+            and next_start - self._clock() >= RETRY_MIN_REMAINING_SECONDS
+        ):
+            await self._sleep(RETRY_DELAY_SECONDS)
+            limit = min(timeout, next_start - RETRY_CUTOFF_SECONDS - self._clock())
+            if limit > 0:
+                attempt = await self._attempt(spec, integration, limit)
+        if attempt.error is not None or attempt.samples is None:
+            self._failed(spec, attempt.error or "poll failed", attempt.duration)
             return
-        except Exception as exc:  # last line of defence: never let one poll kill its task
-            self._failed(spec, f"poll failed ({type(exc).__name__})", time.monotonic() - started)
-            return
-        duration = time.monotonic() - started
         was = self._store.status(spec.instance_id)
         try:
             dropped = self._store.record_success(
                 spec.instance_id,
                 spec.type_id,
-                samples,
+                attempt.samples,
                 at=utcnow(),
-                duration_seconds=duration,
-                forbidden=secrets.values(),
+                duration_seconds=attempt.duration,
+                forbidden=attempt.secrets.values(),
             )
         except Exception as exc:  # e.g. a sample the checks didn't anticipate
-            self._failed(spec, f"storing poll results failed ({type(exc).__name__})", duration)
+            self._failed(
+                spec, f"storing poll results failed ({type(exc).__name__})", attempt.duration
+            )
             return
         if dropped:
             log.warning(
@@ -308,13 +352,43 @@ class PollScheduler:
             log.info("instance %s (%s) is up again", spec.instance_id, spec.type_id)
         self._publish(spec, was, refresh=True)
 
+    async def _attempt(
+        self, spec: PollSpec, integration: Integration, limit_seconds: float
+    ) -> _Attempt:
+        """One ``poll()`` call. Never raises (except on cancellation)."""
+        secrets: dict[str, str] = {}
+        started = self._clock()
+        try:
+            secrets, ctx = self._context(type(integration), spec)
+            samples = await self._poll(integration, ctx, limit_seconds)
+        except _PollError as exc:
+            text = _scrub(str(exc), secrets)  # scrub first, then cap
+            if exc.limit is not None:
+                text = text[: exc.limit]
+            return _Attempt(duration=self._clock() - started, error=text, retry=exc.retry)
+        except Exception as exc:  # last line of defence: never let one poll kill its task
+            return _Attempt(
+                duration=self._clock() - started,
+                error=f"poll failed ({type(exc).__name__})",
+                retry=True,
+            )
+        return _Attempt(duration=self._clock() - started, samples=samples, secrets=secrets)
+
     def _failed(self, spec: PollSpec, error: str, duration: float) -> None:
+        """Record a failed cycle (the store decides when that makes the instance down)."""
         was = self._store.status(spec.instance_id)
         self._store.record_failure(spec.instance_id, error, at=utcnow(), duration_seconds=duration)
+        now = self._store.status(spec.instance_id)
         if was is None or was.state != "down" or was.error != error:
             log.warning(
-                "poll of instance %s (%s) failed: %s", spec.instance_id, spec.type_id, error
+                "poll of instance %s (%s) failed (%d cycle(s) in a row): %s",
+                spec.instance_id,
+                spec.type_id,
+                self._store.failed_cycles(spec.instance_id),
+                error,
             )
+        if now is not None and now.state == "down" and (was is None or was.state != "down"):
+            log.warning("instance %s (%s) is down", spec.instance_id, spec.type_id)
         self._publish(spec, was, refresh=False)
 
     def _publish(self, spec: PollSpec, was: InstanceStatus | None, *, refresh: bool) -> None:
@@ -336,13 +410,16 @@ class PollScheduler:
     async def _poll(
         integration: Integration, ctx: InstanceContext, limit_seconds: float
     ) -> list[Sample]:
+        deadline = asyncio.timeout(limit_seconds)
         try:
-            async with asyncio.timeout(limit_seconds):
+            async with deadline:
                 result = await integration.poll(ctx)
         except (TimeoutError, httpx.TimeoutException):
-            raise _PollError("poll timed out") from None
+            # A whole-attempt timeout (the device hung) isn't retried; a timeout inside
+            # the poll (one request got no reply) is.
+            raise _PollError("poll timed out", retry=not deadline.expired()) from None
         except NetGuardError as exc:  # names the host and the reason, nothing secret
-            raise _PollError(f"refused by the network guard: {exc}") from None
+            raise _PollError(f"refused by the network guard: {exc}", retry=False) from None
         except PingError as exc:  # fixed text plus, at most, the checked address
             raise _PollError(f"ping failed: {exc}") from None
         except PollFailure as exc:  # a message the integration wrote to be shown

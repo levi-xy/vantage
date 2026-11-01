@@ -45,7 +45,10 @@ def _down(type_id: str, scrape_only: bool) -> RuleTemplate:
         description="The instance has not answered for a few minutes.",
         integration_types=[type_id],
         expr=f'{metric}{{vantage_integration="{type_id}"}} == 0',
-        for_seconds=180,
+        # vantage_instance_up only turns 0 after N failed poll cycles in a row
+        # (VANTAGE_DOWN_AFTER_FAILED_CYCLES): the collector has already waited. Prometheus'
+        # own up flips on one failed scrape, so the scrape-only templates still wait 180 s.
+        for_seconds=180 if scrape_only else 0,
         severity="critical",
     )
 
