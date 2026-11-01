@@ -117,6 +117,8 @@ To regenerate the self-signed pair (for example after changing `VANTAGE_TLS_NAME
 
 Open the address, create the admin account in the setup wizard, then add your first device.
 
+Backups: `docker compose exec -T backend python -m app.cli backup - > vantage-backup.json.gz` (restore with `app.cli restore`). The master key is not in the backup; keep its own copy. `app.cli rotate-master-key` re-encrypts every stored secret with a new key. See [docs/SECURITY.md](docs/SECURITY.md#backup-restore-and-master-key-rotation).
+
 ## Development
 
 Works the same on macOS, Linux and Windows. You need Python 3.12+ and Node 22.12+.

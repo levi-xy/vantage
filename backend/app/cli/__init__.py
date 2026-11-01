@@ -1,4 +1,4 @@
-"""Admin CLI (M1.6): user recovery on the server, without logging in.
+"""Admin CLI (M1.6): user recovery, backups (M8.2), on the server, without logging in.
 
 Run it where the backend runs::
 
@@ -6,6 +6,11 @@ Run it where the backend runs::
     docker compose exec backend python -m app.cli create-user <username> --role admin
     docker compose exec backend python -m app.cli list-users
     docker compose exec backend python -m app.cli unlock <username>
+    docker compose exec -T backend python -m app.cli backup - > vantage-backup.json.gz
+    docker compose exec -T backend python -m app.cli restore - < vantage-backup.json.gz
+    docker compose stop backend
+    docker compose run --rm -T backend python -m app.cli rotate-master-key \
+        --new-key-file - < secrets/master.key.new
 
 Shell access to the host is the trust boundary, so no login is needed.
 
@@ -13,12 +18,10 @@ What it loads, and what it doesn't:
 
 * The app's own settings (``load_settings``), database engine and session factory,
   Argon2 hasher (``Passwords``, the same parameters as login) and audit writer.
-* **Not the master key.** The CLI only touches ``users``, ``sessions``,
-  ``login_failures``, ``settings`` (the setup marker) and ``audit_log``, none of which
-  hold encrypted data, so it has nothing to encrypt or decrypt. The master key check
-  exists so the app never stores secrets without encryption; the CLI stores no
-  secrets, so it skips nothing by not loading it. Not needing the key also means a
-  broken key file doesn't block recovery.
+* The master key only for ``restore`` (to check the restored secrets decrypt) and
+  ``rotate-master-key`` (which needs the running key by definition). The user commands
+  and ``backup`` never load it (a backup copies the encrypted blobs as they are), so a
+  broken key file doesn't block recovery. No key is ever printed, logged or audited.
 * Not the web app, the poll scheduler or the collector: ``app.main`` is never imported.
 * It never creates or migrates a database. A SQLite file that doesn't exist, or a
   database without the tables, is an error (the backend applies migrations on start).
@@ -31,6 +34,7 @@ Error messages never repeat what was typed, since a mistyped command may hold a 
 
 import argparse
 import getpass as getpass_module
+import os
 import secrets
 import sys
 from collections.abc import Callable, Sequence
@@ -45,9 +49,11 @@ from sqlalchemy.exc import ArgumentError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.auth import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, USERNAME_PATTERN
+from app.cli import backup_restore as backups
 from app.core import audit, users
 from app.core.auth import Passwords
 from app.core.config import ConfigError, Settings, load_settings
+from app.core.crypto import MasterKeyError, SecretBox, decode_key, load_master_key, read_key_file
 from app.core.db import make_engine, make_session_factory
 from app.core.login_failures import UserLoginFailures
 from app.models import Role, User
@@ -116,6 +122,15 @@ class Console:
     stdout: IO[str] = field(default_factory=lambda: sys.stdout)
     stderr: IO[str] = field(default_factory=lambda: sys.stderr)
     getpass: Callable[[str], str] = getpass_module.getpass
+    # Binary stdin/stdout, for backup files given as "-". None = the process's own.
+    binary_stdin: IO[bytes] | None = None
+    binary_stdout: IO[bytes] | None = None
+
+    def bytes_in(self) -> IO[bytes]:
+        return self.binary_stdin if self.binary_stdin is not None else sys.stdin.buffer
+
+    def bytes_out(self) -> IO[bytes]:
+        return self.binary_stdout if self.binary_stdout is not None else sys.stdout.buffer
 
     def out(self, line: str) -> None:
         print(line, file=self.stdout)
@@ -206,8 +221,11 @@ def _open_engine(settings: Settings) -> Engine:
 @dataclass
 class Context:
     console: Console
+    engine: Engine
     session_factory: sessionmaker[Session]
     passwords: Passwords
+    # The running master key; loaded only by the commands that need it.
+    master_key: Callable[[], bytes]
 
 
 def _find_user(db: Session, username: str) -> User | None:
@@ -357,6 +375,132 @@ def list_users(ctx: Context) -> None:
         )
 
 
+# --- backup, restore, master-key rotation (M8.2) -------------------------------------
+
+RESTART_HINT = "Restart the backend so it picks this up: docker compose restart backend"
+# Base64 of 32 bytes is 44 characters; a little room for a newline and whitespace.
+_MAX_KEY_INPUT = 256
+
+
+def backup(ctx: Context, target: str) -> None:
+    if target == "-":
+        out = ctx.console.bytes_out()
+        if out.isatty():
+            raise CliError(
+                "won't write a backup to a terminal: redirect it to a file "
+                "(docker compose exec -T backend python -m app.cli backup - > file.json.gz)"
+            )
+        summary = backups.write_backup(ctx.engine, out)
+        out.flush()
+        say = ctx.console.err  # stdout is the backup itself
+        where = "standard output"
+    else:
+        path = Path(target)
+        try:
+            if not path.parent.exists():
+                path.parent.mkdir(mode=0o700)
+            # O_EXCL: never overwrite an existing file. 0600: the file holds password
+            # hashes and encrypted credentials.
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            raise CliError("the backup file already exists; choose a new name") from None
+        except OSError:
+            raise CliError(
+                "can't create the backup file there (inside the container, write under "
+                "/data/backups/)"
+            ) from None
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                summary = backups.write_backup(ctx.engine, handle)
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
+        say = ctx.console.out
+        where = str(path)
+    say(f"Backup written to {where}: {summary.rows} row(s), schema revision {summary.revision}.")
+    say(
+        "It contains password hashes and encrypted credentials: store it somewhere only "
+        "admins can read."
+    )
+    say(backups.KEY_REMINDER)
+
+
+def restore(ctx: Context, source: str, overwrite: bool) -> bool:
+    """Returns False when the data was restored but its secrets don't open with the key."""
+    box = SecretBox(ctx.master_key())
+    try:
+        if source == "-":
+            parsed = backups.read_backup(ctx.console.bytes_in())
+        else:
+            with open(source, "rb") as handle:
+                parsed = backups.read_backup(handle)
+    except OSError:
+        raise CliError("can't read the backup file; nothing was changed") from None
+    result = backups.restore(ctx.engine, parsed, box, overwrite=overwrite)
+    ctx.console.out(
+        f"Restored {result.rows} row(s) from a backup at schema revision {parsed.revision}. "
+        f"Login sessions are not restored ({result.sessions_skipped} skipped): everyone "
+        "logs in again."
+    )
+    ctx.console.out(RESTART_HINT)
+    if result.secrets_undecryptable:
+        ctx.console.err(
+            f"warning: {result.secrets_undecryptable} of {result.secrets_total} stored "
+            "secret(s) can't be decrypted with this server's master key: the backup was "
+            "made with a different key. The data is restored; put the matching key in "
+            "deploy/secrets/master.key and recreate the backend "
+            "(docker compose up -d --force-recreate backend)."
+        )
+        return False
+    ctx.console.out(
+        f"All {result.secrets_total} stored secret(s) decrypt with this server's master key."
+    )
+    return True
+
+
+def _read_new_key(console: Console, source: str) -> bytes:
+    label = "the new key"
+    if source != "-":
+        return read_key_file(Path(source), "the new key file", label)
+    stream = console.bytes_in()
+    if stream.isatty():
+        raise CliError(
+            "--new-key-file - needs piped input, not a terminal (it would echo the key): "
+            "docker compose exec -T backend ... < secrets/master.key.new"
+        )
+    try:
+        raw = stream.read(_MAX_KEY_INPUT + 1)
+    except OSError:
+        raise CliError("can't read the new key from stdin; nothing was changed") from None
+    if len(raw) > _MAX_KEY_INPUT:
+        raise CliError(f"{label} must be one line: 32 random bytes, base64-encoded")
+    try:
+        text = raw.decode("ascii")
+    except UnicodeDecodeError:
+        text = ""
+    return decode_key(text, label)
+
+
+def rotate_master_key(ctx: Context, new_key_source: str) -> None:
+    new_key = _read_new_key(ctx.console, new_key_source)
+    old_key = ctx.master_key()
+    if backups.same_key(old_key, new_key):
+        raise CliError("the new key is the same as the current one; nothing was changed")
+    counts = backups.rotate_master_key(ctx.engine, SecretBox(old_key), SecretBox(new_key))
+    del old_key, new_key
+    detail = ", ".join(f"{table}: {n}" for table, n in counts.items())
+    ctx.console.out(
+        f"Re-encrypted {sum(counts.values())} stored secret(s) with the new key ({detail})."
+    )
+    ctx.console.out(
+        "Next: keep the backend stopped (docker compose stop backend, if it still runs: "
+        "it can't read them with the old key), replace deploy/secrets/master.key with "
+        "the new key, then start it (docker compose up -d --force-recreate backend). "
+        "Keep the old key as long as you keep backups made before this rotation; they "
+        "need it."
+    )
+
+
 # --- argument parsing ----------------------------------------------------------------
 
 # argparse repeats the offending value in these messages; a mistyped command may carry a
@@ -427,6 +571,52 @@ def build_parser() -> argparse.ArgumentParser:
         allow_abbrev=False,
     )
     unlock_cmd.add_argument("username")
+
+    backup_cmd = commands.add_parser(
+        "backup",
+        help="export the whole database to a file (secrets stay encrypted)",
+        description=(
+            "Export every table to one gzip-compressed JSON file. Stored secrets stay "
+            "encrypted; the master key is not included and must be backed up separately."
+        ),
+        allow_abbrev=False,
+    )
+    backup_cmd.add_argument(
+        "file", help="new file to write (e.g. /data/backups/vantage.json.gz), or - for stdout"
+    )
+
+    restore_cmd = commands.add_parser(
+        "restore",
+        help="import a backup into an empty database",
+        description=(
+            "Import a backup made at the same database schema revision, in one "
+            "transaction. Refuses a database that already holds data unless --overwrite."
+        ),
+        allow_abbrev=False,
+    )
+    restore_cmd.add_argument("file", help="backup file to read, or - for stdin")
+    restore_cmd.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="delete everything currently in the database and replace it with the backup",
+    )
+
+    rotate = commands.add_parser(
+        "rotate-master-key",
+        help="re-encrypt every stored secret with a new master key",
+        description=(
+            "Re-encrypt every stored secret from the current master key to a new one, all "
+            "or nothing. Stop the backend first (docker compose stop backend) and run this "
+            "with docker compose run --rm; then replace the master key file and start the "
+            "backend again."
+        ),
+        allow_abbrev=False,
+    )
+    rotate.add_argument(
+        "--new-key-file",
+        required=True,
+        help="file with the new key (openssl rand -base64 32), or - to read it from stdin",
+    )
     return parser
 
 
@@ -436,6 +626,7 @@ def main(
     console: Console | None = None,
     settings: Settings | None = None,
     passwords: Passwords | None = None,
+    master_key: bytes | None = None,
 ) -> int:
     """Run one command. Returns the exit code: 0 on success, 1 on failure, 2 on bad usage."""
     console = console or Console()
@@ -449,8 +640,10 @@ def main(
         engine = _open_engine(settings)
         ctx = Context(
             console=console,
+            engine=engine,
             session_factory=make_session_factory(engine),
             passwords=passwords or Passwords(),
+            master_key=(lambda: master_key) if master_key is not None else load_master_key,
         )
         if args.command == "reset-password":
             reset_password(ctx, args.username, args.password_stdin)
@@ -458,9 +651,18 @@ def main(
             create_user(ctx, args.username, Role(args.role), args.password_stdin)
         elif args.command == "unlock":
             unlock(ctx, args.username)
+        elif args.command == "backup":
+            backup(ctx, args.file)
+        elif args.command == "restore":
+            if not restore(ctx, args.file, args.overwrite):
+                return 1
+        elif args.command == "rotate-master-key":
+            rotate_master_key(ctx, args.new_key_file)
         else:
             list_users(ctx)
-    except (CliError, ConfigError) as exc:  # ConfigError names the variable, never its value
+    except (CliError, ConfigError, MasterKeyError, backups.BackupError) as exc:
+        # None of these messages holds a secret: ConfigError and MasterKeyError name the
+        # variable or file, never its value; BackupError never quotes the file's content.
         console.err(f"error: {exc}")
         return 1
     except (KeyboardInterrupt, EOFError):
