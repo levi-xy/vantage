@@ -8,8 +8,9 @@ Run it where the backend runs::
     docker compose exec backend python -m app.cli unlock <username>
     docker compose exec -T backend python -m app.cli backup - > vantage-backup.json.gz
     docker compose exec -T backend python -m app.cli restore - < vantage-backup.json.gz
-    docker compose exec -T backend python -m app.cli rotate-master-key --new-key-file - \
-        < secrets/master.key.new
+    docker compose stop backend
+    docker compose run --rm -T backend python -m app.cli rotate-master-key \
+        --new-key-file - < secrets/master.key.new
 
 Shell access to the host is the trust boundary, so no login is needed.
 
@@ -437,7 +438,9 @@ def restore(ctx: Context, source: str, overwrite: bool) -> bool:
         raise CliError("can't read the backup file; nothing was changed") from None
     result = backups.restore(ctx.engine, parsed, box, overwrite=overwrite)
     ctx.console.out(
-        f"Restored {result.rows} row(s) from a backup at schema revision {parsed.revision}."
+        f"Restored {result.rows} row(s) from a backup at schema revision {parsed.revision}. "
+        f"Login sessions are not restored ({result.sessions_skipped} skipped): everyone "
+        "logs in again."
     )
     ctx.console.out(RESTART_HINT)
     if result.secrets_undecryptable:
@@ -490,11 +493,11 @@ def rotate_master_key(ctx: Context, new_key_source: str) -> None:
         f"Re-encrypted {sum(counts.values())} stored secret(s) with the new key ({detail})."
     )
     ctx.console.out(
-        "The backend still runs with the old key and can't read them until you switch: "
-        "now replace deploy/secrets/master.key with the new key and recreate the backend "
-        "(docker compose up -d --force-recreate backend). Don't add or edit devices or "
-        "channels in between. Keep the old key as long as you keep backups made before "
-        "this rotation; they need it."
+        "Next: keep the backend stopped (docker compose stop backend, if it still runs: "
+        "it can't read them with the old key), replace deploy/secrets/master.key with "
+        "the new key, then start it (docker compose up -d --force-recreate backend). "
+        "Keep the old key as long as you keep backups made before this rotation; they "
+        "need it."
     )
 
 
@@ -603,7 +606,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="re-encrypt every stored secret with a new master key",
         description=(
             "Re-encrypt every stored secret from the current master key to a new one, all "
-            "or nothing. Then replace the master key file and recreate the backend."
+            "or nothing. Stop the backend first (docker compose stop backend) and run this "
+            "with docker compose run --rm; then replace the master key file and start the "
+            "backend again."
         ),
         allow_abbrev=False,
     )

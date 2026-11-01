@@ -227,9 +227,10 @@ docker compose exec -T backend python -m app.cli backup - > vantage-backup.json.
 docker compose exec -T backend python -m app.cli restore - < vantage-backup.json.gz
 docker compose restart backend
 
-# Rotate the master key.
+# Rotate the master key, with the backend stopped.
 openssl rand -base64 32 > secrets/master.key.new
-docker compose exec -T backend python -m app.cli rotate-master-key --new-key-file - \
+docker compose stop backend
+docker compose run --rm -T backend python -m app.cli rotate-master-key --new-key-file - \
     < secrets/master.key.new
 mv secrets/master.key secrets/master.key.old && mv secrets/master.key.new secrets/master.key
 docker compose up -d --force-recreate backend
@@ -244,11 +245,14 @@ docker compose up -d --force-recreate backend
 - **Restore is one transaction and doesn't clobber.** It refuses a database that holds
   any row unless `--overwrite` is given (which deletes everything first). It parses the
   file strictly (only JSON, exactly Vantage's tables and columns, every value
-  type-checked, 1 GiB uncompressed cap) and only restores a backup from the same schema
-  revision; restoring an older one means restoring with the Vantage version that made
-  it, then upgrading. It reports how many stored secrets decrypt with the server's key,
+  type-checked, enum columns limited to their allowed values, 1 GiB uncompressed cap)
+  and only restores a backup from the same schema revision. A backup from an older
+  version is refused in v0.1: restore it with the Vantage version that made it, then
+  upgrade. It reports how many stored secrets decrypt with the server's key,
   and exits 1 (data restored) if some don't. Restore is audited (`target_type`
-  `database`, `actor_type` `cli`). Sessions in the backup come back with it.
+  `database`, `actor_type` `cli`). **Login sessions are never restored** (a session
+  revoked after the backup, or a stolen cookie, would come back): everyone logs in again
+  after a restore. The audit entry records how many were skipped.
 - **Rotation is all or nothing.** `rotate-master-key` needs the current key (the one the
   backend runs with) and the new one. In one transaction, with the database locked
   against writes, it decrypts every `instances.secrets` and `channels.secrets` blob with
@@ -256,8 +260,10 @@ docker compose up -d --force-recreate backend
   new key before committing. If any blob doesn't decrypt, nothing changes. It refuses
   to run if a table gains a binary column it doesn't know about. One audit entry
   (`target_type` `master_key`, `actor_type` `cli`) records only the per-table counts.
-  Until the backend is recreated with the new key it can't read the secrets, so swap
-  the key file right away and don't edit devices or channels in between. Keep the old
+  Stop the backend first (`docker compose stop backend`) and run the command with
+  `docker compose run --rm`, so nothing is written with the old key in between; then
+  swap the key file (give the new one the same owner and mode as `master.key`) and
+  start the backend. Keep the old
   key as long as you keep backups made before the rotation.
 - **Keys and secrets are never printed**, logged or audited, and error messages never
   quote the backup's content.

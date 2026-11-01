@@ -44,6 +44,7 @@ from sqlalchemy import (
     Column,
     Connection,
     Engine,
+    Enum,
     Integer,
     LargeBinary,
     String,
@@ -175,6 +176,13 @@ def _decode(kind: str, value: Any, where: str) -> Any:
     if not isinstance(value, str):
         bad()
     return value
+
+
+def _enum_choices(column: Column[Any]) -> frozenset[str] | None:
+    """The stored values an Enum column accepts (role, actor_type, ...), else None."""
+    if isinstance(column.type, Enum):
+        return frozenset(column.type.enums)
+    return None
 
 
 # --- revisions and locks -----------------------------------------------------------
@@ -312,6 +320,7 @@ def _validate(doc: Any) -> Backup:
         if not isinstance(names, list) or len(names) != len(expected) or set(names) != expected:
             raise BackupError(f"the backup's table {name} has unexpected or missing columns")
         kinds = [_kind(table.columns[n]) for n in names]
+        choices = [_enum_choices(table.columns[n]) for n in names]
         raw_rows = entry["rows"]
         if not isinstance(raw_rows, list):
             raise BackupError(f"the backup's table {name} is malformed")
@@ -319,6 +328,12 @@ def _validate(doc: Any) -> Backup:
         for index, raw in enumerate(raw_rows):
             if not isinstance(raw, list) or len(raw) != len(names):
                 raise BackupError(f"the backup's table {name} has a malformed row ({index + 1})")
+            for col, allowed, value in zip(names, choices, raw, strict=True):
+                if allowed is not None and value is not None and value not in allowed:
+                    # Never the value itself.
+                    raise BackupError(
+                        f"the backup has an invalid value in {name}.{col}, row {index + 1}"
+                    )
             decoded.append(
                 {
                     col: _decode(kind, value, f"{name}.{col}, row {index + 1}")
@@ -332,9 +347,15 @@ def _validate(doc: Any) -> Backup:
 # --- restore -----------------------------------------------------------------------
 
 
+# Never restored: a session revoked after the backup (logout, password reset, a stolen
+# cookie) would come back. Everyone logs in again after a restore.
+SKIPPED_TABLES = frozenset({"sessions"})
+
+
 @dataclass(frozen=True)
 class RestoreResult:
     rows: int
+    sessions_skipped: int
     secrets_total: int
     secrets_undecryptable: int
 
@@ -347,8 +368,7 @@ def _check_revision(backup_revision: str, current: str) -> None:
             f"the backup is from a newer database schema (revision {backup_revision}; this "
             f"database is at {current}): upgrade Vantage first, then restore"
         )
-    # TODO(maintainer): restoring an older backup would mean migrating the restored rows
-    # (restore into the old schema, then upgrade). Refused for now.
+    # Restoring an older backup would mean migrating the restored rows; refused (v0.1).
     raise BackupError(
         f"the backup is from an older database schema (revision {backup_revision}; this "
         f"database is at {current}). Restore it with the Vantage version that made it, "
@@ -400,9 +420,13 @@ def restore(engine: Engine, backup: Backup, box: SecretBox, *, overwrite: bool) 
         if existing:
             for table in reversed(tables()):
                 conn.execute(table.delete())
+        restored = skipped = 0
         for table in tables():
-            if backup.rows[table.name]:
+            if table.name in SKIPPED_TABLES:
+                skipped += len(backup.rows[table.name])
+            elif backup.rows[table.name]:
                 conn.execute(table.insert(), backup.rows[table.name])
+                restored += len(backup.rows[table.name])
         _reset_sequences(conn)
         with Session(bind=conn) as db:
             audit.record(
@@ -413,7 +437,8 @@ def restore(engine: Engine, backup: Backup, box: SecretBox, *, overwrite: bool) 
                 target_id=None,
                 user_id=None,
                 changes={
-                    "restored_rows": backup.row_count,
+                    "restored_rows": restored,
+                    "sessions_skipped": skipped,
                     "backup_revision": backup.revision,
                     "replaced_rows": existing,
                     "source": "cli",
@@ -422,7 +447,9 @@ def restore(engine: Engine, backup: Backup, box: SecretBox, *, overwrite: bool) 
             db.flush()
         total, bad = count_undecryptable(conn, box)
         conn.commit()
-    return RestoreResult(rows=backup.row_count, secrets_total=total, secrets_undecryptable=bad)
+    return RestoreResult(
+        rows=restored, sessions_skipped=skipped, secrets_total=total, secrets_undecryptable=bad
+    )
 
 
 # --- master-key rotation -----------------------------------------------------------
