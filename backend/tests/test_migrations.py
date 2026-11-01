@@ -115,3 +115,48 @@ def test_0004_backfills_actor_type(db_url: str) -> None:
         assert "actor_type" not in {c["name"] for c in inspect(eng).get_columns("audit_log")}
     finally:
         eng.dispose()
+
+
+def test_0005_rewrites_only_untouched_ping_rules(db_url: str) -> None:
+    old = 'vantage_ping_check_packet_loss_ratio{vantage_integration="ping_check"} >= 1'
+    new = 'vantage_ping_check_packet_loss_ratio{vantage_integration="ping_check"} > 0.2'
+    edited = old + " and on() vector(1)"
+    cfg = alembic_config(db_url)
+    command.upgrade(cfg, "0004")
+    eng = make_engine(db_url)
+    try:
+        with eng.begin() as conn:
+            for rule_id, expr, for_seconds in ((1, old, 180), (2, old, 600), (3, edited, 180)):
+                conn.execute(
+                    text(
+                        "INSERT INTO alert_rules "
+                        "(id, name, expr, for_seconds, severity, channel_ids, enabled) "
+                        "VALUES (:id, 'ping', :expr, :for_seconds, 'critical', '[]', true)"
+                    ),
+                    {"id": rule_id, "expr": expr, "for_seconds": for_seconds},
+                )
+        command.upgrade(cfg, "head")
+        with eng.connect() as conn:
+            rules = {
+                r[0]: (r[1], r[2])
+                for r in conn.execute(text("SELECT id, expr, for_seconds FROM alert_rules"))
+            }
+            audits = conn.execute(
+                text(
+                    "SELECT target_id, user_id, actor_type, action, target_type, changes "
+                    "FROM audit_log ORDER BY target_id"
+                )
+            ).all()
+        assert rules == {1: (new, 300), 2: (new, 600), 3: (edited, 180)}
+        assert [tuple(a[:5]) for a in audits] == [
+            ("1", None, "system", "update", "alert_rule"),
+            ("2", None, "system", "update", "alert_rule"),
+        ]
+        changes = [a[5] if isinstance(a[5], dict) else json.loads(a[5]) for a in audits]
+        assert changes[0] == {
+            "expr": {"old": old, "new": new},
+            "for_seconds": {"old": 180, "new": 300},
+        }
+        assert changes[1] == {"expr": {"old": old, "new": new}}
+    finally:
+        eng.dispose()

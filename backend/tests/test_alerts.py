@@ -136,6 +136,14 @@ def test_templates_are_sound(admin: TestClient) -> None:
     assert all(t["integration_types"] for t in got)
 
 
+def test_ping_check_has_instance_down_template() -> None:
+    """At 100% loss ping_check reports no loss sample, so "down" must use instance_up."""
+    by_id = {t.id: t for t in TEMPLATES}
+    down = by_id["instance-down-ping_check"]
+    assert down.expr == 'vantage_instance_up{vantage_integration="ping_check"} == 0'
+    assert not any(">= 1" in t.expr and "ping_check" in t.expr for t in TEMPLATES)
+
+
 # --- evaluator ---------------------------------------------------------------------------
 
 
@@ -211,6 +219,22 @@ async def test_fires_after_for_then_resolves(engine: Engine, db: Session, prom: 
     event = db.scalars(select(AlertEvent)).one()
     assert event.state == AlertState.RESOLVED and event.ended_at is not None
     assert rec.sent[1][1].startswith("RESOLVED: ")
+
+
+async def test_dead_ping_host_fires_instance_down(
+    engine: Engine, db: Session, prom: FakeProm
+) -> None:
+    tpl = next(t for t in TEMPLATES if t.id == "instance-down-ping_check")
+    add_rule(db, name=tpl.name, expr=tpl.expr, for_seconds=tpl.for_seconds)
+    rec, clock = Recorder(), Clock()
+    ev, _ = make_eval(engine, prom, rec, clock)
+    # What the collector exports once poll() raises NoReply: vantage_instance_up 0.
+    prom.vector = [{"vantage_instance": "nas-ping", "vantage_integration": "ping_check"}]
+    await ev.tick()
+    assert rec.sent == []
+    clock.now += timedelta(seconds=tpl.for_seconds + 1)
+    await ev.tick()
+    assert [text for _, text in rec.sent] == [f"FIRING: {tpl.name} (critical): nas-ping"]
 
 
 async def test_blip_shorter_than_for_does_not_fire(
