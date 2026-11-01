@@ -2,7 +2,12 @@
 
 The poll scheduler records each poll here; ``GET /metrics`` renders the store through
 a ``prometheus_client`` collector. Results live in memory only: Prometheus keeps the
-history, and a restart simply polls again.
+history, and a restart simply polls again (``last_success_at`` is seeded from
+Prometheus at startup).
+
+A failed poll cycle drops the instance's samples at once, but the instance only goes
+``down`` after ``down_after_failed_cycles`` failed cycles in a row; one good cycle brings
+it back ``up``.
 
 Every sample gets the four standard labels (AGENTS.md Contract 1). Samples an
 integration returns are checked before they are stored; a bad one is dropped (and
@@ -13,13 +18,14 @@ import math
 import re
 import uuid
 from collections.abc import Iterable, Iterator, Mapping
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from typing import Literal
 
 from prometheus_client.metrics_core import Metric
 from prometheus_client.registry import Collector, CollectorRegistry
 
+from app.core.config import DEFAULT_DOWN_AFTER_FAILED_CYCLES
 from app.integrations.base import Sample
 
 INSTANCE_ID = "vantage_instance_id"
@@ -33,7 +39,8 @@ UP = "vantage_instance_up"
 POLL_DURATION = "vantage_poll_duration_seconds"
 LAST_SUCCESS = "vantage_poll_last_success_timestamp_seconds"
 DROPPED = "vantage_poll_dropped_samples"
-OWN_METRICS = frozenset({UP, POLL_DURATION, LAST_SUCCESS, DROPPED})
+FAILED_CYCLES = "vantage_poll_consecutive_failed_cycles"
+OWN_METRICS = frozenset({UP, POLL_DURATION, LAST_SUCCESS, DROPPED, FAILED_CYCLES})
 
 # Limits on what one poll may store, so one misbehaving integration can't exhaust memory.
 MAX_SAMPLES_PER_INSTANCE = 10_000
@@ -75,6 +82,7 @@ class _Entry:
     status: InstanceStatus = field(default_factory=lambda: InstanceStatus(state="pending"))
     samples: list[Sample] = field(default_factory=list)
     dropped: int = 0
+    failed_cycles: int = 0
 
 
 def _family_names(name: str, kind: str) -> tuple[str, frozenset[str]]:
@@ -110,8 +118,14 @@ def check_sample(sample: Sample, type_id: str) -> bool:
 class MetricsStore:
     """In-memory poll results. Used from the event loop only."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, down_after_failed_cycles: int = DEFAULT_DOWN_AFTER_FAILED_CYCLES) -> None:
+        if down_after_failed_cycles < 1:
+            raise ValueError("down_after_failed_cycles must be at least 1")
+        self._down_after = down_after_failed_cycles
         self._entries: dict[uuid.UUID, _Entry] = {}
+        # last_success_at values read from Prometheus at startup, for instances not tracked
+        # yet; applied (once) when the instance is tracked.
+        self._seeded: dict[uuid.UUID, datetime] = {}
 
     # --- writes -------------------------------------------------------------------------
 
@@ -119,7 +133,11 @@ class MetricsStore:
         """Start tracking an instance (status ``pending``) or refresh its labels."""
         entry = self._entries.get(instance_id)
         if entry is None:
-            self._entries[instance_id] = _Entry(labels=dict(labels))
+            entry = _Entry(labels=dict(labels))
+            seeded = self._seeded.pop(instance_id, None)
+            if seeded is not None:
+                entry.status = InstanceStatus(state="pending", last_success_at=seeded)
+            self._entries[instance_id] = entry
         elif entry.labels != labels:
             entry.labels = dict(labels)
             entry.samples = []
@@ -161,6 +179,7 @@ class MetricsStore:
             kept.append(sample)
         entry.samples = kept
         entry.dropped = dropped
+        entry.failed_cycles = 0
         entry.status = InstanceStatus(
             state="up",
             checked_at=at,
@@ -177,19 +196,52 @@ class MetricsStore:
         at: datetime,
         duration_seconds: float,
     ) -> None:
-        """Mark the instance down. Its old samples are dropped rather than served stale."""
+        """Record one failed poll cycle.
+
+        The old samples are dropped at once rather than served stale. The instance goes
+        ``down`` only at the ``down_after_failed_cycles``-th failed cycle in a row; until
+        then it keeps its state (``up``, or ``pending`` if it never answered) and shows
+        ``error``.
+        """
         entry = self._entries.get(instance_id)
         if entry is None:
             return
         entry.samples = []
         entry.dropped = 0
+        entry.failed_cycles += 1
+        state: State = "down" if entry.failed_cycles >= self._down_after else entry.status.state
         entry.status = InstanceStatus(
-            state="down",
+            state=state,
             checked_at=at,
             last_success_at=entry.status.last_success_at,
             duration_seconds=duration_seconds,
             error=error,
         )
+
+    def seed_last_success(self, seeded: Mapping[uuid.UUID, float]) -> int:
+        """Fill ``last_success_at`` from Unix times read from Prometheus at startup.
+
+        Only an empty ``last_success_at`` is filled (a poll that already succeeded is
+        newer); the state is left alone. Instances not tracked yet get the value when they
+        are. Returns how many values were taken.
+        """
+        taken = 0
+        for instance_id, timestamp in seeded.items():
+            if not math.isfinite(timestamp) or timestamp <= 0:
+                continue
+            try:
+                at = datetime.fromtimestamp(timestamp, UTC)
+            except (OverflowError, OSError, ValueError):
+                continue
+            entry = self._entries.get(instance_id)
+            if entry is None:
+                self._seeded[instance_id] = at
+            elif entry.status.last_success_at is None:
+                entry.status = replace(entry.status, last_success_at=at)
+            else:
+                continue
+            taken += 1
+        return taken
 
     def remove(self, instance_id: uuid.UUID) -> None:
         self._entries.pop(instance_id, None)
@@ -208,6 +260,11 @@ class MetricsStore:
         entry = self._entries.get(instance_id)
         return entry.status if entry is not None else None
 
+    def failed_cycles(self, instance_id: uuid.UUID) -> int:
+        """Failed poll cycles in a row (0 after a good one)."""
+        entry = self._entries.get(instance_id)
+        return entry.failed_cycles if entry is not None else 0
+
     def statuses(self) -> dict[uuid.UUID, InstanceStatus]:
         return {key: entry.status for key, entry in self._entries.items()}
 
@@ -219,19 +276,23 @@ class MetricsStore:
         dropped: a duplicate name would make Prometheus reject the whole scrape.
         """
         entries = sorted(self._entries.items(), key=lambda item: str(item[0]))
-        up = Metric(UP, "1 if the instance's last poll succeeded, 0 if it failed.", "gauge")
+        up = Metric(UP, "0 once the instance is down (N failed cycles in a row), else 1.", "gauge")
         duration = Metric(POLL_DURATION, "How long the instance's last poll took.", "gauge")
         last_ok = Metric(LAST_SUCCESS, "Unix time of the instance's last successful poll.", "gauge")
         dropped = Metric(DROPPED, "Samples dropped from the last poll as invalid.", "gauge")
+        failed = Metric(FAILED_CYCLES, "Failed poll cycles in a row (0 after a good one).", "gauge")
         families: dict[str, Metric] = {}
         taken: dict[str, str] = {name: name for name in OWN_METRICS}  # series -> family
 
         for _, entry in entries:
             status = entry.status
-            if status.state == "pending":
+            if status.checked_at is None:  # not polled yet
                 continue
             labels = entry.labels
-            up.add_sample(UP, labels, 1.0 if status.state == "up" else 0.0)
+            # A pending instance whose first cycles failed has no up/down answer yet.
+            if status.state != "pending":
+                up.add_sample(UP, labels, 1.0 if status.state == "up" else 0.0)
+            failed.add_sample(FAILED_CYCLES, labels, float(entry.failed_cycles))
             if status.duration_seconds is not None:
                 duration.add_sample(POLL_DURATION, labels, status.duration_seconds)
             if status.last_success_at is not None:
@@ -256,6 +317,7 @@ class MetricsStore:
         yield duration
         yield last_ok
         yield dropped
+        yield failed
         yield from families.values()
 
 

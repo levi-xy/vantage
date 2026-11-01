@@ -86,3 +86,29 @@ def test_session_lengths_are_read() -> None:
 def test_bad_session_settings_are_rejected(name: str, raw: str) -> None:
     with pytest.raises(ConfigError, match=name):
         load_settings({name: raw})
+
+
+def test_poll_tolerance_defaults_and_values() -> None:
+    settings = load_settings({})
+    assert settings.down_after_failed_cycles == 3
+    assert settings.prometheus_retention == "30d"
+    env = {"VANTAGE_DOWN_AFTER_FAILED_CYCLES": "10", "VANTAGE_PROMETHEUS_RETENTION": "1y2w"}
+    settings = load_settings(env)
+    assert settings.down_after_failed_cycles == 10
+    assert settings.prometheus_retention == "1y2w"
+    assert load_settings({"VANTAGE_DOWN_AFTER_FAILED_CYCLES": "1"}).down_after_failed_cycles == 1
+
+
+@pytest.mark.parametrize(
+    ("name", "raw"),
+    [
+        ("VANTAGE_DOWN_AFTER_FAILED_CYCLES", "0"),
+        ("VANTAGE_DOWN_AFTER_FAILED_CYCLES", "11"),
+        ("VANTAGE_DOWN_AFTER_FAILED_CYCLES", "three"),
+        ("VANTAGE_PROMETHEUS_RETENTION", "30 days"),
+        ("VANTAGE_PROMETHEUS_RETENTION", "30d]) or vector(1"),
+    ],
+)
+def test_bad_poll_tolerance_settings_are_rejected(name: str, raw: str) -> None:
+    with pytest.raises(ConfigError, match=name):
+        load_settings({name: raw})

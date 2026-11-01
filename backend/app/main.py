@@ -1,5 +1,6 @@
 """FastAPI application entry point."""
 
+import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -17,6 +18,7 @@ from app.api.deps import SAFE_METHODS
 from app.collectors.endpoint import router as metrics_router
 from app.collectors.hub import EventHub
 from app.collectors.scheduler import PollScheduler
+from app.collectors.seed import seed_last_success
 from app.collectors.store import MetricsStore, make_registry
 from app.core.auth import LoginRateLimiter, Passwords
 from app.core.config import Settings, get_settings
@@ -58,12 +60,21 @@ def create_app(
         poller: PollScheduler = app.state.poller
         live_rates: LiveRates = app.state.live_rates
         poller.start()
+        # last_success_at from Prometheus, in the background: never delays polling.
+        seeding = asyncio.create_task(
+            seed_last_success(
+                app.state.prometheus, app.state.metrics_store, settings.prometheus_retention
+            ),
+            name="vantage-seed-last-success",
+        )
         live_rates.start()
         evaluator: AlertEvaluator = app.state.alert_evaluator
         evaluator.start()
         try:
             yield
         finally:
+            seeding.cancel()
+            await asyncio.gather(seeding, return_exceptions=True)
             await evaluator.stop()
             await live_rates.stop()
             await poller.stop()
@@ -101,7 +112,9 @@ def create_app(
         settings.prometheus_url, NetGuard(NetPolicy())
     )
     # Poll collector (M2.4): results kept in memory, served on /metrics.
-    app.state.metrics_store = MetricsStore()
+    app.state.metrics_store = MetricsStore(
+        down_after_failed_cycles=settings.down_after_failed_cycles
+    )
     app.state.metrics_registry = make_registry(app.state.metrics_store)
     app.state.event_hub = EventHub()
     app.state.poller = PollScheduler(

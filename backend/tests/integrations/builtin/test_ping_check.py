@@ -342,7 +342,7 @@ async def collect(
         config=stored,
         secrets=ic.encrypt(box, instance_id, secrets),
     )
-    store = MetricsStore()
+    store = MetricsStore(down_after_failed_cycles=1)
     scheduler = PollScheduler(
         session_factory=make_session_factory(engine),
         registry=Registry([PingCheck]),
@@ -351,7 +351,7 @@ async def collect(
         store=store,
     )
     store.track(spec.instance_id, spec.labels)
-    await scheduler.poll_once(spec, PingCheck())
+    await scheduler.poll_once(spec, PingCheck(), next_start=0.0)  # no time left: no retry
     return store, spec
 
 
@@ -426,7 +426,7 @@ async def test_collector_degrades_config_made_invalid_by_upgrade(
     with pytest.raises(ValidationError):
         PingCheckConfig.model_validate(config(count=3, timeout_seconds=5))
     box = SecretBox(TEST_MASTER_KEY)
-    store = MetricsStore()
+    store = MetricsStore(down_after_failed_cycles=1)
     scheduler = PollScheduler(
         session_factory=make_session_factory(engine),
         registry=Registry([PingCheck]),
