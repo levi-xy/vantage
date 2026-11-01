@@ -49,15 +49,19 @@ export const LAST_UP_WINDOWS = [3600, 24 * 3600, HISTORY_SECONDS] as const;
 const LAST_UP_POINTS = 1000;
 const EMPTY: QueryResult = { result_type: "matrix", series: [], warnings: [] };
 
-/** The instance from the cached instances list (the dashboard keeps it loaded); never fetches. */
-function useCachedInstance(instanceId: string): Instance | undefined {
+/**
+ * The instance from the cached instances list (the dashboard keeps it loaded); never fetches.
+ * `listAt` (Unix seconds) is when the list was last updated: a refetch or a `/ws` push.
+ */
+function useCachedInstance(instanceId: string): { instance?: Instance; listAt: number } {
   const client = useApiClient();
-  return useQuery({
+  const query = useQuery({
     queryKey: INSTANCES_KEY,
     queryFn: () => client.instances(),
     enabled: false,
     select: (list: Instance[]) => list.find((i) => i.id === instanceId),
-  }).data;
+  });
+  return { instance: query.data, listAt: query.dataUpdatedAt / 1000 };
 }
 
 /**
@@ -102,8 +106,9 @@ export interface InstantQuery {
  * Refetches every 15 s while the tab is visible.
  *
  * When the live result is empty or the source is stale, the same query text, unchanged, is
- * evaluated at the source's last good moment (a one-point range query) and returned with
- * `freshness.kind === "stale"`. The query is never rewritten (no `last_over_time`): evaluated
+ * evaluated at the source's last good moment (a one-point range query; for a polled source, one
+ * scrape interval after `last_success_at`, when that poll's samples had reached Prometheus) and
+ * returned with `freshness.kind === "stale"` and `asOf` = that last good moment. The query is never rewritten (no `last_over_time`): evaluated
  * at that moment, it gives exactly what the card showed then. The instance (and its
  * `last_success_at`) comes from the cached instances list.
  */
@@ -113,7 +118,7 @@ export function useInstantQuery(
 ): InstantQuery {
   const client = useApiClient();
   const expr = scopedQuery(instanceId, build);
-  const instance = useCachedInstance(instanceId);
+  const { instance, listAt } = useCachedInstance(instanceId);
   const scrapeState = useScrapeStates([instance]).get(instanceId);
   const live = useQuery<QueryResult>({
     queryKey: ["query", "instant", expr],
@@ -125,17 +130,28 @@ export function useInstantQuery(
   const now = Math.max(live.dataUpdatedAt, live.errorUpdatedAt) / 1000;
   const source = sourceOf(instance);
   const liveEmpty = live.isSuccess && !hasData(live.data);
-  // The moment to evaluate the query at instead of now, or why there is nothing to show.
+  // `at`: the source's last good moment (shown as "as of"). `evalAt`: when to evaluate the
+  // query to see the value from that moment. Or why there is nothing to show.
   let at: number | null = null;
+  let evalAt: number | null = null;
   let missing: string | null = null;
   if (source.kind === "polled") {
     const last = source.lastSuccess;
+    // Stale only if it already was when the list was updated, so a list that lags behind
+    // (refetched every 60 s, or a missed `/ws` push) never greys a value that is still live.
+    const staleInList = listAt > 0 && listAt - (last ?? 0) > freshFor(POLL_INTERVAL_SECONDS);
     if (last === null) {
       // A new device (pending) keeps the card's own "no data yet" hint.
       if (liveEmpty && !source.pending) missing = NO_RECENT_DATA;
-    } else if (now - last > freshFor(POLL_INTERVAL_SECONDS) || liveEmpty) {
-      if (now - last > HISTORY_SECONDS) missing = NO_DATA_31_DAYS;
-      else at = last;
+    } else if (staleInList || liveEmpty) {
+      if (Math.max(now, listAt) - last > HISTORY_SECONDS) missing = NO_DATA_31_DAYS;
+      else {
+        at = last;
+        // A poll's samples reach Prometheus at the next scrape (within 30 s), so evaluating at
+        // `last` would give the previous poll's value. Never ask about the future.
+        const scraped = last + SCRAPE_INTERVAL_SECONDS;
+        evalAt = now > 0 ? Math.min(scraped, now) : scraped;
+      }
     }
   }
   // A scraped target whose `up` is 1 now is fresh; otherwise find its last good scrape.
@@ -144,15 +160,18 @@ export function useInstantQuery(
   const lastUp = useLastUp(instanceId, lookUp);
   if (lookUp && lastUp.isSuccess) {
     if (lastUp.data === null) missing = NO_STORED_HISTORY;
-    else if (now - lastUp.data > freshFor(SCRAPE_INTERVAL_SECONDS) || liveEmpty) at = lastUp.data;
+    else if (now - lastUp.data > freshFor(SCRAPE_INTERVAL_SECONDS) || liveEmpty) {
+      // `up == 1` is a scrape result: its samples are there at that very moment.
+      at = evalAt = lastUp.data;
+    }
   }
 
   const past = useQuery<QueryResult>({
-    queryKey: ["query", "at", expr, at],
+    queryKey: ["query", "at", expr, evalAt],
     queryFn: () =>
-      client.query({ query: expr, start: at ?? 0, end: at ?? 0, step: MIN_STEP_SECONDS }),
+      client.query({ query: expr, start: evalAt ?? 0, end: evalAt ?? 0, step: MIN_STEP_SECONDS }),
     staleTime: PAST_STALE_MS,
-    enabled: at !== null,
+    enabled: evalAt !== null,
   });
 
   const error = live.error ?? (lookUp ? lastUp.error : null) ?? (at !== null ? past.error : null);

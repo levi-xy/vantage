@@ -76,5 +76,7 @@ describe("dashboard-wide cards", () => {
     expect(await screen.findByText("Active alerts")).toBeInTheDocument();
     expect(await screen.findByText("1")).toBeInTheDocument();
     expect(screen.getByText("Devices healthy")).toBeInTheDocument();
+    // The example device is up but has no success on record.
+    expect(screen.getByText("1 device without fresh data")).toBeInTheDocument();
   });
 });

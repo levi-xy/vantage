@@ -19,14 +19,20 @@ const one = (value: string, t = 1_700_000_000): QueryResult => ({
   warnings: [],
 });
 
-function setup(answer: (req: QueryRequest) => QueryResult = () => EMPTY, instance?: Instance) {
+function setup(
+  answer: (req: QueryRequest) => QueryResult = () => EMPTY,
+  instance?: Instance,
+  listUpdatedAtMs?: number,
+) {
   const fetchMock = vi.fn<typeof fetch>(async (_url, init) =>
     json(answer(JSON.parse(String(init?.body)) as QueryRequest)),
   );
   const scoped = new ApiClient({ fetch: fetchMock });
   vi.spyOn(client, "query").mockImplementation((req) => scoped.query(req));
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  if (instance) queryClient.setQueryData(["instances"], [instance]);
+  if (instance) {
+    queryClient.setQueryData(["instances"], [instance], { updatedAt: listUpdatedAtMs });
+  }
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   );
@@ -105,20 +111,47 @@ describe("stale values", () => {
     expect(sent()).toEqual([{ query: CARD_QUERY }]);
   });
 
-  it("re-runs the identical query at last_success_at when the live result is empty", async () => {
+  it("re-runs the identical query one scrape after last_success_at when live is empty", async () => {
     const last = nowSeconds() - 60;
     const { wrapper, sent } = setup(
-      (req) => (isPast(req) ? one("0.02", last) : EMPTY),
+      (req) => (isPast(req) ? one("0.02", last + 30) : EMPTY),
       polled("up", last),
     );
     const { result } = renderHook(() => useInstantQuery("inst-1", build), { wrapper });
     await waitFor(() => expect(result.current.freshness.kind).toBe("stale"));
+    // "as of" is the poll itself; the query runs when that poll's samples were in Prometheus.
     expect(result.current.freshness).toEqual({ kind: "stale", asOf: last });
     expect(result.current.data?.series[0]?.values[0]?.[1]).toBe("0.02");
     expect(sent()).toEqual([
       { query: CARD_QUERY },
-      { query: CARD_QUERY, start: last, end: last, step: 15 },
+      { query: CARD_QUERY, start: last + 30, end: last + 30, step: 15 },
     ]);
+  });
+
+  it("never evaluates in the future when the last success is under 30 s old", async () => {
+    const last = nowSeconds() - 10;
+    const { wrapper, sent } = setup(
+      (req) => (isPast(req) ? one("0.05", last) : EMPTY),
+      polled("up", last),
+    );
+    const { result } = renderHook(() => useInstantQuery("inst-1", build), { wrapper });
+    await waitFor(() => expect(result.current.freshness.kind).toBe("stale"));
+    const past = sent().find(isPast);
+    expect(past?.start).toBe(past?.end);
+    // Clamped to the live query's answer time (now), not last + 30.
+    expect(past?.start).toBeGreaterThanOrEqual(last + 10);
+    expect(past?.start).toBeLessThan(last + 30);
+    expect(result.current.freshness).toEqual({ kind: "stale", asOf: last });
+  });
+
+  it("doesn't grey a live value when the instances list lags behind", async () => {
+    const last = nowSeconds() - 600;
+    // The list was last updated 60 s after that success: it couldn't know of later ones.
+    const { wrapper, sent } = setup(() => one("0.01"), polled("up", last), (last + 60) * 1000);
+    const { result } = renderHook(() => useInstantQuery("inst-1", build), { wrapper });
+    await waitFor(() => expect(result.current.data?.series).toHaveLength(1));
+    expect(result.current.freshness).toEqual({ kind: "fresh" });
+    expect(sent()).toEqual([{ query: CARD_QUERY }]);
   });
 
   it("uses the past value when the source is stale, even if the live result isn't empty", async () => {

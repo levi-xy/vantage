@@ -11,7 +11,7 @@ import { parseValue } from "./metrics/promql";
 export function withoutFreshData(
   instances: Instance[],
   scrape: Map<string, Instance["status"]["state"]>,
-  nowMs: number = Date.now(),
+  nowMs: number,
 ): number {
   let count = 0;
   for (const i of instances) {

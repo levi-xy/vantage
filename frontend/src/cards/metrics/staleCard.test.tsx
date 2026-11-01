@@ -27,8 +27,9 @@ describe("a card with a stale value", () => {
       client,
       PingCheckCard,
       (query, req) => {
-        // Live and sparkline queries are empty; only the past moment has values.
-        if (req.start === undefined || req.start !== req.end) return vector([]);
+        // Live and sparkline queries are empty. Only the moment the last poll's samples were
+        // in Prometheus (one scrape interval after it) has values.
+        if (req.start !== last + 30 || req.end !== last + 30) return vector([]);
         return vector([[{}, query.includes("rtt") ? "0.0123" : "0"]]);
       },
       instance,
