@@ -1,4 +1,5 @@
 import type { CardProps } from "../registry";
+import { cardFreshness } from "../metrics/freshness";
 import { CardFrame } from "../metrics/CardFrame";
 import { byLabel } from "../metrics/promql";
 import { useInstantQuery } from "../metrics/useMetricQuery";
@@ -31,6 +32,7 @@ export function CloudflareTunnelsCard({ instanceId, title, instance }: CardProps
       instance={instance}
       loading={info.isPending}
       error={info.error ?? status.error}
+      freshness={cardFreshness(info, status, connections)}
       empty={tunnels.length === 0}
       emptyHint="No tunnels reported. Check that Tunnel status is on and the token can read tunnels."
     >

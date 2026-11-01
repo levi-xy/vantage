@@ -6,7 +6,7 @@ import { describe, speedText, TILE, useSnmpPorts } from "./ports";
 
 export function SnmpPortsCard({ instanceId, title, instance }: CardProps) {
   const { formatRate } = useUnits();
-  const { ports, loading, error } = useSnmpPorts(instanceId);
+  const { ports, loading, error, freshness } = useSnmpPorts(instanceId);
   const [selected, setSelected] = useState<string | null>(null);
 
   const talkers = ports
@@ -22,6 +22,7 @@ export function SnmpPortsCard({ instanceId, title, instance }: CardProps) {
       instance={instance}
       loading={loading}
       error={error}
+      freshness={freshness}
       empty={ports.length === 0}
     >
       <div

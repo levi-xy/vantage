@@ -1,4 +1,5 @@
 import type { CardProps } from "../registry";
+import { cardFreshness } from "../metrics/freshness";
 import { CardFrame } from "../metrics/CardFrame";
 import { formatMs, formatRatio } from "../metrics/format";
 import { firstSeries, firstValue } from "../metrics/promql";
@@ -23,6 +24,7 @@ export function PingCheckCard({ instanceId, title, instance }: CardProps) {
       instance={instance}
       loading={rtt.isPending || loss.isPending}
       error={rtt.error ?? loss.error}
+      freshness={cardFreshness(rtt, loss)}
       empty={rttValue === undefined && lossValue === undefined}
     >
       <div className="grid grid-cols-2 gap-3">

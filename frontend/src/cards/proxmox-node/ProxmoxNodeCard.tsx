@@ -1,4 +1,5 @@
 import type { CardProps } from "../registry";
+import { cardFreshness } from "../metrics/freshness";
 import { CardFrame, UsageBar } from "../metrics/CardFrame";
 import { formatDuration, formatPercent } from "../metrics/format";
 import { byLabel } from "../metrics/promql";
@@ -45,6 +46,7 @@ export function ProxmoxNodeCard({ instanceId, title, instance }: CardProps) {
       instance={instance}
       loading={up.isPending}
       error={up.error}
+      freshness={cardFreshness(up, cpu, mem, root, uptime, storage)}
       empty={nodes.length === 0}
     >
       {nodes.map((n) => {

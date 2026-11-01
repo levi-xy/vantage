@@ -1,4 +1,5 @@
 import type { CardProps } from "../registry";
+import { cardFreshness } from "../metrics/freshness";
 import { CardFrame, UsageBar } from "../metrics/CardFrame";
 import { formatBytes, formatCelsius, formatDuration, formatPercent } from "../metrics/format";
 import { byLabel, firstSeries, firstValue } from "../metrics/promql";
@@ -66,6 +67,7 @@ export function LinuxHostCard({ instanceId, title, instance }: CardProps) {
       instance={instance}
       loading={cpu.isPending && mem.isPending}
       error={cpu.error ?? mem.error}
+      freshness={cardFreshness(cpu, mem, memTotal, uptime, rx, tx, disks, raid, zfs, temps)}
       empty={cpuValue === undefined && memValue === undefined && uptimeValue === undefined}
     >
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">

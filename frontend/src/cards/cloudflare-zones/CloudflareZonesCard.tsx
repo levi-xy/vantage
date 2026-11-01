@@ -1,4 +1,5 @@
 import type { CardProps } from "../registry";
+import { cardFreshness } from "../metrics/freshness";
 import { CardFrame } from "../metrics/CardFrame";
 import { formatBytes, formatRatio } from "../metrics/format";
 import { byLabel, firstValue } from "../metrics/promql";
@@ -35,6 +36,7 @@ export function CloudflareZonesCard({ instanceId, title, instance }: CardProps) 
       instance={instance}
       loading={info.isPending}
       error={info.error ?? traffic.error}
+      freshness={cardFreshness(info, traffic, analyticsUp)}
       empty={zones.length === 0}
       emptyHint="No zones reported yet. Check the instance status and the API token."
     >

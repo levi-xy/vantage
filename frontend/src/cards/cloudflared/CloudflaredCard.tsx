@@ -1,4 +1,5 @@
 import type { CardProps } from "../registry";
+import { cardFreshness } from "../metrics/freshness";
 import { CardFrame } from "../metrics/CardFrame";
 import { formatRatio } from "../metrics/format";
 import { firstSeries, firstValue } from "../metrics/promql";
@@ -34,6 +35,7 @@ export function CloudflaredCard({ instanceId, title, instance }: CardProps) {
       instance={instance}
       loading={connections.isPending}
       error={connections.error ?? requests.error}
+      freshness={cardFreshness(connections, requests, errors)}
       empty={conn === undefined}
       emptyHint="No tunnel metrics yet. Check that cloudflared runs with --metrics and Prometheus can reach it."
     >

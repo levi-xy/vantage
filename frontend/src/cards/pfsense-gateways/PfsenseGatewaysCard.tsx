@@ -1,4 +1,5 @@
 import type { CardProps } from "../registry";
+import { cardFreshness } from "../metrics/freshness";
 import { CardFrame } from "../metrics/CardFrame";
 import { formatMs, formatPercent } from "../metrics/format";
 import { byLabel } from "../metrics/promql";
@@ -35,6 +36,7 @@ export function PfsenseGatewaysCard({ instanceId, title, instance }: CardProps) 
       instance={instance}
       loading={loss.isPending}
       error={loss.error}
+      freshness={cardFreshness(loss, rtt)}
       empty={gateways.length === 0}
       emptyHint="No gateway ping data yet. Add a Telegraf ping target per gateway."
     >

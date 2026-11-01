@@ -1,4 +1,5 @@
 import type { CardProps } from "../registry";
+import { cardFreshness } from "../metrics/freshness";
 import { CardFrame } from "../metrics/CardFrame";
 import { byLabel } from "../metrics/promql";
 import { useInstantQuery } from "../metrics/useMetricQuery";
@@ -24,6 +25,7 @@ export function PfsenseInterfacesCard({ instanceId, title, instance }: CardProps
       instance={instance}
       loading={rx.isPending}
       error={rx.error ?? tx.error}
+      freshness={cardFreshness(rx, tx)}
       empty={rows.length === 0}
     >
       <section aria-label="Interfaces" className="flex flex-col gap-1 text-sm">

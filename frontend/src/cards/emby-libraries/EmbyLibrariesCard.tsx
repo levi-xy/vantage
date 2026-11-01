@@ -1,4 +1,5 @@
 import type { CardProps } from "../registry";
+import { cardFreshness } from "../metrics/freshness";
 import { CardFrame } from "../metrics/CardFrame";
 import { byLabel } from "../metrics/promql";
 import { useInstantQuery } from "../metrics/useMetricQuery";
@@ -27,6 +28,7 @@ export function EmbyLibrariesCard({ instanceId, title, instance }: CardProps) {
       instance={instance}
       loading={items.isPending}
       error={items.error ?? libraries.error}
+      freshness={cardFreshness(items, libraries)}
       empty={itemRows.length === 0 && libRows.length === 0}
       emptyHint="No library counts. The API key may not be allowed to read them."
     >

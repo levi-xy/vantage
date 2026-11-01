@@ -8,7 +8,7 @@ import { isSfp, panelBlocks } from "./panel";
 /** The switch's front panel: ports where they sit on the device, coloured by state. */
 export function SwitchPanelCard({ instanceId, title, instance }: CardProps) {
   const { formatRate } = useUnits();
-  const { ports, loading, error } = useSnmpPorts(instanceId);
+  const { ports, loading, error, freshness } = useSnmpPorts(instanceId);
   const [selected, setSelected] = useState<string | null>(null);
   const chosen = ports.find((p) => p.index === selected);
 
@@ -18,6 +18,7 @@ export function SwitchPanelCard({ instanceId, title, instance }: CardProps) {
       instance={instance}
       loading={loading}
       error={error}
+      freshness={freshness}
       empty={ports.length === 0}
     >
       <div

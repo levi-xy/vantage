@@ -1,4 +1,5 @@
 import type { CardProps } from "../registry";
+import { cardFreshness } from "../metrics/freshness";
 import { CardFrame } from "../metrics/CardFrame";
 import { formatCelsius, formatDuration, formatPercent } from "../metrics/format";
 import { firstSeries, firstValue } from "../metrics/promql";
@@ -38,6 +39,7 @@ export function PfsenseOverviewCard({ instanceId, title, instance }: CardProps) 
       instance={instance}
       loading={cpu.isPending && mem.isPending}
       error={cpu.error ?? mem.error}
+      freshness={cardFreshness(cpu, mem, disk, states, temp, uptime)}
       empty={cpuValue === undefined && memValue === undefined && statesValue === undefined}
     >
       <div className="grid grid-cols-3 gap-3">
