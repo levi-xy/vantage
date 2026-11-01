@@ -104,7 +104,16 @@ cd vantage/deploy
 ./setup.sh
 ```
 
-`setup.sh` creates the master key, the Prometheus token and `.env` (keeping any that already exist), starts the stack and prints the address. Back up `deploy/secrets/master.key` somewhere off the server: without it, stored device credentials can't be decrypted. The dashboard listens on `127.0.0.1:8080` by default; set `VANTAGE_BIND_ADDRESS` in `.env` to reach it from other machines, then run `docker compose up -d`.
+`setup.sh` creates the master key, the Prometheus token, a self-signed HTTPS certificate and `.env` (keeping any that already exist), starts the stack and prints the address. Back up `deploy/secrets/master.key` somewhere off the server: without it, stored device credentials can't be decrypted. The dashboard listens on `https://127.0.0.1:8443` by default; set `VANTAGE_BIND_ADDRESS` in `.env` to reach it from other machines (add any other names you use in `VANTAGE_TLS_NAMES` before the first run), then run `docker compose up -d`.
+
+### HTTPS certificate
+
+The bundled nginx serves the dashboard over HTTPS (TLS 1.2+) from `deploy/certs/tls.crt` and `deploy/certs/tls.key`; plain HTTP to the same port is redirected. Browsers warn about the generated self-signed certificate until you accept it. To use your own certificate (from your internal CA or a public one):
+
+1. Put the PEM certificate, full chain, in `deploy/certs/tls.crt` and its unencrypted PEM key in `deploy/certs/tls.key`. `setup.sh` never replaces existing files.
+2. Run `./setup.sh` again (it fixes the key's ownership and mode: readable only by the frontend container), then `docker compose restart frontend`.
+
+To regenerate the self-signed pair (for example after changing `VANTAGE_TLS_NAMES`), delete both files and run `./setup.sh`. Once browsers trust your certificate you can turn on HSTS with `VANTAGE_HSTS=true`. Plain HTTP is an explicit opt-out: `VANTAGE_HTTPS=false` plus `VANTAGE_COOKIE_SECURE=false` for logins from other machines; anyone on the network path can then read passwords and session cookies.
 
 Open the address, create the admin account in the setup wizard, then add your first device.
 
