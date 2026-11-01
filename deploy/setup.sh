@@ -1,20 +1,23 @@
 #!/bin/sh
-# Vantage one-stop setup: creates the missing secrets and .env, then starts the stack.
+# Vantage one-stop setup: creates the missing secrets, HTTPS certificate and .env,
+# then starts the stack.
 #
 #   ./setup.sh                  create what's missing, start, wait until healthy
 #   ./setup.sh --no-start       only create the files
 #   ./setup.sh --force-new-key  allow a new master key even though data may exist
 #
-# Safe to re-run: existing files are kept (the master key is never overwritten),
-# and the secret file permissions are fixed on every run. No secret is ever printed.
+# Safe to re-run: existing files are kept (the master key and certificate are never
+# overwritten), and the secret file permissions are fixed on every run. No secret is
+# ever printed.
 set -eu
 
 BACKEND_UID=10001     # backend container user (backend/Dockerfile)
 PROMETHEUS_GID=65534  # prometheus container user/group (nobody)
+FRONTEND_UID=101      # frontend container user (nginx-unprivileged image)
 VOLUME=vantage_backend-data
 
 usage() {
-    sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 start=1
@@ -106,17 +109,91 @@ else
     echo "Created .env from .env.example (edit it to change the address or port)"
 fi
 
+# Names for the self-signed certificate's subjectAltName, as "DNS:x" / "IP:x" entries.
+san_entry() {  # $1 = host name or IP address
+    case "$1" in
+        *[!A-Za-z0-9.:*-]*) die "VANTAGE_TLS_NAMES: '$1' is not a host name or IP address" ;;
+        *:*) echo "IP:$1" ;;                  # IPv6
+        *[!0-9.]*) echo "DNS:$1" ;;
+        *) echo "IP:$1" ;;                    # IPv4
+    esac
+}
+
+new_self_signed_cert() {
+    sans="DNS:localhost,IP:127.0.0.1,IP:::1"
+    cn=vantage
+    host=$(hostname 2>/dev/null || true)
+    case "$host" in
+        ""|*[!A-Za-z0-9.-]*) ;;
+        *) cn=$host; sans="$sans,DNS:$host" ;;
+    esac
+    bind=$(env_value VANTAGE_BIND_ADDRESS)
+    case "$bind" in
+        ""|0.0.0.0|::|"[::]"|127.0.0.1) ;;
+        *) bind=${bind#[}; sans="$sans,$(san_entry "${bind%]}")" ;;
+    esac
+    old_ifs=$IFS; IFS=', '; set -f  # split on commas/spaces, no globbing of "*.x"
+    for name in $(env_value VANTAGE_TLS_NAMES); do
+        sans="$sans,$(san_entry "$name")"
+    done
+    IFS=$old_ifs; set +f
+
+    cfg="certs/openssl.cnf.tmp.$$"
+    cat > "$cfg" <<EOF
+[req]
+distinguished_name = dn
+prompt = no
+x509_extensions = v3
+[dn]
+CN = $cn
+O = Vantage self-signed
+[v3]
+basicConstraints = critical, CA:FALSE
+keyUsage = critical, digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+subjectKeyIdentifier = hash
+subjectAltName = $sans
+EOF
+    # umask 077 (above): the key is created readable by its owner only.
+    if ! openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 825 -config "$cfg" \
+        -keyout "certs/tls.key.tmp.$$" -out "certs/tls.crt.tmp.$$" >/dev/null 2>&1; then
+        rm -f "$cfg" "certs/tls.key.tmp.$$" "certs/tls.crt.tmp.$$"
+        die "openssl couldn't create the certificate"
+    fi
+    rm -f "$cfg"
+    mv "certs/tls.key.tmp.$$" certs/tls.key
+    mv "certs/tls.crt.tmp.$$" certs/tls.crt
+    echo "Created a self-signed HTTPS certificate in certs/ for: $sans"
+}
+
+mkdir -p certs
+chmod 700 certs
+cert_created=0
+if [ -f certs/tls.crt ] && [ -f certs/tls.key ]; then
+    echo "Keeping existing certs/tls.crt and certs/tls.key"
+elif [ -f certs/tls.crt ] || [ -f certs/tls.key ]; then
+    die "only one of certs/tls.crt and certs/tls.key exists. Add the missing one (your
+certificate and its key), or remove the other to have a self-signed pair generated."
+else
+    new_self_signed_cert
+    cert_created=1
+fi
+
 if [ "$(id -u)" -eq 0 ]; then
     # Running as root: give each file to the container user that reads it.
     chown "$BACKEND_UID" secrets/master.key
     chmod 400 secrets/master.key
     chown "$BACKEND_UID:$PROMETHEUS_GID" secrets/prometheus_token
     chmod 440 secrets/prometheus_token
+    chown "$FRONTEND_UID" certs/tls.key
+    chmod 400 certs/tls.key
 else
     # Not root: we can't chown to the container users, so the files must be readable
-    # by them through their mode; the 700 secrets/ directory keeps everyone else out.
-    chmod 644 secrets/master.key secrets/prometheus_token
+    # by them through their mode; the 700 secrets/ and certs/ directories keep everyone
+    # else out.
+    chmod 644 secrets/master.key secrets/prometheus_token certs/tls.key
 fi
+chmod 644 certs/tls.crt  # public anyway
 
 if [ "$start" -eq 0 ]; then
     echo "Files ready. Start Vantage with: docker compose up -d"
@@ -131,44 +208,47 @@ echo "Starting Vantage (the first run builds the images and takes a few minutes)
 docker compose up -d
 
 bind=$(env_value VANTAGE_BIND_ADDRESS); bind=${bind:-127.0.0.1}
-port=$(env_value VANTAGE_HTTP_PORT); port=${port:-8080}
+port=$(env_value VANTAGE_HTTPS_PORT)
+[ -n "$port" ] || port=$(env_value VANTAGE_HTTP_PORT)  # the name before HTTPS
+port=${port:-8443}
 case "$bind" in
-    0.0.0.0|::|"[::]") check_host=127.0.0.1; shown_host="<this-server's-address>" ;;
-    *:*) check_host="[$bind]"; shown_host="[$bind]" ;;
-    *) check_host=$bind; shown_host=$bind ;;
+    0.0.0.0|::|"[::]") shown_host="<this-server's-address>" ;;
+    *:*) shown_host="[${bind#[}"; shown_host="${shown_host%]}]" ;;
+    *) shown_host=$bind ;;
 esac
 
-probe_tool=
-if command -v curl >/dev/null 2>&1; then probe_tool=curl
-elif command -v wget >/dev/null 2>&1; then probe_tool=wget
-fi
+# Health check from inside the frontend container, through nginx's upstream to the
+# backend: needs no curl/wget on the host, and no TLS verification exceptions for a
+# self-signed or not-yet-trusted certificate.
 probe() {
-    if [ "$probe_tool" = curl ]; then
-        curl -fsS -o /dev/null --max-time 5 "http://$check_host:$port/healthz" 2>/dev/null
-    else
-        wget -q -O /dev/null -T 5 "http://$check_host:$port/healthz" 2>/dev/null
-    fi
+    docker compose exec -T frontend wget -q -O /dev/null -T 5 http://backend:8000/healthz \
+        >/dev/null 2>&1
 }
 
 healthy=0
-if [ -z "$probe_tool" ]; then
-    echo "Neither curl nor wget found; not waiting for the health check."
-else
-    printf "Waiting for Vantage to answer"
-    i=0
-    while [ "$i" -lt 90 ]; do
-        if probe; then healthy=1; break; fi
-        printf "."
-        sleep 2
-        i=$((i + 1))
-    done
-    echo
-fi
+printf "Waiting for Vantage to answer"
+i=0
+while [ "$i" -lt 90 ]; do
+    if probe; then healthy=1; break; fi
+    printf "."
+    sleep 2
+    i=$((i + 1))
+done
+echo
 
+scheme=https
+[ "$(env_value VANTAGE_HTTPS)" = false ] && scheme=http
+url="$scheme://$shown_host:$port"
 if [ "$healthy" -eq 1 ]; then
-    echo "Vantage is running: http://$shown_host:$port"
+    echo "Vantage is running: $url"
     echo "Open it and create the admin account."
 else
-    echo "Vantage didn't report healthy yet. Check: docker compose ps; docker compose logs backend"
-    echo "Address once it's up: http://$shown_host:$port"
+    echo "Vantage didn't report healthy yet. Check: docker compose ps; docker compose logs frontend backend"
+    echo "Address once it's up: $url"
+fi
+if [ "$cert_created" -eq 1 ] && [ "$scheme" = https ]; then
+    echo
+    echo "The certificate is self-signed, so browsers show a warning the first time; check"
+    echo "the address and accept it. To use your own instead, replace certs/tls.crt and"
+    echo "certs/tls.key and run: docker compose restart frontend"
 fi

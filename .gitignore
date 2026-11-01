@@ -22,6 +22,7 @@ coverage/
 # Local data and secrets (never commit)
 .env
 deploy/secrets/
+deploy/certs/
 *.db
 *.sqlite3
 *.key

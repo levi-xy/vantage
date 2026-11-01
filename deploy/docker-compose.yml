@@ -33,8 +33,17 @@ services:
     <<: *hardening
     build: ../frontend
     depends_on: [backend]
+    # HTTPS (plain HTTP to the same port is redirected), unless VANTAGE_HTTPS=false.
+    # VANTAGE_HTTP_PORT is the name used before HTTPS, still honoured so an existing .env
+    # keeps its port.
     ports:
-      - "${VANTAGE_BIND_ADDRESS:-127.0.0.1}:${VANTAGE_HTTP_PORT:-8080}:8080"
+      - "${VANTAGE_BIND_ADDRESS:-127.0.0.1}:${VANTAGE_HTTPS_PORT:-${VANTAGE_HTTP_PORT:-8443}}:8443"
+    environment:
+      VANTAGE_HTTPS: ${VANTAGE_HTTPS:-true}
+      VANTAGE_HSTS: ${VANTAGE_HSTS:-false}
+    # Certificate and key from deploy/certs/ (read-only; setup.sh creates a self-signed
+    # pair when they're missing).
+    secrets: [tls_cert, tls_key]
     tmpfs: [/tmp]
     networks:
       default:
@@ -59,6 +68,10 @@ secrets:
     file: ./secrets/master.key
   prometheus_token:
     file: ./secrets/prometheus_token
+  tls_cert:
+    file: ./certs/tls.crt
+  tls_key:
+    file: ./certs/tls.key
 
 # A fixed subnet so the frontend's address is known in advance. Other containers get
 # addresses from ip_range only, so none of them can take the frontend's address.
