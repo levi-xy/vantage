@@ -111,13 +111,23 @@ def _strip_url(match: re.Match[str]) -> str:
     url = match.group(0)
     scheme, rest = url.split("://", 1)
     rest = re.split(r"[?#]", rest, maxsplit=1)[0]
-    if "@" in rest:  # user:password@host; strip up to the last "@" (over-strip, never leak)
-        rest = rest[rest.rfind("@") + 1 :]
-    return f"{scheme}://{rest}"
+    authority, slash, path = rest.partition("/")
+    if "@" in authority:  # user:password@host; up to the last "@" of the authority only
+        authority = authority[authority.rfind("@") + 1 :]
+    return f"{scheme}://{authority}{slash}{path}"
+
+
+# "user:password@host..." without a scheme.
+_BARE_USERINFO_RE = re.compile(r"^[^\s/@]+@")
 
 
 def clean_value(value: str) -> str:
-    return clean(_URL_RE.sub(_strip_url, clean(value, 4096)))
+    value = clean(value, 4096)
+    if "://" in value:
+        value = _URL_RE.sub(_strip_url, value)
+    else:
+        value = _BARE_USERINFO_RE.sub("", value)
+    return clean(value)
 
 
 def stored_labels(labels: Mapping[str, str]) -> dict[str, str]:

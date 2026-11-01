@@ -195,6 +195,31 @@ def test_link_requires_existing_instances(session: Session) -> None:
         session.commit()
 
 
+def test_one_open_event_per_rule_and_fingerprint(session: Session) -> None:
+    """The partial unique index: a second firing (rule, fingerprint) is refused; resolved
+    duplicates (history) and other fingerprints are fine."""
+    rule = AlertRule(name="r", expr="up == 0", severity="warning")
+    session.add(rule)
+    session.commit()
+
+    def event(fp: str, state: AlertState) -> AlertEvent:
+        return AlertEvent(
+            rule_id=rule.id,
+            fingerprint=fp,
+            rule_name="r",
+            severity="warning",
+            state=state,
+            started_at=datetime.now(UTC),
+        )
+
+    session.add_all([event("f1", AlertState.RESOLVED), event("f1", AlertState.RESOLVED)])
+    session.add_all([event("f1", AlertState.FIRING), event("f2", AlertState.FIRING)])
+    session.commit()
+    session.add(event("f1", AlertState.FIRING))
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
 def test_deleting_rule_row_keeps_its_events(session: Session) -> None:
     """P0-3a: events outlive their rule (ON DELETE SET NULL), with their snapshots."""
     rule = AlertRule(name="r", expr="up == 0", severity="warning", channel_ids=[1, 2])

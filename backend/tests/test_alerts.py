@@ -9,7 +9,6 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.alerts.evaluator import AlertEvaluator, clean
@@ -406,20 +405,7 @@ async def test_two_devices_down_under_one_rule_are_two_alerts(
     assert rec.sent[-1][1] == "RESOLVED: Gateway (critical): fw-b"
 
 
-def test_second_open_event_for_same_series_is_refused(engine: Engine, db: Session) -> None:
-    rule = add_rule(db)
-    open_event(db, rule.id, "f1")
-    with pytest.raises(IntegrityError):
-        open_event(db, rule.id, "f1")
-    db.rollback()
-    open_event(db, rule.id, "f2")  # another series is fine
-    first = events_by_fp(db)["f1"]
-    first.state = AlertState.RESOLVED
-    db.commit()
-    open_event(db, rule.id, "f1")  # and so is a new episode once the first one is closed
-
-
-async def test_legacy_event_is_adopted_by_a_series(
+async def test_legacy_event_is_adopted_by_a_single_series(
     engine: Engine, db: Session, prom: FakeProm
 ) -> None:
     rule = add_rule(db, for_seconds=0)
@@ -431,6 +417,103 @@ async def test_legacy_event_is_adopted_by_a_series(
     (event,) = events_by_fp(db).values()
     assert event.fingerprint != "legacy" and event.labels["if_index"] == "1"
     assert event.state == AlertState.FIRING and rec.sent == []  # no second FIRING message
+
+
+async def test_legacy_event_with_several_series_closes_quietly(
+    engine: Engine, db: Session, prom: FakeProm
+) -> None:
+    """Which device the old event meant is unknown: it must not swallow B's FIRING."""
+    rule = add_rule(db, for_seconds=0)
+    open_event(db, rule.id, "legacy")
+    rec = Recorder()
+    ev, _ = make_eval(engine, prom, rec, Clock())
+    prom.vector = [
+        {"vantage_instance": "fw-a", "vantage_instance_id": INSTANCE_ID},
+        {"vantage_instance": "fw-b", "vantage_instance_id": OTHER_ID},
+    ]
+    await ev.tick()
+    legacy = events_by_fp(db)["legacy"]
+    assert (legacy.state, legacy.end_reason) == (AlertState.RESOLVED, EndReason.RULE_CHANGED)
+    assert sorted(t for _, t in rec.sent) == [
+        "FIRING: Gateway (critical): fw-a",
+        "FIRING: Gateway (critical): fw-b",
+    ]
+
+
+async def test_disable_and_enable_within_one_tick_waits_the_full_for(
+    admin: TestClient,
+    engine: Engine,
+    db: Session,
+    prom: FakeProm,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rule_id = admin.post(f"{API}/alerts/rules", json={**RULE, "for_seconds": 600}).json()["id"]
+    rec, clock = Recorder(), Clock()
+    monkeypatch.setattr("app.api.alerts.utcnow", clock)
+    ev, _ = make_eval(engine, prom, rec, clock)
+    prom.vector = [{"vantage_instance": "fw"}]
+    await ev.tick()
+    clock.now += timedelta(seconds=601)
+    await ev.tick()
+    assert len(rec.sent) == 1  # FIRING
+    url = f"{API}/alerts/rules/{rule_id}"
+    admin.patch(url, json={"enabled": False})
+    admin.patch(url, json={"enabled": True})
+    clock.now += timedelta(seconds=30)
+    await ev.tick()
+    assert len(rec.sent) == 1  # the old timer must not fire it again at once
+    clock.now += timedelta(seconds=571)
+    await ev.tick()
+    assert len(rec.sent) == 2 and rec.sent[1][1].startswith("FIRING")
+
+
+async def test_closing_an_event_counts_for_again_from_the_close(
+    admin: TestClient,
+    engine: Engine,
+    db: Session,
+    prom: FakeProm,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    admin.post(f"{API}/alerts/rules", json=RULE)  # for 60 s
+    rec, clock = Recorder(), Clock()
+    monkeypatch.setattr("app.api.alerts.utcnow", clock)
+    ev, _ = make_eval(engine, prom, rec, clock)
+    prom.vector = [{"vantage_instance": "fw"}]
+    await ev.tick()
+    clock.now += timedelta(seconds=61)
+    await ev.tick()
+    (event,) = events_by_fp(db).values()
+    clock.now += timedelta(seconds=100)
+    assert admin.post(f"{API}/alerts/events/{event.id}/close").status_code == 200
+    clock.now += timedelta(seconds=30)
+    await ev.tick()
+    assert len(rec.sent) == 1
+    clock.now += timedelta(seconds=31)
+    await ev.tick()
+    assert len(rec.sent) == 2
+
+
+async def test_deleting_the_instance_of_a_scoped_rule_closes_its_events(
+    engine: Engine, db: Session, prom: FakeProm
+) -> None:
+    """The rule row goes with its instance (CASCADE), its events stay with rule_id NULL,
+    and the next tick resolves them as rule_deleted (no channel message: the rule is gone)."""
+    add_instance(db, INSTANCE_UUID, "fw-a")
+    rule = add_rule(db, for_seconds=0, instance_id=INSTANCE_UUID)
+    rule_id = rule.id
+    rec = Recorder()
+    ev, _ = make_eval(engine, prom, rec, Clock())
+    prom.vector = [{"vantage_instance_id": INSTANCE_ID}]
+    await ev.tick()
+    assert len(rec.sent) == 1
+    db.execute(Instance.__table__.delete().where(Instance.id == INSTANCE_UUID))
+    db.commit()
+    await ev.tick()
+    db.expire_all()
+    event = db.scalars(select(AlertEvent)).one()
+    assert event.rule_id is None and db.get(AlertRule, rule_id) is None
+    assert (event.state, event.end_reason) == (AlertState.RESOLVED, EndReason.RULE_DELETED)
+    assert len(rec.sent) == 1
 
 
 def test_deleting_a_rule_keeps_its_events(admin: TestClient, db: Session) -> None:

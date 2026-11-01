@@ -11,8 +11,10 @@ episode: created ``firing`` and later set to ``resolved`` with ``ended_at`` and
 
 Only the "pending since" timestamps live in memory, per (rule, fingerprint). Open events
 are re-read from the database on every tick, so a restart neither duplicates nor forgets a
-firing alert. Events from before migration 0006 (fingerprint ``legacy``) are matched to a
-series of their rule on the next successful evaluation, or resolved if there is none.
+firing alert. An open event from before migration 0006 (fingerprint ``legacy``) is, on the
+next successful evaluation: resolved (``recovered``) if the result is empty; adopted by the
+series if exactly one series has no event yet; otherwise resolved quietly
+(``rule_changed``), and each series opens its own event.
 
 Rule edits close events in the API, in the same transaction as the edit, and bump the
 rule's ``revision``. When the evaluator sees a new revision whose expression differs, it
@@ -48,6 +50,9 @@ log = logging.getLogger(__name__)
 DEFAULT_INTERVAL_SECONDS = 30.0
 MAX_PART_LENGTH = 48
 MAX_SUMMARY_LENGTH = 300
+# A series whose event ended for one of these reasons waits the full ``for`` again,
+# counted from the close.
+_RECOUNT_AFTER = (EndReason.CLOSED_BY_USER, EndReason.RULE_DISABLED, EndReason.RULE_CHANGED)
 
 
 def clean(text: str, limit: int = MAX_PART_LENGTH) -> str:
@@ -230,6 +235,9 @@ class AlertEvaluator:
 
     @staticmethod
     def _orphan_reasons(db: Session, events: list[AlertEvent]) -> dict[EndReason, list[AlertEvent]]:
+        """Disabled rule → rule_disabled; soft-deleted rule, or ``rule_id`` NULL (the rule
+        row went with its instance, ON DELETE CASCADE) → rule_deleted. Only a live push:
+        a gone rule has no channels left to message."""
         out: dict[EndReason, list[AlertEvent]] = {}
         for event in events:
             rule = db.get(AlertRule, event.rule_id) if event.rule_id is not None else None
@@ -257,12 +265,14 @@ class AlertEvaluator:
                 await self._resolve(event_id, rule.channel_ids)
         legacy_id = open_events.get(LEGACY_FINGERPRINT)
         if legacy_id is not None:
-            free = sorted(fp for fp in current if fp not in open_events)
-            if free:
+            free = [fp for fp in current if fp not in open_events]
+            if not current:  # the condition cleared: an ordinary recovery
+                await self._resolve(legacy_id, rule.channel_ids)
+            elif len(free) == 1:  # unambiguous: the old event belongs to this series
                 self._adopt_legacy(legacy_id, free[0], current[free[0]])
                 open_events = {**open_events, free[0]: legacy_id}
-            else:  # nothing firing, or every series already has its own event
-                await self._resolve(legacy_id, rule.channel_ids)
+            else:  # can't tell which device it was: close quietly, each series opens its own
+                self._retire_legacy(legacy_id)
 
         for key in [k for k in self._pending_since if k[0] == rule.id and k[1] not in current]:
             del self._pending_since[key]
@@ -288,6 +298,19 @@ class AlertEvaluator:
             except IntegrityError:
                 db.rollback()
 
+    def _retire_legacy(self, event_id: int) -> None:
+        """Resolve a pre-0006 open event that matches no single series (no message)."""
+        with self._sessions() as db:
+            event = db.get(AlertEvent, event_id)
+            if event is not None and close_events(
+                db, [event], EndReason.RULE_CHANGED, self._clock()
+            ):
+                db.commit()
+                message = event_message(event)
+            else:
+                return
+        self._hub.publish(message)
+
     async def _open(
         self, rule: AlertRule, fp: str, series: Series, since: datetime, now: datetime
     ) -> None:
@@ -300,12 +323,14 @@ class AlertEvaluator:
                 or current.deleted_at is not None
             ):
                 return  # edited while the query ran: the next tick re-evaluates it
-            # A user closed this alert after it started pending: count again from there.
+            # Closed by hand or by a rule edit after it started pending: count again from
+            # the close. Covers edits that land between two ticks (disable then enable,
+            # scope X then back), which leave the in-memory timer in place.
             closed_at = db.scalar(
                 select(func.max(AlertEvent.ended_at)).where(
                     AlertEvent.rule_id == rule.id,
                     AlertEvent.fingerprint == fp,
-                    AlertEvent.end_reason == EndReason.CLOSED_BY_USER,
+                    AlertEvent.end_reason.in_(_RECOUNT_AFTER),
                 )
             )
             if closed_at is not None and closed_at > since:

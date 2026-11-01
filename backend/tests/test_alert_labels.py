@@ -89,6 +89,20 @@ def test_url_value_loses_credentials_and_query() -> None:
     assert stored_labels(labels)["target"] == "https://192.0.2.10:8443/health"
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("admin:example-pass@192.0.2.1", "192.0.2.1"),  # no scheme
+        ("admin:example-pass@192.0.2.1/status", "192.0.2.1/status"),
+        ("http://u:example-pass@[2001:db8::1]:8080/x?y=1", "http://[2001:db8::1]:8080/x"),
+        ("http://192.0.2.1/a@b/c", "http://192.0.2.1/a@b/c"),  # "@" in the path stays
+        ("http://u:example-pass@192.0.2.1/a@b", "http://192.0.2.1/a@b"),
+    ],
+)
+def test_url_userinfo_is_stripped_from_the_authority_only(raw: str, expected: str) -> None:
+    assert stored_labels({"target": raw})["target"] == expected
+
+
 def test_stored_values_are_cleaned_and_names_checked() -> None:
     stored = stored_labels({**PORT, "if_alias": "up\nlink\x00" + "x" * 300, "bad-name": "v"})
     assert "\n" not in stored["if_alias"] and len(stored["if_alias"]) == 128
