@@ -195,6 +195,12 @@ else
 fi
 chmod 644 certs/tls.crt  # public anyway
 
+# An .env from before HTTPS may still say COOKIE_SECURE=false for plain-HTTP LAN use.
+if [ "$(env_value VANTAGE_HTTPS)" != false ] && [ "$(env_value VANTAGE_COOKIE_SECURE)" = false ]; then
+    echo "Warning: HTTPS is on but VANTAGE_COOKIE_SECURE=false in .env, so the session cookie"
+    echo "can still be sent over plain HTTP. Remove that line (or set it to true)."
+fi
+
 if [ "$start" -eq 0 ]; then
     echo "Files ready. Start Vantage with: docker compose up -d"
     exit 0
@@ -250,5 +256,6 @@ if [ "$cert_created" -eq 1 ] && [ "$scheme" = https ]; then
     echo
     echo "The certificate is self-signed, so browsers show a warning the first time; check"
     echo "the address and accept it. To use your own instead, replace certs/tls.crt and"
-    echo "certs/tls.key and run: docker compose restart frontend"
+    echo "certs/tls.key, then run ./setup.sh (it fixes the key's owner and mode) and"
+    echo "docker compose restart frontend"
 fi
