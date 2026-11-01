@@ -80,6 +80,35 @@ export interface AlertEventQuery {
   state?: AlertState;
 }
 
+export type AlertSeverity = "info" | "warning" | "critical";
+
+/** `GET /alerts/rules` (admin only). */
+export interface AlertRule {
+  id: number;
+  name: string;
+  expr: string;
+  for_seconds: number;
+  severity: AlertSeverity;
+  /** Limits the rule to one device; null means all. */
+  instance_id: string | null;
+  channel_ids: number[];
+  enabled: boolean;
+}
+
+/** Body of `POST /alerts/rules`; `PATCH` takes any subset. */
+export type AlertRuleInput = Omit<AlertRule, "id">;
+
+/** `GET /alerts/templates` (admin only): a suggested rule. */
+export interface AlertTemplate {
+  id: string;
+  name: string;
+  description: string;
+  integration_types: string[];
+  expr: string;
+  for_seconds: number;
+  severity: AlertSeverity;
+}
+
 export interface AuditQuery {
   /** 1 to 200; the backend defaults to 50. */
   limit?: number;

@@ -57,11 +57,7 @@ export const routes: RouteObject[] = [
       },
       {
         path: "alerts",
-        element: (
-          <RequireRole role="admin">
-            <AlertsPage />
-          </RequireRole>
-        ),
+        element: <AlertsPage />,
       },
       {
         path: "audit",
