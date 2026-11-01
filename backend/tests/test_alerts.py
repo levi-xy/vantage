@@ -247,6 +247,25 @@ async def test_restart_keeps_open_event_and_prometheus_errors_change_nothing(
     assert db.scalars(select(AlertEvent)).one().state == AlertState.FIRING
 
 
+async def test_failing_rule_is_logged_once_without_prometheus_text(
+    engine: Engine, db: Session, prom: FakeProm, caplog: pytest.LogCaptureFixture
+) -> None:
+    rule = add_rule(db)
+    ev, _ = make_eval(engine, prom, Recorder(), Clock())
+    prom.error = {"errorType": "bad_data", "error": "parse error near prometheus.internal"}
+    with caplog.at_level(logging.INFO, logger="app.alerts.evaluator"):
+        await ev.tick()
+        await ev.tick()
+        prom.error = None
+        await ev.tick()
+    lines = [r.getMessage() for r in caplog.records if r.name == "app.alerts.evaluator"]
+    assert lines == [
+        f"alert rule {rule.id} can't be evaluated (HTTP 400: invalid PromQL query); "
+        "keeping its state",
+        f"alert rule {rule.id} is evaluated again",
+    ]
+
+
 async def test_instance_scope_and_disabled_rule(
     engine: Engine, db: Session, prom: FakeProm
 ) -> None:

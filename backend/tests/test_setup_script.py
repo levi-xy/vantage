@@ -137,6 +137,9 @@ def test_plain_http_opt_out_prints_http_url(deploy: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert "Vantage is running: http://127.0.0.1:8443" in result.stdout
     assert "self-signed" not in result.stdout.split("Vantage is running")[1]
+    assert "VANTAGE_PUBLIC_HOSTS is empty" in result.stdout
+    (deploy / ".env").write_text("VANTAGE_HTTPS=false\nVANTAGE_PUBLIC_HOSTS=192.0.2.10\n")
+    assert "VANTAGE_PUBLIC_HOSTS" not in run(deploy).stdout
 
 
 def openssl_text(cert: Path) -> str:

@@ -61,6 +61,13 @@ export interface ApiClientOptions {
   onUnauthorized?: () => void;
 }
 
+/**
+ * `POST /query` calls this client runs at once; the rest wait in order. The backend
+ * answers 429 past two per session (backend/app/query/proxy.py), and a dashboard asks
+ * for many cards at the same moment.
+ */
+export const MAX_QUERIES_IN_FLIGHT = 2;
+
 // A 401 from these paths is a failed credential check, not an ended session, so it
 // doesn't notify the unauthorized listeners (which send the user to the login page).
 const CREDENTIAL_PATHS: ReadonlySet<string> = new Set(["/auth/login"]);
@@ -86,6 +93,8 @@ export class ApiClient {
   readonly #unauthorizedListeners = new Set<() => void>();
   // In memory only: never written to localStorage/sessionStorage (AGENTS.md frontend rules).
   #csrfToken: string | null = null;
+  #queriesRunning = 0;
+  readonly #queryWaiters: (() => void)[] = [];
 
   constructor(options: ApiClientOptions = {}) {
     this.#fetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
@@ -255,8 +264,20 @@ export class ApiClient {
   }
 
   /** PromQL proxy: an instant query, or a range query when `start`, `end` and `step` are set. */
-  query(request: QueryRequest): Promise<QueryResult> {
-    return this.request("POST", "/query", request);
+  async query(request: QueryRequest): Promise<QueryResult> {
+    if (this.#queriesRunning < MAX_QUERIES_IN_FLIGHT) {
+      this.#queriesRunning++;
+    } else {
+      // A finishing query hands its slot straight to the next waiter.
+      await new Promise<void>((resolve) => this.#queryWaiters.push(resolve));
+    }
+    try {
+      return await this.request<QueryResult>("POST", "/query", request);
+    } finally {
+      const next = this.#queryWaiters.shift();
+      if (next) next();
+      else this.#queriesRunning--;
+    }
   }
 
   integrations(): Promise<IntegrationInfo[]> {

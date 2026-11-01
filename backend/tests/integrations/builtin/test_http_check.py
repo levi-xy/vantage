@@ -39,8 +39,8 @@ from tests.integrations.netfake import (
 from tests.test_auth import do_setup, make_client
 
 TOKEN = "example-token-http-check-7f3a"
-URL = "http://web.example.internal/health?probe=1"
-ADDRESS = ("10.0.0.10", 80)
+URL = "https://web.example.internal/health?probe=1"
+ADDRESS = ("10.0.0.10", 443)
 
 
 def config(**overrides: Any) -> dict[str, Any]:
@@ -144,7 +144,20 @@ def test_token_is_a_secret_and_url_is_a_host_field() -> None:
     assert secrets == {"bearer_token": TOKEN}
     assert "bearer_token" not in stored
     # The SSRF pre-check on save finds the URL by its field name.
-    assert ic.configured_hosts(stored) == [("url", "web.example.internal", 80, "http")]
+    assert ic.configured_hosts(stored) == [("url", "web.example.internal", 443, "https")]
+
+
+def test_bearer_token_needs_https() -> None:
+    # Over plain HTTP the token would cross the network readable; no token is fine.
+    plain = "http://10.0.0.10/health"
+    assert HttpCheckConfig.model_validate({"url": plain}).bearer_token is None
+    with pytest.raises(ValidationError) as info:
+        HttpCheckConfig.model_validate(config(url=plain))
+    errors = info.value.errors(include_input=False, include_url=False, include_context=False)
+    assert [e["msg"] for e in errors] == [
+        "Value error, a bearer token is only sent to an https:// URL"
+    ]
+    assert_no_token(json.dumps(errors))
 
 
 # --- test_connection -------------------------------------------------------------------
@@ -224,11 +237,11 @@ async def test_connection_failure_gives_firewall_hint(
     fake_net.fail(*ADDRESS, error)
     result = await run_test()
     assert not result.ok
-    assert "web.example.internal:80" in result.message
+    assert "web.example.internal:443" in result.message
     assert result.hint is not None
     assert result.hint.model_dump() == {
         "protocol": "tcp",
-        "port": 80,
+        "port": 443,
         "destination": "web.example.internal",
         "reason": "The Vantage backend requests the checked URL on this port.",
     }
@@ -238,12 +251,12 @@ async def test_connection_overall_timeout_gives_firewall_hint(fake_net: FakeNetw
     fake_net.serve(*ADDRESS, hang)
     result = await run_test(timeout_seconds=1)
     assert not result.ok
-    assert result.message == "timed out waiting for web.example.internal:80"
-    assert result.hint is not None and result.hint.port == 80
+    assert result.message == "timed out waiting for web.example.internal:443"
+    assert result.hint is not None and result.hint.port == 443
 
 
 async def test_connection_refused_by_guard(fake_net: FakeNetwork) -> None:
-    result = await run_test(url="http://metadata.example.internal/latest/meta-data")
+    result = await run_test(url="https://metadata.example.internal/latest/meta-data")
     assert not result.ok
     assert result.message.startswith("refused by the network guard:")
     assert "169.254.169.254" in result.message
@@ -252,13 +265,13 @@ async def test_connection_refused_by_guard(fake_net: FakeNetwork) -> None:
 
 
 async def test_connection_loopback_literal_refused(fake_net: FakeNetwork) -> None:
-    result = await run_test(url="http://127.0.0.1:8080/")
+    result = await run_test(url="https://127.0.0.1:8080/")
     assert not result.ok and "network guard" in result.message
     assert fake_net.connects == []
 
 
 async def test_connection_unknown_host(fake_net: FakeNetwork) -> None:
-    result = await run_test(url="http://missing.example.internal/")
+    result = await run_test(url="https://missing.example.internal/")
     assert not result.ok
     assert "could not resolve missing.example.internal" in result.message
 
@@ -267,7 +280,7 @@ async def test_connection_protocol_error(fake_net: FakeNetwork) -> None:
     fake_net.serve(*ADDRESS, b"this is not HTTP\r\n\r\n")
     result = await run_test()
     assert not result.ok
-    assert result.message.startswith("request to web.example.internal:80 failed (")
+    assert result.message.startswith("request to web.example.internal:443 failed (")
 
 
 async def test_unrecognised_errors_propagate(fake_net: FakeNetwork) -> None:
@@ -296,12 +309,15 @@ async def test_messages_never_echo_error_text(fake_net: FakeNetwork) -> None:
 async def test_token_never_logged(fake_net: FakeNetwork, caplog: pytest.LogCaptureFixture) -> None:
     # DEBUG includes httpx/httpcore request tracing: the Authorization header is never in it.
     caplog.set_level(logging.DEBUG)
+    # The app keeps these loggers at WARNING; lower them to prove the redaction holds.
+    caplog.set_level(logging.DEBUG, logger="httpx")
+    caplog.set_level(logging.DEBUG, logger="httpcore")
     fake_net.serve(*ADDRESS, http_response(200))
     await run_test()
     await poll()
     fake_net.fail(*ADDRESS, httpcore.ConnectError("refused"))
     await run_test()
-    await run_test(url="http://metadata.example.internal/")
+    await run_test(url="https://metadata.example.internal/")
     assert caplog.records  # the tracing really was captured
     assert_no_token(caplog.text)
 
@@ -369,7 +385,7 @@ async def test_poll_raises_without_a_response(
 
 async def test_poll_refused_by_guard(fake_net: FakeNetwork) -> None:
     with pytest.raises(NetGuardError):
-        await poll(url="http://metadata.example.internal/")
+        await poll(url="https://metadata.example.internal/")
     assert fake_net.connects == []
 
 
@@ -490,7 +506,9 @@ def test_api_create_test_and_read_never_show_the_token(
 
 
 def test_api_refuses_url_pointing_at_metadata(admin: TestClient, fake_net: FakeNetwork) -> None:
-    r = admin.post("/api/v1/instances", json=instance_body(url="http://metadata.example.internal/"))
+    r = admin.post(
+        "/api/v1/instances", json=instance_body(url="https://metadata.example.internal/")
+    )
     assert r.status_code == 422
     assert fake_net.connects == []
     assert_no_token(r.text)

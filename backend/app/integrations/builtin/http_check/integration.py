@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from typing import ClassVar
 
 import httpx
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 from app.integrations.base import (
     CardSpec,
@@ -101,7 +101,9 @@ class HttpCheckConfig(BaseModel):
     bearer_token: SecretStr | None = Field(
         default=None,
         title="Bearer token",
-        description="Optional. Sent as an Authorization header to this URL only.",
+        description=(
+            "Optional. Sent as an Authorization header to this URL only; needs an https:// URL."
+        ),
     )
 
     @field_validator("url")
@@ -125,6 +127,14 @@ class HttpCheckConfig(BaseModel):
         # IDN labels to Unicode, which parse_host refuses.
         checked_host(url.raw_host.decode("ascii"))
         return value
+
+    @model_validator(mode="after")
+    def _token_needs_https(self) -> "HttpCheckConfig":
+        # Over plain HTTP anyone on the path could read the token. The message names the
+        # field only, never the token or the URL.
+        if self.bearer_token is not None and httpx.URL(self.url).scheme != "https":
+            raise ValueError("a bearer token is only sent to an https:// URL")
+        return self
 
     def accepts(self, status: int) -> bool:
         if self.expected_status is not None:

@@ -89,6 +89,26 @@ describe("live updates", () => {
     }
   });
 
+  it("goes to the login page when the backend ends the session (4401), without reconnecting", async () => {
+    const b = backend();
+    renderApp("/devices", b);
+    await screen.findByText("nas-1");
+    act(() => sock(0).open());
+    b.state.session = null; // the session ended on the server
+    act(() => sock(0).drop(4401));
+    expect(await screen.findByRole("heading", { level: 1, name: "Log in" })).toBeInTheDocument();
+    expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+
+  it("checks the session when the handshake is refused", async () => {
+    const b = backend();
+    renderApp("/devices", b);
+    await screen.findByText("nas-1");
+    b.state.session = null;
+    act(() => sock(0).drop()); // closed before it ever opened: refused or unreachable
+    expect(await screen.findByRole("heading", { level: 1, name: "Log in" })).toBeInTheDocument();
+  });
+
   it("stores nothing in localStorage", async () => {
     renderApp("/devices", backend());
     await screen.findByText("nas-1");

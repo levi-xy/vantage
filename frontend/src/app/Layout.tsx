@@ -1,12 +1,12 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { NavLink, Outlet } from "react-router";
 import type { Role } from "../api";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { buttonSecondary } from "../components/styles";
 import { useLiveUpdates } from "./live";
 import type { LiveState } from "./live";
-import { useSession, useUser } from "./session";
+import { useApiClient, useSession, useUser } from "./session";
 
 interface NavItem {
   to: string;
@@ -90,7 +90,12 @@ function navClass({ isActive }: { isActive: boolean }): string {
 export function Layout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const user = useUser();
-  const live = useLiveUpdates(useQueryClient());
+  const client = useApiClient();
+  // A 401 here reaches the session's unauthorized listener, which shows the login page.
+  const checkSession = useCallback(() => {
+    client.me().catch(() => undefined);
+  }, [client]);
+  const live = useLiveUpdates(useQueryClient(), checkSession);
   const nav = NAV.filter((item) => item.role === undefined || item.role === user.role);
 
   return (

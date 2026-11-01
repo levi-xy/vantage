@@ -25,6 +25,9 @@ from app.collectors.store import InstanceStatus
 
 QUEUE_SIZE = 64
 MAX_CONNECTIONS = 200
+# Sockets one login session may hold open (a few browser tabs); more is refused, so one
+# user can't use up MAX_CONNECTIONS for everybody.
+MAX_CONNECTIONS_PER_SESSION = 8
 
 Message = dict[str, Any]
 
@@ -49,21 +52,31 @@ def refresh_message(instance_id: uuid.UUID) -> Message:
 
 
 class Subscriber:
-    def __init__(self) -> None:
+    def __init__(self, key: str | None = None) -> None:
+        # Who holds it (a session id), for the per-session cap; None = not counted.
+        self.key = key
         self.queue: asyncio.Queue[Message] = asyncio.Queue(maxsize=QUEUE_SIZE)
         # Set when the queue overflowed; the socket handler then closes the connection.
         self.dropped = asyncio.Event()
+        # Set once its per-session slot is given back (unsubscribe may run twice).
+        self.released = False
 
 
 class EventHub:
     def __init__(self) -> None:
         self._subscribers: set[Subscriber] = set()
+        self._per_key: dict[str, int] = {}
 
-    def subscribe(self) -> Subscriber | None:
-        """A new subscriber, or None when too many sockets are open."""
+    def subscribe(self, key: str | None = None) -> Subscriber | None:
+        """A new subscriber, or None when too many sockets are open, in total or for
+        ``key`` (the session id of the socket)."""
         if len(self._subscribers) >= MAX_CONNECTIONS:
             return None
-        sub = Subscriber()
+        if key is not None:
+            if self._per_key.get(key, 0) >= MAX_CONNECTIONS_PER_SESSION:
+                return None
+            self._per_key[key] = self._per_key.get(key, 0) + 1
+        sub = Subscriber(key)
         self._subscribers.add(sub)
         return sub
 
@@ -73,6 +86,13 @@ class EventHub:
 
     def unsubscribe(self, sub: Subscriber) -> None:
         self._subscribers.discard(sub)
+        if sub.key is not None and not sub.released:
+            sub.released = True
+            left = self._per_key.get(sub.key, 0) - 1
+            if left > 0:
+                self._per_key[sub.key] = left
+            else:
+                self._per_key.pop(sub.key, None)
 
     def publish(self, message: Message) -> None:
         for sub in list(self._subscribers):

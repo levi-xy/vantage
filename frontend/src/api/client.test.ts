@@ -1,4 +1,4 @@
-import { ApiClient, ApiError, API_BASE, CSRF_HEADER } from "./client";
+import { ApiClient, ApiError, API_BASE, CSRF_HEADER, MAX_QUERIES_IN_FLIGHT } from "./client";
 import type { Me } from "./types";
 
 const ME: Me = { id: 1, username: "admin", role: "admin", csrf_token: "example-csrf-token" };
@@ -264,5 +264,28 @@ describe("ApiClient errors", () => {
       status: 0,
       message: "Could not reach the Vantage backend",
     });
+  });
+});
+
+describe("ApiClient queries", () => {
+  it("runs at most two /query calls at once and queues the rest in order", async () => {
+    const pending: ((r: Response) => void)[] = [];
+    const fetchMock = vi.fn<typeof fetch>(
+      () => new Promise<Response>((resolve) => pending.push(resolve)),
+    );
+    const client = new ApiClient({ fetch: fetchMock });
+    const result = { result_type: "vector", series: [], warnings: [] };
+    const calls = [1, 2, 3, 4].map((n) => client.query({ query: `q${n}` }));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(MAX_QUERIES_IN_FLIGHT));
+    pending.shift()?.(json({ detail: "too many queries in progress; try again" }, 429));
+    await expect(calls[0]).rejects.toMatchObject({ status: 429 });
+    // A failed query frees its slot too: the third goes out, the fourth still waits.
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual({ query: "q3" });
+    pending.shift()?.(json(result));
+    await expect(calls[1]).resolves.toEqual(result);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+    pending.splice(0).forEach((resolve) => resolve(json(result)));
+    await expect(Promise.all(calls.slice(2))).resolves.toHaveLength(2);
   });
 });

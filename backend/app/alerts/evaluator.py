@@ -1,7 +1,9 @@
 """Alert rule evaluator (M7.1).
 
-Every ``interval`` seconds each enabled rule runs as an instant query through the
-guarded Prometheus client (``app.query.proxy``, same budget as the browser's queries).
+Every ``interval`` seconds each enabled rule runs as an instant query through a guarded
+Prometheus client of its own (``app.query.proxy``, same budget as the browser's queries,
+but a separate connection pool and outside the ``/query`` concurrency caps, so browser
+queries can't starve it).
 A rule fires once its result has been non-empty for ``for_seconds`` without a gap, and
 resolves when the result is empty again. One ``alert_events`` row covers one episode:
 it is created ``firing`` and later set to ``resolved`` with ``ended_at``.
@@ -108,6 +110,9 @@ class AlertEvaluator:
         self._interval = interval
         self._clock = clock
         self._pending_since: dict[int, datetime] = {}
+        # Rules whose last query failed: logged once when they start failing and once when
+        # they recover, so a broken rule or an unreachable Prometheus never goes unnoticed.
+        self._failing: set[int] = set()
         self._task: asyncio.Task[None] | None = None
 
     def start(self) -> None:
@@ -142,6 +147,7 @@ class AlertEvaluator:
         for event_id in stale:  # the rule was disabled while firing
             await self._resolve(event_id)
         self._pending_since = {k: v for k, v in self._pending_since.items() if k in enabled}
+        self._failing &= enabled
         for rule in rules:
             try:
                 await self._evaluate(rule)
@@ -151,8 +157,21 @@ class AlertEvaluator:
     async def _evaluate(self, rule: AlertRule) -> None:
         try:
             result = await self._prometheus().query(QueryRequest(query=rule.expr))
-        except QueryError:
-            return  # Prometheus unavailable or the expr is broken: keep the current state
+        except QueryError as exc:
+            # Prometheus unavailable or the expr is broken: keep the current state. The
+            # message is the proxy's short, fixed text (never Prometheus' own error).
+            if rule.id not in self._failing:
+                self._failing.add(rule.id)
+                log.warning(
+                    "alert rule %d can't be evaluated (HTTP %d: %s); keeping its state",
+                    rule.id,
+                    exc.status_code,
+                    exc.message,
+                )
+            return
+        if rule.id in self._failing:
+            self._failing.discard(rule.id)
+            log.info("alert rule %d is evaluated again", rule.id)
         series = [s for s in result.series if _in_scope(rule, s)]
         now = self._clock()
         if not series:

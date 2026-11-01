@@ -37,6 +37,11 @@ QUERY_TIMEOUT_SECONDS = 10  # Prometheus' own evaluation timeout
 TOTAL_TIMEOUT_SECONDS = 15.0  # the whole call to Prometheus
 MAX_WARNINGS = 10
 MAX_WARNING_LENGTH = 300
+# Queries running at once (POST /query): over everyone, and per login session. A full
+# slot answers 429 at once; nothing waits. The alert evaluator has its own client and
+# never counts against these.
+MAX_CONCURRENT_QUERIES = 6
+MAX_QUERIES_PER_SESSION = 2
 
 ResultType = Literal["vector", "matrix", "scalar", "string"]
 
@@ -80,6 +85,39 @@ class QueryError(Exception):
         super().__init__(message)
         self.status_code = status_code
         self.message = message
+
+
+class QueryGate:
+    """Caps the queries in flight, in total and per key (a session id). Non-blocking.
+
+    Single event loop, so plain counters are enough: ``acquire`` and ``release`` never
+    await, so nothing interleaves between the check and the update.
+    """
+
+    def __init__(
+        self, total: int = MAX_CONCURRENT_QUERIES, per_key: int = MAX_QUERIES_PER_SESSION
+    ) -> None:
+        self._total = total
+        self._per_key = per_key
+        self._running = 0
+        self._by_key: dict[str, int] = {}
+
+    def acquire(self, key: str) -> bool:
+        """Take a slot for ``key``; False (and nothing taken) when either cap is reached."""
+        held = self._by_key.get(key, 0)
+        if self._running >= self._total or held >= self._per_key:
+            return False
+        self._running += 1
+        self._by_key[key] = held + 1
+        return True
+
+    def release(self, key: str) -> None:
+        self._running -= 1
+        held = self._by_key.get(key, 0) - 1
+        if held > 0:
+            self._by_key[key] = held
+        else:
+            self._by_key.pop(key, None)
 
 
 def check_budget(req: QueryRequest) -> dict[str, str]:
@@ -201,10 +239,17 @@ def _parse(status_code: int, body: bytes) -> QueryResult:
                 if "value" in item  # native-histogram samples aren't supported yet
             ]
         elif result_type == "matrix":
-            series = [
-                Series(labels=item["metric"], values=[_point(p) for p in item.get("values", [])])
-                for item in raw
-            ]
+            # An instant query can return a matrix too (a range selector such as up[30d]),
+            # which the step budget doesn't bound: cap the points per series here.
+            series = []
+            for item in raw:
+                points = item.get("values", [])
+                if len(points) > MAX_POINTS_PER_SERIES:
+                    raise QueryError(
+                        422,
+                        f"more than {MAX_POINTS_PER_SERIES} points per series; narrow the query",
+                    )
+                series.append(Series(labels=item["metric"], values=[_point(p) for p in points]))
         else:
             raise ValueError("unknown result type")
     except (KeyError, TypeError, ValueError):

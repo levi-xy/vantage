@@ -102,7 +102,8 @@ async def live(ws: WebSocket) -> None:
     await ws.accept()
     # Subscribe only once the handshake is done: an aborted handshake can't leave a
     # subscriber behind and use up the hub's connection cap.
-    sub = hub.subscribe()
+    # Capped per session (keyed by the hashed session id, never the token itself).
+    sub = hub.subscribe(session_id(token))
     if sub is None:
         await ws.close(CLOSE_TRY_AGAIN)
         return

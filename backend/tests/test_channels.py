@@ -185,6 +185,9 @@ def test_test_message_goes_through_the_guard_to_telegram(
     admin: TestClient, network: FakeNetwork, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.DEBUG)
+    # The app keeps these loggers at WARNING; lower them to prove the redaction holds.
+    caplog.set_level(logging.DEBUG, logger="httpx")
+    caplog.set_level(logging.DEBUG, logger="httpcore")
     network.serve(ADDRESS, 443, telegram())
     cid = create(admin)["id"]
     r = admin.post(f"{API}/channels/{cid}/test")

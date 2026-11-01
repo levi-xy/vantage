@@ -1,5 +1,6 @@
 """Live updates socket (M5.3)."""
 
+import contextlib
 import uuid
 from collections.abc import Iterator
 
@@ -9,7 +10,12 @@ from sqlalchemy import Engine, delete
 from starlette.websockets import WebSocketDisconnect
 
 from app.api import ws as ws_module
-from app.collectors.hub import QUEUE_SIZE, EventHub, status_message
+from app.collectors.hub import (
+    MAX_CONNECTIONS_PER_SESSION,
+    QUEUE_SIZE,
+    EventHub,
+    status_message,
+)
 from app.collectors.store import InstanceStatus
 from app.core.db import make_session_factory
 from app.models import UserSession
@@ -105,3 +111,32 @@ def test_slow_client_is_dropped_instead_of_growing_the_queue() -> None:
     assert sub.dropped.is_set()
     h.publish(message)  # no longer subscribed
     assert sub.queue.qsize() == QUEUE_SIZE
+
+
+def test_one_session_can_hold_only_a_few_sockets(client: TestClient) -> None:
+    with contextlib.ExitStack() as stack:
+        socks = [stack.enter_context(connect(client)) for _ in range(MAX_CONNECTIONS_PER_SESSION)]
+        socks[-1].send_text("ping")
+        assert socks[-1].receive_json() == {"type": "pong"}
+        with connect(client) as extra:  # accepted, then closed before subscribing
+            with pytest.raises(WebSocketDisconnect) as info:
+                extra.receive_json()
+        assert info.value.code == ws_module.CLOSE_TRY_AGAIN
+        assert hub(client).subscriber_count == MAX_CONNECTIONS_PER_SESSION
+    # Closed sockets give their slots back.
+    with connect(client) as sock:
+        sock.send_text("ping")
+        assert sock.receive_json() == {"type": "pong"}
+
+
+def test_hub_cap_is_per_key_and_released_once() -> None:
+    h = EventHub()
+    subs = [h.subscribe("a") for _ in range(MAX_CONNECTIONS_PER_SESSION)]
+    assert all(subs) and h.subscribe("a") is None
+    assert h.subscribe("b") is not None  # another session is unaffected
+    first = subs[0]
+    assert first is not None
+    h.unsubscribe(first)
+    h.unsubscribe(first)  # twice (dropped, then the handler's finally) frees one slot
+    assert h.subscribe("a") is not None
+    assert h.subscribe("a") is None

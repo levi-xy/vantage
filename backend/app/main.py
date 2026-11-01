@@ -1,5 +1,6 @@
 """FastAPI application entry point."""
 
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -7,6 +8,7 @@ from datetime import timedelta
 from fastapi import FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app import __version__
 from app.alerts.channels import ChannelNotifier, default_client_factory
@@ -19,7 +21,7 @@ from app.collectors.hub import EventHub
 from app.collectors.scheduler import PollScheduler
 from app.collectors.store import MetricsStore, make_registry
 from app.core.auth import LoginRateLimiter, Passwords
-from app.core.config import Settings, get_settings
+from app.core.config import Settings, get_settings, host_allowed
 from app.core.crypto import SecretBox, load_master_key
 from app.core.db import make_engine, make_session_factory
 from app.core.login_failures import UserLoginFailures
@@ -28,7 +30,7 @@ from app.core.prometheus_auth import PrometheusToken, load_prometheus_token
 from app.integrations.instance_config import NetGuardFactory, default_net_guard_factory
 from app.integrations.registry import Registry, builtin_registry
 from app.live.rates import LiveRates
-from app.query.proxy import PrometheusClient
+from app.query.proxy import PrometheusClient, QueryGate
 from app.sd.targets import router as sd_router
 
 
@@ -48,6 +50,10 @@ def create_app(
     or (``PrometheusTokenError``) when a Prometheus token is configured but unusable.
     """
     settings = settings or get_settings()
+    # httpx logs every request URL at INFO, and the Telegram API takes the bot token in
+    # the URL path: keep both client libraries at WARNING whatever the root level is.
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)
     secret_box = secret_box or SecretBox(load_master_key())
     # None when not configured: the Prometheus-only endpoints then answer 503.
     prometheus_token = prometheus_token or load_prometheus_token()
@@ -68,6 +74,7 @@ def create_app(
             await live_rates.stop()
             await poller.stop()
             await app.state.prometheus.aclose()
+            await app.state.alert_prometheus.aclose()
             engine.dispose()
 
     # Interactive API docs are off unless VANTAGE_API_DOCS is set (development only).
@@ -100,6 +107,14 @@ def create_app(
     app.state.prometheus = prometheus_client or PrometheusClient.guarded(
         settings.prometheus_url, NetGuard(NetPolicy())
     )
+    # Browser queries run at most a few at a time (in total and per session); a full
+    # slot answers 429 instead of queueing.
+    app.state.query_gate = QueryGate()
+    # The alert evaluator gets its own client (own connection pool, no /query caps), so
+    # browser queries can never starve alert evaluation.
+    app.state.alert_prometheus = PrometheusClient.guarded(
+        settings.prometheus_url, NetGuard(NetPolicy())
+    )
     # Poll collector (M2.4): results kept in memory, served on /metrics.
     app.state.metrics_store = MetricsStore()
     app.state.metrics_registry = make_registry(app.state.metrics_store)
@@ -130,7 +145,7 @@ def create_app(
     )
     app.state.alert_evaluator = AlertEvaluator(
         session_factory=app.state.session_factory,
-        prometheus=lambda: app.state.prometheus,
+        prometheus=lambda: app.state.alert_prometheus,
         hub=app.state.event_hub,
         notifier=lambda: app.state.notifier,
     )
@@ -140,6 +155,9 @@ def create_app(
     app.include_router(metrics_router)
     app.add_exception_handler(RequestValidationError, _validation_error)
     app.middleware("http")(_api_guard)
+    if settings.public_hosts:
+        # Added last, so it runs first, for HTTP and WebSocket requests alike.
+        app.add_middleware(PublicHostGuard, allowed=settings.public_hosts)
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz() -> dict[str, str]:
@@ -173,3 +191,35 @@ async def _api_guard(
     # API responses carry user data and CSRF tokens; keep them out of caches.
     response.headers["Cache-Control"] = "no-store"
     return response
+
+
+class PublicHostGuard:
+    """Refuse ``/api/*`` (including the ``/api/v1/ws`` socket) for a Host not listed in
+    ``VANTAGE_PUBLIC_HOSTS``: 400 for HTTP, a refused handshake for WebSocket.
+
+    A DNS-rebinding page reaches the backend under its own host name; this stops it from
+    using the API. ``/healthz``, ``/sd/targets`` and ``/metrics`` stay reachable by their
+    compose-network names.
+    """
+
+    def __init__(self, app: ASGIApp, allowed: tuple[str, ...]) -> None:
+        self.app = app
+        self.allowed = allowed
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] not in ("http", "websocket") or not str(scope["path"]).startswith("/api/"):
+            await self.app(scope, receive, send)
+            return
+        host = ""
+        for key, value in scope["headers"]:
+            if key == b"host":
+                host = value.decode("latin-1")
+                break
+        if host_allowed(host, self.allowed):
+            await self.app(scope, receive, send)
+            return
+        if scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 1008})  # handshake answers 403
+            return
+        response = JSONResponse({"detail": "unknown host"}, status_code=400)
+        await response(scope, receive, send)
