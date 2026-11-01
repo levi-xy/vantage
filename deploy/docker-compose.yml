@@ -57,6 +57,8 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=${VANTAGE_PROMETHEUS_RETENTION:-30d}
+      # Disk cap: whichever limit is hit first wins; the oldest data goes first.
+      - --storage.tsdb.retention.size=${VANTAGE_PROMETHEUS_RETENTION_SIZE:-10GB}
     secrets: [prometheus_token]
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro

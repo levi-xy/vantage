@@ -117,6 +117,8 @@ To regenerate the self-signed pair (for example after changing `VANTAGE_TLS_NAME
 
 Open the address, create the admin account in the setup wizard, then add your first device.
 
+Metric history: Prometheus keeps 30 days of history or 10 GB on disk, whichever limit is reached first. When the size cap is hit, Prometheus drops the oldest data first, so with many devices you may get less than 30 days. Change the limits with `VANTAGE_PROMETHEUS_RETENTION` (default `30d`) and `VANTAGE_PROMETHEUS_RETENTION_SIZE` (default `10GB`) in `.env`, then `docker compose up -d`.
+
 Backups: `docker compose exec -T backend python -m app.cli backup - > vantage-backup.json.gz` (restore with `app.cli restore`). The master key is not in the backup; keep its own copy. `app.cli rotate-master-key` re-encrypts every stored secret with a new key. See [docs/SECURITY.md](docs/SECURITY.md#backup-restore-and-master-key-rotation).
 
 ## Development

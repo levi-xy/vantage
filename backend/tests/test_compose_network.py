@@ -1,4 +1,4 @@
-"""The compose network layout that VANTAGE_TRUSTED_PROXIES depends on (M1.7).
+"""The compose file: network layout VANTAGE_TRUSTED_PROXIES depends on (M1.7), Prometheus caps.
 
 The backend trusts exactly the frontend's fixed address. That only holds if the frontend
 address can't be handed to another container (it is outside ``ip_range``) and the
@@ -72,3 +72,9 @@ def test_trusted_proxies_default_is_exactly_the_frontend(compose: dict[str, Any]
     match = re.fullmatch(r"\$\{VANTAGE_TRUSTED_PROXIES:-([^}]*)\}", value)
     assert match, "the compose default must stay overridable from .env"
     assert ip_network(match.group(1)) == ip_network(f"{_frontend_address(compose)}/32")
+
+
+def test_prometheus_history_is_capped_by_time_and_size(compose: dict[str, Any]) -> None:
+    command = compose["services"]["prometheus"]["command"]
+    assert "--storage.tsdb.retention.time=${VANTAGE_PROMETHEUS_RETENTION:-30d}" in command
+    assert "--storage.tsdb.retention.size=${VANTAGE_PROMETHEUS_RETENTION_SIZE:-10GB}" in command
