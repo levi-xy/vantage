@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import { exampleMe, fakeBackend, json, mockSystemTheme, renderApp } from "../test-utils";
 import { exampleInstance, INSTANCE_ID } from "../pages/devices/testFixtures";
 import type { Instance } from "../api";
@@ -74,7 +74,7 @@ describe("dashboard-wide cards", () => {
     expect(await screen.findByText("1 of 2 gateways up")).toBeInTheDocument();
     expect(screen.getByText("No port chosen.")).toBeInTheDocument();
     expect(await screen.findByText("Active alerts")).toBeInTheDocument();
-    expect(await screen.findByText("1")).toBeInTheDocument();
+    expect(await within(screen.getByRole("main")).findByText("1")).toBeInTheDocument();
     expect(screen.getByText("Devices healthy")).toBeInTheDocument();
     // The example device is up but has no success on record.
     expect(screen.getByText("1 device without fresh data")).toBeInTheDocument();

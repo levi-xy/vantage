@@ -1,19 +1,16 @@
-import { useState } from "react";
-import { Responsive, WidthProvider } from "react-grid-layout";
+import { useLayoutEffect, useState } from "react";
+import GridLayout from "react-grid-layout";
 import type { Layout } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import type { CardPlacement, Instance } from "../api";
 import { cardMinSize, widget } from "./widgets";
-import { cardKey, DESKTOP_MIN_WIDTH, GRID_COLUMNS } from "./layout";
+import { cardKey, GRID_COLUMNS } from "./layout";
 import { cardComponent } from "./registry";
 
-const ResponsiveGrid = WidthProvider(Responsive);
-
-// Below 768 px the grid is a single column, and never editable: editing is for desktop.
-const BREAKPOINTS = { lg: DESKTOP_MIN_WIDTH, xs: 0 };
-const COLS = { lg: GRID_COLUMNS, xs: 1 };
 const ROW_HEIGHT = 56;
+// Used only until the container has been measured (and in test DOMs, which have no layout).
+const FALLBACK_WIDTH = 1200;
 const DRAG_HANDLE = "vantage-drag-handle";
 const NO_DRAG = "vantage-no-drag";
 
@@ -35,17 +32,28 @@ function toGridItems(cards: CardPlacement[], editing: boolean): Layout[] {
   });
 }
 
-/** One column in reading order (top to bottom, then left to right). */
-function toColumn(cards: CardPlacement[]): Layout[] {
-  let y = 0;
-  return [...cards]
-    .sort((a, b) => a.y - b.y || a.x - b.x)
-    .map((c) => {
-      const h = Math.max(c.h, cardMinSize(c.card_type, c.instance_id)[1]);
-      const item = { i: cardKey(c), x: 0, y, w: 1, h, isDraggable: false, isResizable: false };
-      y += h;
-      return item;
-    });
+/**
+ * The width, in px, of the element the returned callback ref is put on: measured before the first paint and
+ * again whenever it changes (a callback ref, so a grid shown after a phone-width list is
+ * measured too). The grid is laid out to exactly this width, so it never runs
+ * past its container.
+ */
+function useContainerWidth() {
+  const [element, setElement] = useState<HTMLDivElement | null>(null);
+  const [width, setWidth] = useState(0);
+  useLayoutEffect(() => {
+    if (!element) return;
+    const measure = () => setWidth(element.clientWidth);
+    measure();
+    if (typeof ResizeObserver === "function") {
+      const observer = new ResizeObserver(measure);
+      observer.observe(element);
+      return () => observer.disconnect();
+    }
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [element]);
+  return [setElement, width] as const;
 }
 
 export interface DashboardGridProps {
@@ -77,8 +85,7 @@ export function DashboardGrid({
   onConfigure,
   compact = false,
 }: DashboardGridProps) {
-  const [breakpoint, setBreakpoint] = useState("lg");
-  const canEdit = editing && breakpoint === "lg";
+  const [measureRef, measuredWidth] = useContainerWidth();
   const instanceList = [...instances.values()];
 
   const commit = (layout: Layout[]) => {
@@ -114,12 +121,8 @@ export function DashboardGrid({
       <div
         key={key}
         data-testid="card"
-        className={`relative rounded-lg border bg-white dark:bg-slate-900 ${
-          compact ? "" : "overflow-hidden "
-        }${
-          editing
-            ? "border-blue-400 dark:border-blue-500"
-            : "border-slate-200 dark:border-slate-800"
+        className={`relative rounded-xl border bg-panel ${compact ? "" : "overflow-hidden "}${
+          editing ? "border-in" : "border-line"
         }`}
       >
         {content}
@@ -165,24 +168,28 @@ export function DashboardGrid({
     );
   }
 
+  // Desktop only (phones get the compact list above), so always the 12-column grid.
   return (
-    <ResponsiveGrid
-      className="layout"
-      layouts={{ lg: toGridItems(cards, canEdit), xs: toColumn(cards) }}
-      breakpoints={BREAKPOINTS}
-      cols={COLS}
-      rowHeight={ROW_HEIGHT}
-      margin={[16, 16]}
-      containerPadding={[0, 0]}
-      isDraggable={canEdit}
-      isResizable={canEdit}
-      draggableHandle={`.${DRAG_HANDLE}`}
-      draggableCancel={`.${NO_DRAG}`}
-      onBreakpointChange={setBreakpoint}
-      onDragStop={commit}
-      onResizeStop={commit}
-    >
-      {cards.map((c) => renderCard(c, false))}
-    </ResponsiveGrid>
+    <div ref={measureRef} className="w-full min-w-0">
+      <GridLayout
+        className="layout"
+        width={measuredWidth || FALLBACK_WIDTH}
+        layout={toGridItems(cards, editing)}
+        cols={GRID_COLUMNS}
+        rowHeight={ROW_HEIGHT}
+        margin={[16, 16]}
+        containerPadding={[0, 0]}
+        // Cards float up into any free space: no holes below a short card.
+        compactType="vertical"
+        isDraggable={editing}
+        isResizable={editing}
+        draggableHandle={`.${DRAG_HANDLE}`}
+        draggableCancel={`.${NO_DRAG}`}
+        onDragStop={commit}
+        onResizeStop={commit}
+      >
+        {cards.map((c) => renderCard(c, false))}
+      </GridLayout>
+    </div>
   );
 }

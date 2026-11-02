@@ -201,4 +201,22 @@ describe("prepareLayout", () => {
       ["a:t", 2, 2],
     ]);
   });
+
+  it("shows a card saved twice once, and never adds a widget an old layout already has", () => {
+    const widget: CardPlacement = { ...placed, instance_id: null, card_type: "w1", x: 0 };
+    const prepare = (layout: DashboardLayout) =>
+      prepareLayout(
+        layout,
+        widgets,
+        [{ instanceId: "a", spec: spec("t") }],
+        new Set(["a"]),
+        new Set(["a"]),
+      ).map(cardKey);
+
+    expect(prepare({ version: 2, cards: [widget, placed, widget, placed] })).toEqual([
+      "dashboard:w1",
+      "a:t",
+    ]);
+    expect(prepare({ cards: [widget, placed] })).toEqual(["dashboard:w1", "a:t"]);
+  });
 });
