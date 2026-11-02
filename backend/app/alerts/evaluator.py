@@ -437,7 +437,7 @@ class AlertEvaluator:
         for kind in ending:
             self._end_system(kind, now)
 
-    # --- shared causes (P0-4) ----------------------------------------------------------------
+    # --- system alerts (P0-4) ----------------------------------------------------------------
 
     async def _prometheus_down(
         self,
