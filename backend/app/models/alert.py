@@ -21,6 +21,22 @@ class AlertState(StrEnum):
 OPEN_STATES = (AlertState.FIRING, AlertState.NO_DATA)
 
 
+class EventSource(StrEnum):
+    """Who opened an event (P0-4, maintainer-approved 2026-11-02): a rule, or Vantage's
+    self-monitoring (``app.alerts.selfcheck``), which needs no rule and no Prometheus."""
+
+    RULE = "rule"
+    SYSTEM = "system"
+
+
+class SystemKind(StrEnum):
+    """The fixed kinds of system alert; at most one open event per kind."""
+
+    PROMETHEUS_UNREACHABLE = "prometheus_unreachable"
+    METRICS_NOT_COLLECTED = "metrics_not_collected"
+    EVALUATOR_STALLED = "evaluator_stalled"
+
+
 class EndReason(StrEnum):
     """Why an event stopped firing (P0-3a)."""
 
@@ -73,6 +89,15 @@ class AlertEvent(Base):
             sqlite_where=text("state IN ('firing', 'no_data')"),
             postgresql_where=text("state IN ('firing', 'no_data')"),
         ),
+        # System alerts have no rule (rule_id NULL, and NULLs never collide in the index
+        # above): at most one open event per system_kind (P0-4).
+        Index(
+            "ux_alert_events_open_system",
+            "system_kind",
+            unique=True,
+            sqlite_where=text("state IN ('firing', 'no_data') AND system_kind IS NOT NULL"),
+            postgresql_where=text("state IN ('firing', 'no_data') AND system_kind IS NOT NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -99,3 +124,10 @@ class AlertEvent(Base):
     no_data_reason: Mapped[str | None] = mapped_column(String(32), default=None)
     state_since: Mapped[datetime | None] = mapped_column(default=None)
     reminder_sent_at: Mapped[datetime | None] = mapped_column(default=None)
+    # P0-4: ``system`` events have no rule and a fixed ``system_kind`` (``SystemKind``).
+    source: Mapped[EventSource] = mapped_column(
+        str_enum(EventSource, "alert_event_source"),
+        default=EventSource.RULE,
+        server_default=EventSource.RULE.value,
+    )
+    system_kind: Mapped[str | None] = mapped_column(String(32), default=None)

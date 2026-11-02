@@ -45,6 +45,7 @@ function ChannelForm({ channel, onDone }: { channel?: Channel; onDone: () => voi
   const [chatId, setChatId] = useState(channel?.config.chat_id ?? "");
   // Never pre-filled: the backend never sends the token back.
   const [token, setToken] = useState("");
+  const [systemAlerts, setSystemAlerts] = useState(channel?.system_alerts ?? true);
   const [error, setError] = useState<string | null>(null);
   const tokenSet = channel?.secrets_set.bot_token === true;
 
@@ -53,12 +54,17 @@ function ChannelForm({ channel, onDone }: { channel?: Channel; onDone: () => voi
       if (channel) {
         const config: { chat_id: string; bot_token?: string } = { chat_id: chatId.trim() };
         if (token) config.bot_token = token;
-        return api.updateChannel(channel.id, { name: name.trim(), config });
+        return api.updateChannel(channel.id, {
+          name: name.trim(),
+          config,
+          system_alerts: systemAlerts,
+        });
       }
       return api.createChannel({
         type: "telegram",
         name: name.trim(),
         config: { chat_id: chatId.trim(), bot_token: token },
+        system_alerts: systemAlerts,
       });
     },
     onSuccess: async () => {
@@ -139,6 +145,16 @@ function ChannelForm({ channel, onDone }: { channel?: Channel; onDone: () => voi
             ? `${tokenSet ? "Set" : "Not set"}. Leave empty to keep the stored token.`
             : "From @BotFather. Stored encrypted and never shown again."}
         </p>
+      </div>
+      <div className="md:col-span-3">
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={systemAlerts}
+            onChange={(e) => setSystemAlerts(e.target.checked)}
+          />
+          Send Vantage's own alerts here (Prometheus unreachable, alert evaluation stopped)
+        </label>
       </div>
       <div className="flex flex-col gap-3 md:col-span-3">
         {error && (

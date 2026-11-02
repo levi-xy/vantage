@@ -17,7 +17,11 @@ transaction (P0-5); live pushes go out after the commit.
 
 Events carry their ``deliveries``: one entry per queued message about the event (P0-5,
 maintainer-approved 2026-11-01). ``GET /alerts/delivery-status`` tells any logged-in user
-how many messages have gone undelivered for more than 15 minutes (the UI's banner).
+how many messages have gone undelivered for more than 15 minutes (the UI's banner), and
+(P0-4) which system alerts are firing: the same banner shows them.
+
+System alerts (P0-4, maintainer-approved 2026-11-02) are events with ``source`` ``system``,
+no rule and a ``system_kind``; they close themselves, so they can't be closed by hand.
 """
 
 import logging
@@ -55,6 +59,7 @@ from app.models import (
     AlertState,
     Channel,
     EndReason,
+    EventSource,
     Instance,
     NotificationKind,
     NotificationStatus,
@@ -127,10 +132,18 @@ class DeliveryOut(BaseModel):
     finished_at: datetime | None
 
 
+class SystemAlertOut(BaseModel):
+    system_kind: str
+    # When the problem started.
+    since: datetime
+
+
 class DeliveryStatusOut(BaseModel):
     # Messages unfinished for more than 15 minutes, plus messages that failed within the
     # last 24 hours (counted at once).
     stuck: int
+    # Firing system alerts (P0-4), oldest first.
+    system_alerts: list[SystemAlertOut] = []
 
 
 class EventOut(BaseModel):
@@ -145,7 +158,7 @@ class EventOut(BaseModel):
     fingerprint: str
     state: AlertState
     # Why an open event has no data (P0-3b): source_stale, source_down, metric_missing,
-    # query_failed; null otherwise.
+    # query_failed, prometheus_unreachable, metrics_not_collected (P0-4); null otherwise.
     no_data_reason: str | None = None
     started_at: datetime
     # When the event entered its current state (null for events from before 0008).
@@ -154,6 +167,10 @@ class EventOut(BaseModel):
     end_reason: EndReason | None
     summary: str
     deliveries: list[DeliveryOut] = []
+    # P0-4: "rule", or "system" for Vantage's own alerts (no rule; system_kind is one of
+    # prometheus_unreachable, metrics_not_collected, evaluator_stalled).
+    source: EventSource = EventSource.RULE
+    system_kind: str | None = None
 
 
 def _out(rule: AlertRule, evaluator: AlertEvaluator | None = None) -> RuleOut:
@@ -196,6 +213,8 @@ def _event_out(
         end_reason=event.end_reason,
         summary=event.summary,
         deliveries=deliveries or [],
+        source=event.source,
+        system_kind=event.system_kind,
     )
 
 
@@ -481,8 +500,19 @@ def list_events(
 
 @router.get("/alerts/delivery-status")
 def delivery_status(_auth: AuthDep, db: DbDep) -> DeliveryStatusOut:
-    """For the banner: how many alert messages are stuck (a count only)."""
-    return DeliveryStatusOut(stuck=stuck_count(db))
+    """For the banner: how many alert messages are stuck (a count only), and the firing
+    system alerts."""
+    system = db.scalars(
+        select(AlertEvent)
+        .where(AlertEvent.source == EventSource.SYSTEM, AlertEvent.state.in_(OPEN_STATES))
+        .order_by(AlertEvent.id)
+    )
+    return DeliveryStatusOut(
+        stuck=stuck_count(db),
+        system_alerts=[
+            SystemAlertOut(system_kind=e.system_kind or "", since=e.started_at) for e in system
+        ],
+    )
 
 
 @router.post("/alerts/events/{event_id}/close")
@@ -492,6 +522,8 @@ def close_event(event_id: int, auth: AdminDep, db: DbDep, request: Request) -> E
     event = db.get(AlertEvent, event_id)
     if event is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "alert event not found")
+    if event.source == EventSource.SYSTEM:
+        raise HTTPException(status.HTTP_409_CONFLICT, "a system alert closes by itself")
     if not close_events(db, [event], EndReason.CLOSED_BY_USER, utcnow()):
         raise HTTPException(status.HTTP_409_CONFLICT, "alert event is already closed")
     audit.record(

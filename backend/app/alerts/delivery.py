@@ -22,6 +22,10 @@ One :class:`DeliveryDispatcher` per backend sends them:
 * **Overflow.** A channel with :data:`OVERFLOW_LIMIT` unfinished rows stores new rows as
   ``folded`` into one pending summary row that counts them. They stay unfinished
   (``finished_at`` empty) until the summary finishes, then share its outcome.
+* **Shared causes (P0-4).** A message the evaluator folds into another one (an alert's NO
+  DATA carried by a system alert or by its device's instance-down message) is stored
+  ``folded`` into that *carrier* (:func:`fold_into`), on any channel, and takes the
+  carrier's outcome like an overflow row.
 * **Restart.** At start every row left ``sending`` goes back to ``pending`` (its attempt
   stays counted). Delivery is at least once: a crash between Telegram accepting a message
   and the row being marked can send it twice; it can't lose it.
@@ -183,8 +187,25 @@ def _fold_into_summary(db: Session, row: AlertNotification, channel: Channel) ->
         summary = None  # claimed meanwhile: start a new one
 
 
+def fold_into(
+    db: Session, row: AlertNotification, carrier: AlertNotification, now: datetime
+) -> None:
+    """Store ``row`` as carried by ``carrier`` (no commit). It takes the carrier's outcome:
+    at once if the carrier has finished, otherwise when it does (:func:`settle_overflow`)."""
+    row.status = Status.FOLDED
+    row.folded_into = carrier.id
+    row.finished_at = None
+    if carrier.finished_at is not None:
+        row.finished_at = now
+        if carrier.status in (Status.FAILED, Status.CANCELLED):
+            row.status = carrier.status
+            row.error_kind = carrier.error_kind
+    db.flush()
+
+
 def settle_overflow(db: Session, carrier_ids: Iterable[int], now: datetime) -> int:
-    """Give the overflow rows carried by finished summary rows their outcome (no commit).
+    """Give the rows carried by finished carrier rows their outcome (no commit): the rows
+    of an overflow summary, and those folded in by the evaluator (:func:`fold_into`).
 
     Delivered (directly or in a batch): the rows stay ``folded`` and get ``finished_at``.
     Failed: ``failed`` with the summary's ``error_kind``. Cancelled: ``cancelled``.
@@ -192,9 +213,7 @@ def settle_overflow(db: Session, carrier_ids: Iterable[int], now: datetime) -> i
     """
     failed = 0
     carriers = db.execute(
-        select(N.id, N.status, N.error_kind, N.finished_at).where(
-            N.id.in_(list(carrier_ids)), N.kind == Kind.SUMMARY
-        )
+        select(N.id, N.status, N.error_kind, N.finished_at).where(N.id.in_(list(carrier_ids)))
     )
     for carrier_id, status, error_kind, finished_at in carriers:
         if finished_at is None:
@@ -257,15 +276,23 @@ def enqueue(
 
 
 def cancel_for_channel(db: Session, channel_id: int, now: datetime | None = None) -> int:
-    """Cancel the channel's unfinished rows, overflow rows included (no commit); call
-    before deleting it."""
+    """Cancel the channel's unfinished rows, overflow rows included, and the rows of other
+    channels they carried (no commit); call before deleting it."""
+    now = now or utcnow()
+    waiting = N.status.in_(UNFINISHED) | ((N.status == Status.FOLDED) & N.finished_at.is_(None))
+    ids = list(db.scalars(select(N.id).where(N.channel_id == channel_id, waiting)))
+    if not ids:
+        return 0
     result = db.execute(
         update(N)
-        .where(
-            N.channel_id == channel_id,
-            N.status.in_(UNFINISHED) | ((N.status == Status.FOLDED) & N.finished_at.is_(None)),
-        )
-        .values(status=Status.CANCELLED, finished_at=now or utcnow(), claim_token=None)
+        .where(N.id.in_(ids))
+        .values(status=Status.CANCELLED, finished_at=now, claim_token=None)
+        .execution_options(synchronize_session=False)
+    )
+    db.execute(
+        update(N)
+        .where(N.folded_into.in_(ids), N.status == Status.FOLDED, N.finished_at.is_(None))
+        .values(status=Status.CANCELLED, finished_at=now)
         .execution_options(synchronize_session=False)
     )
     return int(result.rowcount)  # type: ignore[attr-defined]

@@ -38,6 +38,8 @@ const NO_DATA_REASONS: Record<string, string> = {
   source_down: "device not answering",
   metric_missing: "metric missing",
   query_failed: "query failing",
+  prometheus_unreachable: "Prometheus unreachable",
+  metrics_not_collected: "metrics not being collected",
 };
 
 /** "No data: device not answering", in plain words. */
@@ -209,6 +211,8 @@ function EventItem({
   isAdmin: boolean;
 }) {
   const open = event.state === "firing" || event.state === "no_data";
+  // Vantage's own alerts have no rule and close by themselves.
+  const system = event.source === "system";
   return (
     <li className={card}>
       <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
@@ -226,7 +230,13 @@ function EventItem({
             >
               {event.severity}
             </span>
-            <Device event={event} names={names} />
+            {system ? (
+              <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                Vantage
+              </span>
+            ) : (
+              <Device event={event} names={names} />
+            )}
             <span className="min-w-0 text-sm break-words text-slate-700 dark:text-slate-300">
               {event.rule_name}
             </span>
@@ -242,7 +252,7 @@ function EventItem({
           </p>
           <Deliveries deliveries={event.deliveries ?? []} />
         </div>
-        {isAdmin && open && <CloseButton event={event} />}
+        {isAdmin && open && !system && <CloseButton event={event} />}
       </div>
     </li>
   );

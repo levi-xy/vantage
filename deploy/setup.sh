@@ -225,9 +225,10 @@ esac
 
 # Health check from inside the frontend container, through nginx's upstream to the
 # backend: needs no curl/wget on the host, and no TLS verification exceptions for a
-# self-signed or not-yet-trusted certificate.
+# self-signed or not-yet-trusted certificate. /healthz/live (always 200 while the backend
+# runs), not /healthz: a 503 for an outage (Prometheus not up yet) must not fail setup.
 probe() {
-    docker compose exec -T frontend wget -q -O /dev/null -T 5 http://backend:8000/healthz \
+    docker compose exec -T frontend wget -q -O /dev/null -T 5 http://backend:8000/healthz/live \
         >/dev/null 2>&1
 }
 

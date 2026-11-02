@@ -420,3 +420,56 @@ Telegram puts the token in the URL path, so extra care keeps it out of logs and 
 
 Recommended: give the bot only what it needs (a bot that can post to one chat), and allow
 outbound HTTPS to `api.telegram.org` in your firewall only if you use Telegram alerts.
+
+## Self-monitoring and /healthz
+
+**The limitation first: if the Vantage backend or its host is down, Vantage can't tell
+you.** Nothing below runs then. Point an external monitor on another machine (Uptime
+Kuma, cron + curl, a hosted dead-man's switch) at `https://<vantage>/healthz` and alert on
+anything but 200. For example, every 5 minutes from another host:
+
+```sh
+curl -fsS -o /dev/null --max-time 10 https://vantage.example.com:8443/healthz \
+    || echo "Vantage unhealthy" | mail -s "Vantage" admin@example.com
+```
+
+(Add `--cacert` with your certificate if it's self-signed, rather than `-k`.)
+
+### What Vantage checks itself (`backend/app/alerts/selfcheck.py`)
+
+| Failure | Detected by | After | Result |
+|---|---|---|---|
+| Prometheus unreachable (refused, timeout, HTTP 5xx) | the evaluator's per-tick probe | 2 min of failed probes | system alert "Prometheus unreachable" |
+| Prometheus up but not scraping Vantage | age of the newest `up{job="vantage-backend"} == 1` | older than 2 min, or none for 2 min | system alert "Metrics not being collected" |
+| Alert evaluation hung or crashed | a watchdog task: the evaluator's last finished tick | 90 s (3 intervals) | system alert "Alert evaluation stopped"; the evaluator is restarted once |
+| One rule's query keeps failing | per-rule counter | 3 ticks in a row | the rule shows the error on the Alerts page; no message (a configuration problem) |
+
+A rule's own bad PromQL or too-many-series never counts as "Prometheus unreachable".
+System alerts have no rule, open and resolve by themselves (they can't be closed by
+hand), go through the same outbox to every channel with **Send Vantage's own alerts**
+(`system_alerts`, on by default), and show as a banner in the UI while firing.
+
+Shared failures send one message instead of a storm. While Prometheus is unreachable (or
+not collecting, for alerts on polled devices) every affected alert records NO DATA with
+that reason, but its message is stored *folded* into the system alert's message; when
+Prometheus returns, still-true alerts go back to FIRING silently and the RESOLVED
+message counts them ("5 alerts still firing, 2 recovering"). A device's other alerts are
+folded into its instance-down message the same way ("3 other alerts on this device can't
+be checked"), and while a device is failing but not yet marked down, its alerts' NO DATA
+messages are held. Outages shorter than 2 minutes change nothing.
+
+### `/healthz` and `/healthz/live`
+
+Both are unauthenticated and carry nothing but a fixed code.
+
+- `GET /healthz`: `200 {"status": "ok"}`, or `503 {"reason": "<code>"}` with exactly one
+  code. When several apply, the first in this order wins: `evaluator_stalled` (nothing
+  else is being checked then), `prometheus_unreachable`, `metrics_not_collected`,
+  `notifications_stuck` (an alert message undelivered for more than 15 minutes, or failed
+  within 24 hours: the UI banner's rule). The conditions are kept in memory, so they start
+  over when the backend restarts.
+- `GET /healthz/live`: `200` whenever the web server runs. `setup.sh` waits on this one,
+  so a fresh install whose Prometheus isn't up yet still finishes. The compose file has
+  no container healthcheck; if you add one, use `/healthz/live`: a 503 from `/healthz`
+  means "something Vantage depends on is down", and restarting the backend wouldn't fix
+  it.

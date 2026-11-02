@@ -60,6 +60,7 @@ describe("alerts page: channels", () => {
       type: "telegram",
       name: "ops",
       config: { chat_id: "-1001234567890", bot_token: TOKEN },
+      system_alerts: true,
     });
   });
 
@@ -77,6 +78,7 @@ describe("alerts page: channels", () => {
       expect(sentBody(backend, "PATCH /channels/1")).toEqual({
         name: "ops",
         config: { chat_id: "@vantage_ops" },
+        system_alerts: true,
       }),
     );
   });
