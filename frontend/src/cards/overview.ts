@@ -68,3 +68,28 @@ export function wanSummary(result: QueryResult | undefined): { up: number; total
   }
   return { up, total: series.length };
 }
+
+/** Average RTT per gateway, in milliseconds (same `url` label as the loss series). */
+export const WAN_RTT_QUERY = 'ping_average_response_ms{vantage_integration="pfsense"}';
+
+export interface Gateway {
+  url: string;
+  lossPct: number;
+  rttMs: number | undefined;
+}
+
+/** Gateways by `url`, any down one first, so the Internet tile names it. */
+export function gateways(loss: QueryResult | undefined, rtt: QueryResult | undefined): Gateway[] {
+  const rttBy = new Map<string, number | undefined>();
+  for (const s of rtt?.series ?? []) rttBy.set(s.labels.url ?? "", parseValue(s.values[0]?.[1]));
+  const list: Gateway[] = [];
+  for (const s of loss?.series ?? []) {
+    const lossPct = parseValue(s.values[0]?.[1]);
+    if (lossPct === undefined) continue;
+    const url = s.labels.url ?? "";
+    list.push({ url, lossPct, rttMs: rttBy.get(url) });
+  }
+  return list.sort(
+    (a, b) => Number(b.lossPct >= 100) - Number(a.lossPct >= 100) || a.url.localeCompare(b.url),
+  );
+}

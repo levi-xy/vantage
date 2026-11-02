@@ -3,9 +3,9 @@ import { useEffect, useState } from "react";
 import { LIVE_RATE_KEY } from "../../app/live";
 import type { LiveRate } from "../../app/live";
 import { useUnits } from "../../app/units";
-import { firstSeries, firstValue } from "../metrics/promql";
-import { StatTile } from "../metrics/StatTile";
-import { useFleetQuery, useFleetRangeQuery } from "../metrics/useMetricQuery";
+import { KpiTile } from "../metrics/KpiTile";
+import { firstValue } from "../metrics/promql";
+import { useFleetQuery } from "../metrics/useMetricQuery";
 import type { WidgetProps, WidgetSettingsProps } from "../widgets";
 import {
   MAX_PORTS,
@@ -73,8 +73,6 @@ export function ThroughputCard({ instances, settings }: WidgetProps) {
   const outExpr = rateQuery(ports, "out");
   const rx = useFleetQuery(inExpr);
   const tx = useFleetQuery(outExpr);
-  const rxSpark = useFleetRangeQuery(inExpr, undefined, chosen);
-  const txSpark = useFleetRangeQuery(outExpr, undefined, chosen);
   const { groups } = usePortOptions(instances);
   // Live only when every chosen port was read; a partial sum would look like the total.
   const pushed = useLiveRate();
@@ -96,32 +94,20 @@ export function ThroughputCard({ instances, settings }: WidgetProps) {
     groups.flatMap((g) => g.ports.map((o) => [portKey(o.port), o.name] as const)),
   );
   const label = ports.map((p) => names.get(portKey(p)) ?? p.iface).join(", ");
+  const inRate = live ? formatRate(live.inBps) : rx.isError ? "—" : formatRate(firstValue(rx.data));
+  const outRate = live
+    ? formatRate(live.outBps)
+    : tx.isError
+      ? "—"
+      : formatRate(firstValue(tx.data));
+  // "In"/"out" as the port sees it: for a firewall's WAN port that is download/upload.
   return (
-    <div className="flex h-full min-w-0 flex-col gap-0.5 px-4 py-3">
-      <span className="truncate text-xs text-slate-500 dark:text-slate-400" title={label}>
-        {live && (
-          <span
-            className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 align-middle"
-            aria-label="live"
-          />
-        )}
-        Throughput · {label}
-      </span>
-      <div className="grid grid-cols-2 gap-3">
-        <StatTile
-          label="↓ In"
-          value={live ? formatRate(live.inBps) : rx.isError ? "—" : formatRate(firstValue(rx.data))}
-          spark={firstSeries(rxSpark.data)}
-        />
-        <StatTile
-          label="↑ Out"
-          value={
-            live ? formatRate(live.outBps) : tx.isError ? "—" : formatRate(firstValue(tx.data))
-          }
-          spark={firstSeries(txSpark.data)}
-        />
-      </div>
-    </div>
+    <KpiTile
+      label="Throughput now"
+      value={inRate}
+      unit="in"
+      note={`${outRate} out · ${label}${live ? " · live" : ""}`}
+    />
   );
 }
 

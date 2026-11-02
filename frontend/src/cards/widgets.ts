@@ -23,6 +23,8 @@ export interface WidgetSettingsProps extends WidgetProps {
 export interface Widget extends WidgetSpec {
   component: ComponentType<WidgetProps>;
   settingsEditor?: ComponentType<WidgetSettingsProps>;
+  /** A small summary tile: two per row at phone width instead of one. */
+  tile?: boolean;
 }
 
 /** Dashboard-wide cards, in the order a fresh dashboard shows them. */
@@ -32,15 +34,29 @@ export const WIDGETS: readonly Widget[] = [
     title: "Devices healthy",
     default_size: [3, 2],
     component: DevicesHealthCard,
+    tile: true,
   },
-  { card_type: "alerts", title: "Active alerts", default_size: [3, 2], component: AlertsCard },
-  { card_type: "wan-status", title: "WAN status", default_size: [3, 2], component: WanStatusCard },
+  {
+    card_type: "alerts",
+    title: "Active alerts",
+    default_size: [3, 2],
+    component: AlertsCard,
+    tile: true,
+  },
+  {
+    card_type: "wan-status",
+    title: "WAN status",
+    default_size: [3, 2],
+    component: WanStatusCard,
+    tile: true,
+  },
   {
     card_type: "throughput",
     title: "Throughput",
     default_size: [3, 2],
     component: ThroughputCard,
     settingsEditor: ThroughputSettings,
+    tile: true,
   },
   {
     card_type: "network-map",
