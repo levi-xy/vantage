@@ -18,6 +18,7 @@ from app.alerts.evaluator import (
     AlertEvaluator,
     clean,
 )
+from app.alerts.selfcheck import METRICS_QUERY
 from app.alerts.templates import TEMPLATES
 from app.api.deps import CSRF_HEADER
 from app.collectors.hub import EventHub, Subscriber
@@ -46,15 +47,17 @@ INSTANCE_UUID = uuid.UUID(INSTANCE_ID)
 
 class FakeProm:
     """Answers instant queries. ``answers`` maps a query to ``(labels, value)`` pairs; any
-    other query gets ``vector`` (label dicts, value "1"). The probe always answers and the
-    fleet freshness queries are empty unless set. ``error`` fails every query, ``failing``
-    only those listed."""
+    other query gets ``vector`` (label dicts, value "1"). The probe always answers, the
+    fleet freshness queries are empty unless set, and the self-check sees Vantage scraped
+    5 s ago unless set. ``error`` fails every query, ``failing`` only those listed;
+    ``down`` refuses every connection."""
 
     def __init__(self) -> None:
         self.vector: list[dict[str, str]] = []
         self.answers: dict[str, list[tuple[dict[str, str], str]]] = {}
         self.error: dict[str, str] | None = None
         self.failing: set[str] = set()
+        self.down = False
         self.queries: list[str] = []
 
     def poll(self, instance_id: str, ts: float, integration: str = "ping_check") -> None:
@@ -67,6 +70,8 @@ class FakeProm:
         def handler(request: httpx.Request) -> httpx.Response:
             query = parse_qs(request.content.decode())["query"][0]
             self.queries.append(query)
+            if self.down:
+                raise httpx.ConnectError("connection refused")
             if self.error or query in self.failing:
                 error = self.error or {"errorType": "execution", "error": "boom"}
                 return httpx.Response(200, json={"status": "error", **error})
@@ -76,6 +81,8 @@ class FakeProm:
                 rows = self.answers[query]
             elif query in (POLLED_QUERY, SCRAPED_QUERY):
                 rows = []
+            elif query == METRICS_QUERY:
+                rows = [({}, "5")]
             else:
                 rows = [(m, "1") for m in self.vector]
             result = [{"metric": m, "value": [1.0, v]} for m, v in rows]

@@ -17,6 +17,7 @@ from app import __version__
 from app.alerts.channels import default_client_factory
 from app.alerts.delivery import DeliveryCollector, DeliveryDispatcher
 from app.alerts.evaluator import AlertEvaluator
+from app.alerts.selfcheck import SelfMonitor, Watchdog
 from app.api import api_router
 from app.api.auth import LOGIN_LIMITS, LOGIN_WINDOW_SECONDS
 from app.api.deps import SAFE_METHODS
@@ -76,6 +77,8 @@ def create_app(
         live_rates.start()
         evaluator: AlertEvaluator = app.state.alert_evaluator
         evaluator.start()
+        watchdog: Watchdog = app.state.alert_watchdog
+        watchdog.start()
         dispatcher: DeliveryDispatcher = app.state.delivery
         dispatcher.start()
         try:
@@ -83,6 +86,7 @@ def create_app(
         finally:
             seeding.cancel()
             await asyncio.gather(seeding, return_exceptions=True)
+            await watchdog.stop()
             await evaluator.stop()
             await dispatcher.stop()
             await live_rates.stop()
@@ -146,13 +150,19 @@ def create_app(
 
     # Alerts: the evaluator queues firing/resolved messages in the alert_notifications
     # outbox; the dispatcher delivers them to the rule's channels (Telegram), P0-5.
+    # Self-monitoring (P0-4): system alerts, the evaluator's watchdog and /healthz.
+    app.state.self_monitor = SelfMonitor(
+        session_factory=app.state.session_factory, hub=app.state.event_hub
+    )
     app.state.alert_evaluator = AlertEvaluator(
         session_factory=app.state.session_factory,
         prometheus=lambda: app.state.prometheus,
         hub=app.state.event_hub,
         poll_interval=app.state.poller.interval_for_type,
         instance_state=_instance_state(app.state.metrics_store),
+        monitor=app.state.self_monitor,
     )
+    app.state.alert_watchdog = Watchdog(app.state.self_monitor, app.state.alert_evaluator.restart)
     app.state.delivery = DeliveryDispatcher(
         session_factory=app.state.session_factory,
         secret_box=secret_box,
@@ -167,7 +177,19 @@ def create_app(
     app.middleware("http")(_api_guard)
 
     @app.get("/healthz", include_in_schema=False)
-    async def healthz() -> dict[str, str]:
+    def healthz() -> JSONResponse:
+        """For an external monitor (P0-4): 200, or 503 with one fixed reason code and
+        nothing else (``app.alerts.selfcheck.HEALTH_PRIORITY``). Unauthenticated."""
+        monitor: SelfMonitor = app.state.self_monitor
+        reason = monitor.health()
+        if reason is None:
+            return JSONResponse({"status": "ok"})
+        return JSONResponse({"reason": reason.value}, status_code=503)
+
+    @app.get("/healthz/live", include_in_schema=False)
+    async def healthz_live() -> dict[str, str]:
+        """Liveness only: 200 while the web server runs (setup.sh, container checks), so
+        an outage elsewhere never makes Docker restart the backend."""
         return {"status": "ok"}
 
     return app

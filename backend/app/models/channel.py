@@ -1,7 +1,7 @@
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import LargeBinary, String
+from sqlalchemy import LargeBinary, String, true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -22,6 +22,9 @@ class Channel(Base):
     name: Mapped[str] = mapped_column(String(128))
     config: Mapped[dict[str, Any]] = mapped_column(default=dict)
     secrets: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
+    # Vantage's own alerts (Prometheus unreachable, ...) go to every channel with this set
+    # (P0-4, maintainer-approved 2026-11-02).
+    system_alerts: Mapped[bool] = mapped_column(default=True, server_default=true())
 
     def __repr__(self) -> str:  # never include config values or secrets
         return f"Channel(id={self.id!r}, type={self.type!r}, name={self.name!r})"

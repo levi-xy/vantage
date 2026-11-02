@@ -304,3 +304,75 @@ def test_0008_keeps_notification_links(db_url: str) -> None:
         assert links() == expected
     finally:
         eng.dispose()
+
+
+def test_0009_system_events_and_channel_setting(db_url: str) -> None:
+    """``source`` defaults to ``rule``, one open system event per kind, channels get
+    ``system_alerts`` true; the alert_events rebuild keeps notification links both ways,
+    and a downgrade resolves open system events."""
+    cfg = alembic_config(db_url)
+    command.upgrade(cfg, "0008")
+    eng = make_engine(db_url)
+
+    def links() -> list[tuple[int, int | None, int | None]]:
+        with eng.connect() as conn:
+            rows = conn.execute(
+                text("SELECT id, event_id, folded_into FROM alert_notifications ORDER BY id")
+            )
+            return [tuple(r) for r in rows]  # type: ignore[misc]
+
+    system = text(
+        "INSERT INTO alert_events (id, rule_id, fingerprint, labels, rule_name, severity, "
+        "state, started_at, summary, source, system_kind) VALUES (:id, NULL, 'k', '{}', "
+        "'P', 'critical', 'firing', :at, 'x', 'system', 'prometheus_unreachable')"
+    )
+    try:
+        with eng.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO alert_rules "
+                    "(id, name, expr, for_seconds, severity, channel_ids, enabled) "
+                    "VALUES (1, 'G', 'up == 0', 0, 'critical', '[]', true)"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO channels (id, type, name, config) "
+                    "VALUES (4, 'telegram', 'c', '{}')"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO alert_events (id, rule_id, fingerprint, labels, rule_name, "
+                    "severity, state, started_at, summary) VALUES "
+                    "(5, 1, 'f1', '{}', 'G', 'critical', 'no_data', :at, 'x')"
+                ),
+                {"at": STAMP},
+            )
+            for nid, folded in ((1, None), (2, 1)):
+                conn.execute(
+                    text(
+                        "INSERT INTO alert_notifications (id, event_id, kind, text, status, "
+                        "attempts, next_attempt_at, created_at, folded_into) VALUES "
+                        "(:id, 5, 'no_data', 'x', 'pending', 0, :at, :at, :folded)"
+                    ),
+                    {"id": nid, "at": STAMP, "folded": folded},
+                )
+        expected = [(1, 5, None), (2, 5, 1)]
+        command.upgrade(cfg, "0009")
+        assert links() == expected
+        with eng.begin() as conn:
+            assert conn.execute(text("SELECT source FROM alert_events")).scalar() == "rule"
+            assert conn.execute(text("SELECT system_alerts FROM channels")).scalar()
+            conn.execute(system, {"id": 6, "at": STAMP})
+        with pytest.raises(IntegrityError), eng.begin() as conn:
+            conn.execute(system, {"id": 7, "at": STAMP})
+        with pytest.raises(IntegrityError), eng.begin() as conn:
+            conn.execute(text("UPDATE alert_events SET source = 'bogus' WHERE id = 5"))
+        command.downgrade(cfg, "0008")
+        assert links() == expected
+        with eng.connect() as conn:
+            states = dict(conn.execute(text("SELECT id, state FROM alert_events")).all())
+        assert states == {5: "no_data", 6: "resolved"}
+    finally:
+        eng.dispose()
