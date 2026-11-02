@@ -8,7 +8,6 @@ import { PfsenseGatewaysCard } from "./PfsenseGatewaysCard";
 
 const client = new ApiClient({ fetch: vi.fn() });
 vi.mock("../../app/session", () => ({ useApiClient: () => client }));
-vi.mock("../metrics/TimeSeriesChart", () => ({ TimeSeriesChart: () => null }));
 
 function answer(query: string) {
   if (query.includes("ping_percent_packet_loss"))

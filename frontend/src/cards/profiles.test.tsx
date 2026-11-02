@@ -13,7 +13,6 @@ import type { CardProps } from "./registry";
 
 const client = new ApiClient({ fetch: vi.fn() });
 vi.mock("../app/session", () => ({ useApiClient: () => client }));
-vi.mock("./metrics/TimeSeriesChart", () => ({ TimeSeriesChart: () => null }));
 
 const instance = {
   id: "inst-1",

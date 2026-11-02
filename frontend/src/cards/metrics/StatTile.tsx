@@ -1,6 +1,6 @@
 import { useContext } from "react";
 import { StaleContext } from "./freshness";
-import { TimeSeriesChart } from "./TimeSeriesChart";
+import { Sparkline } from "./Charts";
 
 export interface StatTileProps {
   label: string;
@@ -27,15 +27,7 @@ export function StatTile({ label, value, spark, tone }: StatTileProps) {
       <span className={`text-xl font-semibold tabular-nums ${shownTone ? TONES[shownTone] : ""}`}>
         {value}
       </span>
-      {spark && spark.length > 1 && (
-        <div className="h-8">
-          <TimeSeriesChart
-            sparkline
-            label={`${label} over the last hour`}
-            series={[{ name: label, points: spark }]}
-          />
-        </div>
-      )}
+      {spark && <Sparkline className="h-8" label={`${label} over the last hour`} points={spark} />}
     </div>
   );
 }

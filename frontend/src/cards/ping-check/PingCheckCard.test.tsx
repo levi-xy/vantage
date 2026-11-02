@@ -7,8 +7,6 @@ import { PingCheckCard } from "./PingCheckCard";
 
 const client = new ApiClient({ fetch: vi.fn() });
 vi.mock("../../app/session", () => ({ useApiClient: () => client }));
-// ECharts needs a real canvas; the chart itself is not rendered under jsdom.
-vi.mock("../metrics/TimeSeriesChart", () => ({ TimeSeriesChart: () => null }));
 
 const instance = {
   id: "inst-1",
@@ -24,10 +22,10 @@ function vector(value: string | null): QueryResult {
   };
 }
 
-function renderCard(answer: (query: string) => QueryResult | Response) {
+function renderCard(answer: (query: string, range: boolean) => QueryResult | Response) {
   const fetchMock = vi.fn<typeof fetch>(async (_url, init) => {
-    const { query } = JSON.parse(String(init?.body)) as { query: string };
-    const out = answer(query);
+    const { query, start } = JSON.parse(String(init?.body)) as { query: string; start?: number };
+    const out = answer(query, start !== undefined);
     return out instanceof Response ? out : json(out);
   });
   vi.spyOn(client, "query").mockImplementation((req) =>
@@ -55,6 +53,31 @@ describe("PingCheckCard", () => {
     renderCard((q) => vector(q.startsWith("vantage_ping_check_rtt") ? null : "1"));
     expect(await screen.findByText("100% LOSS")).toHaveClass("text-crit-text");
     expect(screen.getByText("100%")).toHaveClass("text-crit-text");
+  });
+
+  it("shows partial loss in the warn colour, and the hour's sparkline with min, avg and max", async () => {
+    const hour: QueryResult = {
+      result_type: "matrix",
+      series: [
+        {
+          labels: {},
+          values: [
+            [1_700_000_000, "0.001"],
+            [1_700_000_060, "0.002"],
+            [1_700_000_120, "0.006"],
+          ],
+        },
+      ],
+      warnings: [],
+    };
+    renderCard((q, range) =>
+      range ? hour : vector(q.startsWith("vantage_ping_check_rtt") ? "0.002" : "0.25"),
+    );
+    expect(await screen.findByText("25%")).toHaveClass("text-warn");
+    expect(
+      await screen.findByRole("img", { name: "Round trip time, last hour" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("min 1.0 ms · avg 3.0 ms · max 6.0 ms")).toBeInTheDocument();
   });
 
   it("says so when there is no data", async () => {

@@ -19,6 +19,8 @@ export interface WidgetSpec {
   card_type: string;
   title: string;
   default_size: [number, number];
+  /** Added after layout version 2: never put on an old layout's former fixed row. */
+  notOnOldLayouts?: boolean;
 }
 
 type Keyed = { instance_id: string | null; card_type: string };
@@ -63,15 +65,22 @@ export function prepareLayout(
   if ((saved.version ?? 1) < LAYOUT_VERSION) {
     const row: CardPlacement[] = [];
     let x = 0;
+    let y = 0;
     for (const w of widgets) {
+      if (w.notOnOldLayouts) continue;
       if (seen.has(cardKey({ instance_id: null, card_type: w.card_type }))) continue;
       const [width, height] = w.default_size;
-      if (x + width > GRID_COLUMNS) break;
+      // A card that doesn't fit on the line starts the next one; wider than the grid: left out.
+      if (width > GRID_COLUMNS) continue;
+      if (x + width > GRID_COLUMNS) {
+        x = 0;
+        y = bottom(row);
+      }
       row.push({
         instance_id: null,
         card_type: w.card_type,
         x,
-        y: 0,
+        y,
         w: width,
         h: height,
         settings: {},

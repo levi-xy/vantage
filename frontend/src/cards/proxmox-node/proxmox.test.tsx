@@ -6,7 +6,6 @@ import { ProxmoxNodeCard } from "./ProxmoxNodeCard";
 
 const client = new ApiClient({ fetch: vi.fn() });
 vi.mock("../../app/session", () => ({ useApiClient: () => client }));
-vi.mock("../metrics/TimeSeriesChart", () => ({ TimeSeriesChart: () => null }));
 
 const node = { node: "pve1" };
 const guest = (vmid: string) => ({ node: "pve1", vmid, guest_type: "qemu" });
