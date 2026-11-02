@@ -107,7 +107,7 @@ export interface AlertDelivery {
   finished_at: string | null;
 }
 
-/** `GET /alerts/delivery-status`: messages undelivered for more than 15 minutes. */
+/** `GET /alerts/delivery-status`: messages waiting 15+ minutes or failed in the last 24 h. */
 export interface DeliveryStatusSummary {
   stuck: number;
 }

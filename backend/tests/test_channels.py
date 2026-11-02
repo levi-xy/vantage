@@ -1,4 +1,4 @@
-"""Alert channels (M7.2): CRUD, the Telegram sender, the notifier.
+"""Alert channels (M7.2): CRUD, the Telegram sender and its error kinds (P0-5).
 
 Security assertions: the bot token never appears in a response body, a log line, an
 exception or the audit log; sending goes through the real SSRF guard to the declared

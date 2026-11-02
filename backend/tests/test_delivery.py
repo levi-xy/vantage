@@ -13,13 +13,14 @@ from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, func, select
+from sqlalchemy import Engine, event, func, select, update
 from sqlalchemy.orm import Session
 
 from app.alerts import channels as ch
 from app.alerts import delivery
 from app.alerts.delivery import DeliveryCollector, DeliveryDispatcher, enqueue
 from app.alerts.evaluator import AlertEvaluator
+from app.api.alerts import _deliveries
 from app.api.deps import CSRF_HEADER
 from app.collectors.hub import EventHub
 from app.core.crypto import SecretBox
@@ -382,30 +383,157 @@ async def test_batch_of_25_is_one_message(
     assert {(r.status, r.folded_into) for r in rest} == {(S.FOLDED, head.id)}
 
 
+def overflow(db: Session, clock: Clock, cid: int, n: int = 600) -> AlertNotification:
+    """``n`` alert changes for one channel (alternating firing/resolved, each with its own
+    event); returns the overflow summary row."""
+    for i in range(n):
+        kind = NotificationKind.FIRING if i % 2 == 0 else NotificationKind.RESOLVED
+        ev = add_event(db, f"device {i}") if i >= OVERFLOW else None
+        enqueue(
+            db,
+            channel_ids=[cid],
+            kind=kind,
+            text=f"{kind.value} {i}",
+            event_id=ev.id if ev else None,
+            now=clock.now,
+        )
+    db.commit()
+    (summary,) = [r for r in rows(db) if r.kind == NotificationKind.SUMMARY]
+    return summary
+
+
+OVERFLOW = delivery.OVERFLOW_LIMIT
+
+
 async def test_overflow_folds_into_one_summary(
     engine: Engine, db: Session, network: FakeNetwork, tg: FakeTelegram, clock: Clock
 ) -> None:
     cid = add_channel(db)
-    for i in range(600):
-        kind = NotificationKind.FIRING if i % 2 == 0 else NotificationKind.RESOLVED
-        enqueue(db, channel_ids=[cid], kind=kind, text=f"{kind.value} {i}", now=clock.now)
-    db.commit()
-    all_rows = rows(db)
-    summaries = [r for r in all_rows if r.kind == NotificationKind.SUMMARY]
-    assert len(summaries) == 1
-    summary = summaries[0]
+    summary = overflow(db, clock, cid)
     assert summary.status == S.PENDING
     assert summary.text == (
         "100 more alert changes while Telegram was unreachable: 50 firing, 50 resolved"
     )
-    assert sum(r.folded_into == summary.id for r in all_rows) == 100
+    all_rows = rows(db)
+    carried = [r for r in all_rows if r.folded_into == summary.id]
+    assert len(carried) == 100
+    # Not final yet: nothing has been sent.
+    assert all(r.status == S.FOLDED and r.finished_at is None for r in carried)
     assert sum(r.status == S.PENDING for r in all_rows) == 501  # 500 + the summary
 
     await make_dispatcher(engine, network, clock).run_once()
     final = rows(db)
-    assert all(r.status in FINAL for r in final)
+    assert all(r.status in FINAL and r.finished_at is not None for r in final)
     assert sum(r.folded_into == summary.id for r in final) == 100
-    assert len(tg.texts[CHAT_A]) == 1
+    (text,) = tg.texts[CHAT_A]
+    # 501 rows, 20 shown: 480 more rows plus the 100 changes the summary stands for.
+    assert text.endswith("and 580 more, see Alerts")
+
+
+async def test_overflow_rows_fail_with_their_summary(
+    engine: Engine, db: Session, network: FakeNetwork, tg: FakeTelegram, clock: Clock
+) -> None:
+    cid = add_channel(db)
+    summary = overflow(db, clock, cid)
+    event_ids = [r.event_id for r in rows(db) if r.folded_into == summary.id]
+    d = make_dispatcher(engine, network, clock)
+    tg.down.add(CHAT_A)
+    clock.advance(25 * 3600)
+    await d.run_once()
+    db.expire_all()
+    got = _deliveries(db, [e for e in event_ids if e is not None])
+    assert len(got) == 100
+    for entries in got.values():
+        (entry,) = entries
+        assert (entry.status, entry.error_kind) == (S.FAILED, "expired")
+        assert entry.finished_at is not None
+    assert d.failed_total == 601  # 500 + the summary + its 100 rows
+
+
+async def test_summary_claimed_mid_fold_starts_a_new_summary(
+    engine: Engine, db: Session, clock: Clock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cid = add_channel(db)
+    first = overflow(db, clock, cid, OVERFLOW + 1)
+    original = delivery._pending_summary
+    calls = 0
+
+    def claimed_meanwhile(session: Session, channel_id: int) -> AlertNotification | None:
+        nonlocal calls
+        calls += 1
+        found = original(session, channel_id)
+        if calls == 1 and found is not None:
+            # The dispatcher claims it between this select and the text update.
+            session.execute(
+                update(AlertNotification)
+                .where(AlertNotification.id == found.id)
+                .values(status=S.SENDING)
+                .execution_options(synchronize_session=False)
+            )
+        return found
+
+    monkeypatch.setattr(delivery, "_pending_summary", claimed_meanwhile)
+    queue(db, clock, [cid], "resolved late", NotificationKind.RESOLVED)
+    summaries = [r for r in rows(db) if r.kind == NotificationKind.SUMMARY]
+    old, new = summaries
+    assert old.id == first.id
+    assert old.text.startswith("1 more alert change while")  # unchanged
+    assert new.text == "1 more alert change while Telegram was unreachable: 1 resolved"
+    late = [r for r in rows(db) if r.text == "resolved late"]
+    assert [r.folded_into for r in late] == [new.id]
+
+
+async def test_retry_after_zero_waits_at_least_a_second(
+    engine: Engine, db: Session, network: FakeNetwork, tg: FakeTelegram, clock: Clock
+) -> None:
+    cid = add_channel(db)
+    tg.answers[CHAT_A] = [telegram(429, {"ok": False, "parameters": {"retry_after": 0}})]
+    queue(db, clock, [cid], "FIRING: x")
+    await make_dispatcher(engine, network, clock).run_once()
+    assert one(db).next_attempt_at - clock.now == timedelta(seconds=1)
+
+
+async def test_idle_pass_does_not_write(
+    engine: Engine, db: Session, network: FakeNetwork, tg: FakeTelegram, clock: Clock
+) -> None:
+    writes: list[str] = []
+
+    def record(_conn: object, _cursor: object, statement: str, *_args: object) -> None:
+        if not statement.lstrip().upper().startswith("SELECT"):
+            writes.append(statement)
+
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        assert await make_dispatcher(engine, network, clock).run_once() == 0
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+    assert [w for w in writes if w.lstrip().upper().startswith(("UPDATE", "INSERT"))] == []
+
+
+async def test_stop_cancels_a_send_and_the_next_start_recovers_it(
+    engine: Engine, db: Session, network: FakeNetwork, tg: FakeTelegram, clock: Clock
+) -> None:
+    cid = add_channel(db)
+    queue(db, clock, [cid], "FIRING: x")
+    tg.hold = asyncio.Event()  # Telegram hangs
+    d = make_dispatcher(engine, network, clock)
+    d.start()
+    await tg.wait_for_calls(1)
+    await d.stop()
+    assert one(db).status == S.SENDING
+    tg.hold = None
+    again = make_dispatcher(engine, network, clock)
+    again.start()  # recovers the row, then sends it
+    try:
+        await tg.wait_for_calls(2)
+        for _ in range(50):
+            if one(db).status == S.DELIVERED:
+                break
+            await asyncio.sleep(0.01)
+    finally:
+        await again.stop()
+    row = one(db)
+    assert (row.status, row.attempts) == (S.DELIVERED, 2)
 
 
 # --- isolation ---------------------------------------------------------------------------
@@ -534,6 +662,15 @@ async def test_banner_counts_stuck_messages(
     assert admin.get(f"{API}/alerts/delivery-status").json() == {"stuck": 0}
     row = one(db)
     row.created_at = utcnow() - timedelta(minutes=16)
+    db.commit()
+    assert admin.get(f"{API}/alerts/delivery-status").json() == {"stuck": 1}
+    # A failed row counts at once, for 24 h after it failed.
+    queue(db, clock, [cid], "FIRING: other")
+    failed = rows(db)[1]
+    failed.status, failed.finished_at = S.FAILED, utcnow()
+    db.commit()
+    assert admin.get(f"{API}/alerts/delivery-status").json() == {"stuck": 2}
+    failed.finished_at = utcnow() - timedelta(hours=25)
     db.commit()
     assert admin.get(f"{API}/alerts/delivery-status").json() == {"stuck": 1}
     admin.cookies.clear()

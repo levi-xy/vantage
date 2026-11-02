@@ -202,6 +202,15 @@ describe("alerts page: events and rules", () => {
           attempts: 0,
           error_kind: null,
         },
+        { ...delivery, kind: "resolved", status: "folded", attempts: 0, error_kind: null },
+        {
+          ...delivery,
+          kind: "resolved",
+          status: "folded",
+          attempts: 1,
+          error_kind: null,
+          finished_at: "2026-10-30T10:05:00Z",
+        },
       ],
     };
     const backend = fakeBackend({
@@ -219,6 +228,11 @@ describe("alerts page: events and rules", () => {
         "firing to deleted channel: cancelled (channel deleted) (0 attempts)",
       ),
     ).toBeVisible();
+    // Waiting in an overflow summary is not shown as sent until the summary is.
+    expect(within(lines).getByText("resolved to ops: queued in summary")).toBeVisible();
+    expect(
+      within(lines).getByText("resolved to ops: sent in a combined message (1 attempt)"),
+    ).toBeVisible();
   });
 
   it("shows a banner while notifications are stuck", async () => {
@@ -227,7 +241,7 @@ describe("alerts page: events and rules", () => {
       routes: { "GET /alerts/delivery-status": () => json({ stuck: 2 }) },
     });
     renderApp("/", backend);
-    const banner = await screen.findByText(/2 alert notifications have not been delivered/);
+    const banner = await screen.findByText(/2 alert notifications have failed or waited/);
     expect(banner).toBeVisible();
     expect(within(banner).getByRole("link", { name: "See Alerts" })).toHaveAttribute(
       "href",

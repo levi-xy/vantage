@@ -214,12 +214,12 @@ class Clock:
 
 
 def make_eval(
-    engine: Engine, prom: FakeProm, notifier: Recorder, clock: Clock
+    engine: Engine, prom: FakeProm, outbox: Recorder, clock: Clock
 ) -> tuple[AlertEvaluator, Subscriber]:
     hub = EventHub()
     sub = hub.subscribe()
     assert sub is not None
-    notifier.engine = engine
+    outbox.engine = engine
     with make_session_factory(engine)() as db:
         add_channel(db)
     ev = AlertEvaluator(

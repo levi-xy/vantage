@@ -20,7 +20,8 @@ One :class:`DeliveryDispatcher` per backend sends them:
   ``retry_after`` instead (at most 10 min). Permanent errors (Telegram 400/401/403/404,
   channel credentials that can't be decrypted) fail at once.
 * **Overflow.** A channel with :data:`OVERFLOW_LIMIT` unfinished rows stores new rows as
-  ``folded`` into one pending summary row that counts them.
+  ``folded`` into one pending summary row that counts them. They stay unfinished
+  (``finished_at`` empty) until the summary finishes, then share its outcome.
 * **Restart.** At start every row left ``sending`` goes back to ``pending`` (its attempt
   stays counted). Delivery is at least once: a crash between Telegram accepting a message
   and the row being marked can send it twice; it can't lose it.
@@ -82,7 +83,7 @@ MAX_WAIT_SECONDS = 600
 STALE_CLAIM = timedelta(minutes=5)
 # Undelivered this long: the UI shows a banner.
 STUCK_AFTER = timedelta(minutes=15)
-# A failed row keeps the banner up this long after it was created.
+# A failed row keeps the banner up this long after it failed.
 FAILED_BANNER_WINDOW = timedelta(hours=24)
 
 _CHANNEL_NAMES = {ChannelType.TELEGRAM: "Telegram"}
@@ -135,29 +136,82 @@ def _summary_text(db: Session, summary_id: int, channel: Channel) -> str:
     return f"{total} more {change} while {where} was unreachable: {', '.join(parts)}"
 
 
-def _fold_into_summary(db: Session, row: AlertNotification, channel: Channel) -> None:
-    summary = db.scalar(
+def _pending_summary(db: Session, channel_id: int) -> AlertNotification | None:
+    return db.scalar(
         select(N)
-        .where(N.channel_id == channel.id, N.kind == Kind.SUMMARY, N.status == Status.PENDING)
+        .where(N.channel_id == channel_id, N.kind == Kind.SUMMARY, N.status == Status.PENDING)
         .order_by(N.id.desc())
         .limit(1)
     )
-    if summary is None:
-        summary = N(
-            channel_id=channel.id,
-            kind=Kind.SUMMARY,
-            text="",
-            status=Status.PENDING,
-            next_attempt_at=row.created_at,
-            created_at=row.created_at,
-        )
-        db.add(summary)
+
+
+def _fold_into_summary(db: Session, row: AlertNotification, channel: Channel) -> None:
+    """Store ``row`` as carried by the channel's pending summary row (created if needed).
+
+    The row stays unfinished (``finished_at`` empty) until the summary finishes; it then
+    takes the summary's outcome (:func:`settle_overflow`). The summary's text is rewritten
+    only while it is still pending: if the dispatcher claimed it meanwhile, the row goes
+    into a new summary instead, so no message counts a change it never carried.
+    """
+    summary = _pending_summary(db, channel.id)
+    while True:
+        if summary is None:
+            summary = N(
+                channel_id=channel.id,
+                kind=Kind.SUMMARY,
+                text="",
+                status=Status.PENDING,
+                next_attempt_at=row.created_at,
+                created_at=row.created_at,
+            )
+            db.add(summary)
+            db.flush()
+        row.status = Status.FOLDED
+        row.folded_into = summary.id
+        row.finished_at = None
         db.flush()
-    row.status = Status.FOLDED
-    row.folded_into = summary.id
-    row.finished_at = row.created_at
-    db.flush()
-    summary.text = cap_text(_summary_text(db, summary.id, channel))
+        text = cap_text(_summary_text(db, summary.id, channel))
+        written = db.execute(
+            update(N)
+            .where(N.id == summary.id, N.status == Status.PENDING)
+            .values(text=text)
+            .execution_options(synchronize_session=False)
+        )
+        if written.rowcount:  # type: ignore[attr-defined]
+            return
+        summary = None  # claimed meanwhile: start a new one
+
+
+def settle_overflow(db: Session, carrier_ids: Iterable[int], now: datetime) -> int:
+    """Give the overflow rows carried by finished summary rows their outcome (no commit).
+
+    Delivered (directly or in a batch): the rows stay ``folded`` and get ``finished_at``.
+    Failed: ``failed`` with the summary's ``error_kind``. Cancelled: ``cancelled``.
+    Returns how many rows ended ``failed``.
+    """
+    failed = 0
+    carriers = db.execute(
+        select(N.id, N.status, N.error_kind, N.finished_at).where(
+            N.id.in_(list(carrier_ids)), N.kind == Kind.SUMMARY
+        )
+    )
+    for carrier_id, status, error_kind, finished_at in carriers:
+        if finished_at is None:
+            continue  # still waiting: so do its rows
+        carried = (
+            (N.folded_into == carrier_id) & (N.status == Status.FOLDED) & N.finished_at.is_(None)
+        )
+        values: dict[str, object] = {"finished_at": now}
+        if status == Status.FAILED:
+            values.update(status=Status.FAILED, error_kind=error_kind)
+        elif status == Status.CANCELLED:
+            values.update(status=Status.CANCELLED)
+        result = db.execute(
+            update(N).where(carried).values(**values).execution_options(synchronize_session=False)
+        )
+        if status == Status.FAILED:
+            failed += int(result.rowcount)  # type: ignore[attr-defined]
+    return failed
 
 
 def enqueue(
@@ -202,18 +256,27 @@ def enqueue(
 
 
 def cancel_for_channel(db: Session, channel_id: int, now: datetime | None = None) -> int:
-    """Cancel the channel's unfinished rows (no commit); call before deleting it."""
+    """Cancel the channel's unfinished rows, overflow rows included (no commit); call
+    before deleting it."""
     result = db.execute(
         update(N)
-        .where(N.channel_id == channel_id, N.status.in_(UNFINISHED))
+        .where(
+            N.channel_id == channel_id,
+            N.status.in_(UNFINISHED) | ((N.status == Status.FOLDED) & N.finished_at.is_(None)),
+        )
         .values(status=Status.CANCELLED, finished_at=now or utcnow(), claim_token=None)
         .execution_options(synchronize_session=False)
     )
     return int(result.rowcount)  # type: ignore[attr-defined]
 
 
-def batch_text(texts: Sequence[str]) -> str:
-    """One message for a batch: up to :data:`BATCH_LINES` lines, then "and N more"."""
+def batch_text(texts: Sequence[str], weights: Sequence[int] | None = None) -> str:
+    """One message for a batch: up to :data:`BATCH_LINES` lines, then "and N more".
+
+    ``weights``: how many alert changes each row stands for (an overflow summary stands
+    for every row it carries); "and N more" counts changes, not rows.
+    """
+    weights = list(weights) if weights is not None else [1] * len(texts)
     if len(texts) == 1:
         return cap_text(texts[0])
     budget = MAX_TEXT_LENGTH - 64  # room for the "and N more" line
@@ -225,23 +288,21 @@ def batch_text(texts: Sequence[str]) -> str:
             break
         shown.append(text)
         used += size
-    rest = len(texts) - len(shown)
+    rest = sum(weights[len(shown) :])
     if rest:
         shown.append(f"and {rest} more, see Alerts")
     return cap_text("\n".join(shown))
 
 
 def stuck_count(db: Session, now: datetime | None = None) -> int:
-    """Rows undelivered for more than :data:`STUCK_AFTER`: still unfinished, or failed
-    (failed ones count for :data:`FAILED_BANNER_WINDOW` after they were created)."""
+    """Rows unfinished for more than :data:`STUCK_AFTER`, plus rows that failed within
+    the last :data:`FAILED_BANNER_WINDOW` (counted at once)."""
     now = now or utcnow()
-    cutoff = now - STUCK_AFTER
     return int(
         db.scalar(
             select(func.count()).where(
-                N.created_at < cutoff,
-                (N.status.in_(UNFINISHED))
-                | ((N.status == Status.FAILED) & (N.created_at >= now - FAILED_BANNER_WINDOW)),
+                (N.status.in_(UNFINISHED) & (N.created_at < now - STUCK_AFTER))
+                | ((N.status == Status.FAILED) & (N.finished_at >= now - FAILED_BANNER_WINDOW))
             )
         )
         or 0
@@ -378,14 +439,21 @@ class DeliveryDispatcher:
             return []
         now = self._clock()
         with self._sessions() as db:
+            # Idle (nothing unfinished): a read only, so SQLite isn't write-locked each pass.
+            if db.scalar(select(N.id).where(N.status.in_(UNFINISHED)).limit(1)) is None:
+                return []
             # Safety nets: the channel went away; a claim lost its sender.
-            db.execute(
-                update(N)
-                .where(N.channel_id.is_(None), N.status == Status.PENDING)
-                .values(status=Status.CANCELLED, finished_at=now)
-                .execution_options(synchronize_session=False)
-            )
-            self._release(db, (N.status == Status.SENDING) & (N.claimed_at < now - STALE_CLAIM))
+            orphaned = (N.channel_id.is_(None)) & (N.status == Status.PENDING)
+            if db.scalar(select(N.id).where(orphaned).limit(1)) is not None:
+                db.execute(
+                    update(N)
+                    .where(orphaned)
+                    .values(status=Status.CANCELLED, finished_at=now)
+                    .execution_options(synchronize_session=False)
+                )
+            stale = (N.status == Status.SENDING) & (N.claimed_at < now - STALE_CLAIM)
+            if db.scalar(select(N.id).where(stale).limit(1)) is not None:
+                self._release(db, stale)
             heads = (
                 select(func.min(N.id))
                 .where(N.status.in_(UNFINISHED), N.channel_id.is_not(None))
@@ -438,7 +506,19 @@ class DeliveryDispatcher:
             return [self._load_claim(db, *c) for c in claimed]
 
     def _load_claim(self, db: Session, token: str, head_id: int, channel_id: int) -> _Claim:
-        rows = list(db.execute(select(N.id, N.text).where(N.claim_token == token).order_by(N.id)))
+        rows = list(
+            db.execute(select(N.id, N.text, N.kind).where(N.claim_token == token).order_by(N.id))
+        )
+        summaries = [r.id for r in rows if r.kind == Kind.SUMMARY]
+        carried: dict[int, int] = {}
+        if summaries:
+            carried = dict(
+                db.execute(  # type: ignore[arg-type]
+                    select(N.folded_into, func.count())
+                    .where(N.folded_into.in_(summaries))
+                    .group_by(N.folded_into)
+                ).all()
+            )
         config: BaseModel | None = None
         unusable: str | None = None
         channel = db.get(Channel, channel_id)
@@ -456,7 +536,10 @@ class DeliveryDispatcher:
             channel_id=channel_id,
             head_id=head_id,
             row_ids=tuple(r.id for r in rows),
-            text=batch_text([r.text for r in rows]),
+            text=batch_text(
+                [r.text for r in rows],
+                [carried.get(r.id, 1) if r.kind == Kind.SUMMARY else 1 for r in rows],
+            ),
             config=config,
             unusable=unusable,
         )
@@ -505,6 +588,7 @@ class DeliveryDispatcher:
                     .values(status=Status.FOLDED, folded_into=claim.head_id, finished_at=now)
                     .execution_options(synchronize_session=False)
                 )
+                settle_overflow(db, claim.row_ids, now)
                 db.commit()
                 log.info(
                     "alert notification delivered: channel %s, rows %s, attempts %d",
@@ -521,8 +605,8 @@ class DeliveryDispatcher:
             if outcome.permanent:
                 failed = self._fail(db, mine, outcome.kind, now)
             else:
-                if outcome.retry_after is not None:
-                    wait = min(outcome.retry_after, MAX_WAIT_SECONDS)
+                if outcome.retry_after is not None:  # at least 1 s: no tight resend loop
+                    wait = min(max(outcome.retry_after, 1.0), MAX_WAIT_SECONDS)
                 else:
                     wait = backoff_seconds(attempts)
                 failed = self._fail(db, mine & (N.created_at <= now - MAX_AGE), "expired", now)
@@ -538,6 +622,7 @@ class DeliveryDispatcher:
                     )
                     .execution_options(synchronize_session=False)
                 )
+            failed += settle_overflow(db, claim.row_ids, now)
             db.commit()
             self.failed_total += failed
 

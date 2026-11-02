@@ -198,8 +198,9 @@ def _retry_after(data: dict[str, object]) -> float | None:
     return None
 
 
-# Telegram's answers that retrying can't fix: bad request, bad token, bot blocked or
-# removed from the chat, unknown bot.
+# Telegram answers that retrying cannot fix: 400 (bad request, e.g. chat not found), 401
+# (bad token), 403 (bot blocked or removed from the chat), and 404, which is how Telegram
+# answers a malformed or revoked bot token (the bot URL does not exist): "unauthorized".
 _PERMANENT_STATUS = {400: "http_4xx", 401: "unauthorized", 403: "forbidden", 404: "unauthorized"}
 
 

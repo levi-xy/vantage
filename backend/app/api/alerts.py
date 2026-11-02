@@ -105,6 +105,7 @@ class DeliveryOut(BaseModel):
     channel_id: int | None
     channel_name: str | None
     kind: NotificationKind
+    # "folded" with finished_at null: waiting in an overflow summary that is not sent yet.
     status: NotificationStatus
     attempts: int
     error_kind: str | None
@@ -113,8 +114,8 @@ class DeliveryOut(BaseModel):
 
 
 class DeliveryStatusOut(BaseModel):
-    # Messages unfinished for more than 15 minutes, or failed (created more than 15
-    # minutes ago, within the last 24 hours).
+    # Messages unfinished for more than 15 minutes, plus messages that failed within the
+    # last 24 hours (counted at once).
     stuck: int
 
 

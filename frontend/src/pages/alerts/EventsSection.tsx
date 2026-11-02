@@ -46,21 +46,34 @@ const DELIVERY_LABELS: Record<DeliveryStatus, string> = {
   cancelled: "cancelled (channel deleted)",
 };
 
+const WAITING_STYLE = "text-amber-700 dark:text-amber-300";
+
 const DELIVERY_STYLE: Partial<Record<DeliveryStatus, string>> = {
   delivered: "text-emerald-700 dark:text-emerald-300",
   folded: "text-emerald-700 dark:text-emerald-300",
   failed: "text-red-700 dark:text-red-300",
-  pending: "text-amber-700 dark:text-amber-300",
-  sending: "text-amber-700 dark:text-amber-300",
+  pending: WAITING_STYLE,
+  sending: WAITING_STYLE,
 };
+
+/** Folded into an overflow summary that hasn't been sent yet: not final. */
+function inSummary(d: AlertDelivery): boolean {
+  return d.status === "folded" && d.finished_at === null;
+}
 
 function deliveryText(d: AlertDelivery): string {
   const channel =
     d.channel_name ?? (d.channel_id !== null ? `channel ${d.channel_id}` : "deleted channel");
+  if (inSummary(d)) return `${d.kind} to ${channel}: queued in summary`;
   const tries = d.attempts === 1 ? "1 attempt" : `${d.attempts} attempts`;
   const error =
     d.error_kind && d.status !== "delivered" ? `, ${d.error_kind.replace(/_/g, " ")}` : "";
   return `${d.kind} to ${channel}: ${DELIVERY_LABELS[d.status] ?? d.status} (${tries}${error})`;
+}
+
+function deliveryStyle(d: AlertDelivery): string {
+  if (inSummary(d)) return WAITING_STYLE;
+  return DELIVERY_STYLE[d.status] ?? "text-slate-600 dark:text-slate-400";
 }
 
 /** The messages about this event, one short line each. */
@@ -69,7 +82,7 @@ function Deliveries({ deliveries }: { deliveries: AlertDelivery[] }) {
   return (
     <ul aria-label="Notifications" className="space-y-0.5 text-xs">
       {deliveries.map((d, i) => (
-        <li key={i} className={DELIVERY_STYLE[d.status] ?? "text-slate-600 dark:text-slate-400"}>
+        <li key={i} className={deliveryStyle(d)}>
           {deliveryText(d)}
         </li>
       ))}

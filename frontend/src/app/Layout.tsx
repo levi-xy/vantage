@@ -10,7 +10,7 @@ import { useApiClient, useSession, useUser } from "./session";
 
 const DELIVERY_POLL_MS = 60_000;
 
-/** Shown to every logged-in user while alert messages have been stuck for 15+ minutes. */
+/** Shown to every logged-in user while alert messages wait 15+ minutes or recently failed. */
 function DeliveryBanner() {
   const api = useApiClient();
   const status = useQuery({
@@ -25,8 +25,8 @@ function DeliveryBanner() {
       role="alert"
       className="border-b border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
     >
-      {stuck === 1 ? "1 alert notification has" : `${stuck} alert notifications have`} not been
-      delivered for more than 15 minutes.{" "}
+      {stuck === 1 ? "1 alert notification has" : `${stuck} alert notifications have`} failed or
+      waited more than 15 minutes.{" "}
       <Link to="/alerts" className="font-medium underline">
         See Alerts
       </Link>
