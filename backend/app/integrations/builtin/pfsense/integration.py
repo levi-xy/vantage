@@ -60,6 +60,23 @@ _RECOGNISED = GATEWAY_METRICS | {IFACE_METRIC, STATES_METRIC, CPU_IDLE_METRIC, M
 # lagg0.10). Used by the cards only, never as metric labels.
 MAX_INTERFACE_SETTINGS = 64
 _INTERFACE = re.compile(r"[A-Za-z0-9_.:-]{1,32}")
+# Gateway display names: keyed by the ping target as Telegraf's ``url`` label reports it
+# (an IP address or a host name). Display only, never connected to or used as a label.
+_GATEWAY = re.compile(r"[A-Za-z0-9_.:-]{1,253}")
+
+
+def _display_names(values: list[str], key: re.Pattern[str], example: str) -> list[str]:
+    """``key=name`` entries, cleaned: the key as reported, a printable name up to 32."""
+    cleaned = []
+    for value in values:
+        target, sep, name = value.partition("=")
+        target, name = target.strip(), " ".join(name.split())
+        if not sep or not key.fullmatch(target) or not 1 <= len(name) <= 32:
+            raise ValueError(f"{value[:40]!r}: use {example} (name up to 32 characters)")
+        if not name.isprintable():
+            raise ValueError(f"{target[:40]}: the name has characters that can't be shown")
+        cleaned.append(f"{target}={name}")
+    return cleaned
 
 
 class PfSenseConfig(BaseModel):
@@ -107,6 +124,17 @@ class PfSenseConfig(BaseModel):
         ),
         examples=[["igc3"]],
     )
+    gateway_names: list[str] = Field(
+        default_factory=list,
+        max_length=MAX_INTERFACE_SETTINGS,
+        title="Gateway names",
+        description=(
+            "Optional. One per line: the gateway's ping target as Telegraf reports it, '=', "
+            "and the name to show, e.g. 10.0.0.254=WAN_DHCP. Gateways without a name show "
+            "their address."
+        ),
+        examples=[["192.0.2.1=WAN_DHCP", "10.8.0.1=PIA_VPN"]],
+    )
 
     @field_validator("host")
     @classmethod
@@ -116,18 +144,12 @@ class PfSenseConfig(BaseModel):
     @field_validator("interface_names")
     @classmethod
     def _check_names(cls, values: list[str]) -> list[str]:
-        cleaned = []
-        for value in values:
-            interface, sep, name = value.partition("=")
-            interface, name = interface.strip(), " ".join(name.split())
-            if not sep or not _INTERFACE.fullmatch(interface) or not 1 <= len(name) <= 32:
-                raise ValueError(
-                    f"{value[:40]!r}: use interface=name, e.g. igc0=WAN (name up to 32 characters)"
-                )
-            if not name.isprintable():
-                raise ValueError(f"{interface}: the name has characters that can't be shown")
-            cleaned.append(f"{interface}={name}")
-        return cleaned
+        return _display_names(values, _INTERFACE, "interface=name, e.g. igc0=WAN")
+
+    @field_validator("gateway_names")
+    @classmethod
+    def _check_gateway_names(cls, values: list[str]) -> list[str]:
+        return _display_names(values, _GATEWAY, "address=name, e.g. 192.0.2.1=WAN_DHCP")
 
     @field_validator("hidden_interfaces")
     @classmethod

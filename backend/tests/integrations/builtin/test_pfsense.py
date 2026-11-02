@@ -47,7 +47,7 @@ def assert_read_only(net: FakeNetwork) -> None:
 def test_schema_defaults() -> None:
     cfg = PfSenseConfig.model_validate({"host": "10.0.0.1"})
     assert (cfg.host, cfg.port, cfg.scheme) == ("10.0.0.1", 9273, "http")
-    assert (cfg.interface_names, cfg.hidden_interfaces) == ([], [])
+    assert (cfg.interface_names, cfg.hidden_interfaces, cfg.gateway_names) == ([], [], [])
 
 
 def test_interface_settings_are_cleaned() -> None:
@@ -56,10 +56,12 @@ def test_interface_settings_are_cleaned() -> None:
             "host": "10.0.0.1",
             "interface_names": [" igc0 =  WAN  uplink ", "lagg0.10=IoT VLAN"],
             "hidden_interfaces": [" igc3 "],
+            "gateway_names": [" 192.0.2.1 = WAN_DHCP ", "2001:db8::1=PIA VPN"],
         }
     )
     assert cfg.interface_names == ["igc0=WAN uplink", "lagg0.10=IoT VLAN"]
     assert cfg.hidden_interfaces == ["igc3"]
+    assert cfg.gateway_names == ["192.0.2.1=WAN_DHCP", "2001:db8::1=PIA VPN"]
 
 
 @pytest.mark.parametrize(
@@ -77,6 +79,10 @@ def test_interface_settings_are_cleaned() -> None:
         {"host": "10.0.0.1", "interface_names": ["igc 0=WAN"]},
         {"host": "10.0.0.1", "interface_names": ["igc0=" + "x" * 33]},
         {"host": "10.0.0.1", "hidden_interfaces": ["igc0; rm"]},
+        {"host": "10.0.0.1", "gateway_names": ["192.0.2.1"]},
+        {"host": "10.0.0.1", "gateway_names": ["192.0.2.1="]},
+        {"host": "10.0.0.1", "gateway_names": ["192.0.2.1/24=WAN"]},
+        {"host": "10.0.0.1", "gateway_names": ["192.0.2.1=" + "x" * 33]},
         {},
     ],
 )
