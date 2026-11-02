@@ -458,7 +458,9 @@ class AlertEvaluator:
                 for fp, row in by_fp.items()
                 if row.no_data_reason == reason.value
             ]
-        carriers = metrics_down and self._has_carriers(SystemKind.METRICS_NOT_COLLECTED)
+        carriers = (
+            self._carrier_channels(SystemKind.METRICS_NOT_COLLECTED) if metrics_down else set()
+        )
 
         fleet = await self._fleet()
         for rule in rules:
@@ -479,9 +481,19 @@ class AlertEvaluator:
 
     # --- shared causes (P0-4) ----------------------------------------------------------------
 
-    def _has_carriers(self, kind: SystemKind) -> bool:
+    def _carrier_channels(self, kind: SystemKind) -> set[int]:
+        """The channels the open system alert of ``kind`` was sent to."""
         with self._sessions() as db:
-            return bool(SelfMonitor.carriers(db, kind))
+            return set(SelfMonitor.carriers(db, kind))
+
+    @staticmethod
+    def _shared_wait(rule: AlertRule, carriers: set[int]) -> timedelta:
+        """A shared cause's NO DATA message is folded at once when the system alert went
+        to every channel of the rule; otherwise it waits the usual 5 minutes and is sent on
+        the channels the system alert didn't reach (folded on the others)."""
+        if set(rule.channel_ids) <= carriers:
+            return timedelta(0)
+        return sm.NO_DATA_MESSAGE_AFTER
 
     async def _prometheus_down(
         self,
@@ -501,13 +513,14 @@ class AlertEvaluator:
                 f"{plural(len(rules), 'rule')} can't be checked"
             )
             self.monitor.open_alert(kind, detail, since=since)
-        obs = sm.Observation(
-            now=now,
-            probe_ok=False,
-            shared_cause=sm.NoDataReason.PROMETHEUS_UNREACHABLE,
-            no_data_wait=timedelta(0) if self._has_carriers(kind) else sm.NO_DATA_MESSAGE_AFTER,
-        )
+        carriers = self._carrier_channels(kind)
         for rule in rules:
+            obs = sm.Observation(
+                now=now,
+                probe_ok=False,
+                shared_cause=sm.NoDataReason.PROMETHEUS_UNREACHABLE,
+                no_data_wait=self._shared_wait(rule, carriers),
+            )
             for fp, row in open_by_rule.get(rule.id, {}).items():
                 if fp != LEGACY_FINGERPRINT:
                     await self._step_open(rule, row, obs)
@@ -751,7 +764,7 @@ class AlertEvaluator:
         open_rows: dict[str, _OpenRow],
         fleet: _Fleet | None,
         metrics_down: bool = False,
-        metrics_carriers: bool = False,
+        metrics_carriers: set[int] | None = None,
     ) -> None:
         split = promql.split(rule.expr)
         now = self._clock()
@@ -787,8 +800,7 @@ class AlertEvaluator:
             wait: timedelta | None = sm.NO_DATA_MESSAGE_AFTER
             if metrics_down and self._polled(labels):
                 shared = sm.NoDataReason.METRICS_NOT_COLLECTED
-                if metrics_carriers:
-                    wait = timedelta(0)
+                wait = self._shared_wait(rule, metrics_carriers or set())
             elif self._in_failure_streak(labels):
                 wait = None
             witness: sm.Witness = "none"
@@ -968,13 +980,13 @@ class AlertEvaluator:
             now=now,
         )
         if reason in SHARED_KIND:
+            # Only into the system alert's message on the same channel: a channel that
+            # doesn't take system alerts gets the alert's own NO DATA message.
             carriers = SelfMonitor.carriers(db, SHARED_KIND[reason])
-            if not carriers:
-                return
-            first = carriers[min(carriers)]
             for row in rows:
-                if row.status == NotificationStatus.PENDING:
-                    fold_into(db, row, carriers.get(row.channel_id or 0, first), now)
+                carrier = carriers.get(row.channel_id or 0)
+                if carrier is not None and row.status == NotificationStatus.PENDING:
+                    fold_into(db, row, carrier, now)
             return
         if reason is not None and reason.value in DEVICE_REASONS:
             down = self._down_event(db, event)

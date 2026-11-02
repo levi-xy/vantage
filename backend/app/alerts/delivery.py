@@ -24,7 +24,7 @@ One :class:`DeliveryDispatcher` per backend sends them:
   (``finished_at`` empty) until the summary finishes, then share its outcome.
 * **Shared causes (P0-4).** A message the evaluator folds into another one (an alert's NO
   DATA carried by a system alert or by its device's instance-down message) is stored
-  ``folded`` into that *carrier* (:func:`fold_into`), on any channel, and takes the
+  ``folded`` into that *carrier* (:func:`fold_into`) on the same channel, and takes the
   carrier's outcome like an overflow row.
 * **Restart.** At start every row left ``sending`` goes back to ``pending`` (its attempt
   stays counted). Delivery is at least once: a crash between Telegram accepting a message
@@ -276,23 +276,15 @@ def enqueue(
 
 
 def cancel_for_channel(db: Session, channel_id: int, now: datetime | None = None) -> int:
-    """Cancel the channel's unfinished rows, overflow rows included, and the rows of other
-    channels they carried (no commit); call before deleting it."""
-    now = now or utcnow()
-    waiting = N.status.in_(UNFINISHED) | ((N.status == Status.FOLDED) & N.finished_at.is_(None))
-    ids = list(db.scalars(select(N.id).where(N.channel_id == channel_id, waiting)))
-    if not ids:
-        return 0
+    """Cancel the channel's unfinished rows, overflow rows included (no commit); call
+    before deleting it."""
     result = db.execute(
         update(N)
-        .where(N.id.in_(ids))
-        .values(status=Status.CANCELLED, finished_at=now, claim_token=None)
-        .execution_options(synchronize_session=False)
-    )
-    db.execute(
-        update(N)
-        .where(N.folded_into.in_(ids), N.status == Status.FOLDED, N.finished_at.is_(None))
-        .values(status=Status.CANCELLED, finished_at=now)
+        .where(
+            N.channel_id == channel_id,
+            N.status.in_(UNFINISHED) | ((N.status == Status.FOLDED) & N.finished_at.is_(None)),
+        )
+        .values(status=Status.CANCELLED, finished_at=now or utcnow(), claim_token=None)
         .execution_options(synchronize_session=False)
     )
     return int(result.rowcount)  # type: ignore[attr-defined]

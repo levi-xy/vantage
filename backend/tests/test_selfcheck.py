@@ -208,9 +208,34 @@ async def test_channels_without_system_alerts_get_none(
     (system,) = w.systems()
     carriers = [r for r in w.rows() if r.event_id == system.id]
     assert [r.channel_id for r in carriers] == [8]
-    # The alert's own message (channel 7) is still recorded, carried by that message.
-    (no_data,) = [r for r in w.rows() if r.kind == K.NO_DATA]
-    assert (no_data.channel_id, no_data.folded_into) == (7, carriers[0].id)
+
+
+async def test_no_data_folds_only_into_a_message_to_the_same_channel(
+    engine: Engine, db: Session, prom: FakeProm
+) -> None:
+    """Channel 7 doesn't take system alerts, channel 8 does; the rule sends to both. Its
+    NO DATA row on 8 is folded into the system alert on 8; the one on 7 is never folded
+    into another channel's message: it waits the usual 5 minutes and is sent on 7."""
+    db.add(Channel(id=8, type=ChannelType.TELEGRAM, name="ops", system_alerts=True))
+    db.commit()
+    w = SW(engine, db, prom, channel_ids=[7, 8])
+    db.execute(update(Channel).where(Channel.id == 7).values(system_alerts=False))
+    db.commit()
+    w.value(90)  # fire on both channels
+    await w.tick()
+    prom.down = True
+    for _ in range(5):  # 2 minutes: the system alert, nothing for the alert yet
+        await w.tick(30, polled=False)
+    (system,) = w.systems()
+    (carrier,) = [r for r in w.rows() if r.event_id == system.id]
+    assert carrier.channel_id == 8
+    assert [r for r in w.rows() if r.kind == K.NO_DATA] == []
+    for _ in range(10):  # 5 minutes in NO DATA
+        await w.tick(30, polled=False)
+    rows = {r.channel_id: r for r in w.rows() if r.kind == K.NO_DATA}
+    assert (rows[8].status, rows[8].folded_into) == (S.FOLDED, carrier.id)
+    assert (rows[7].status, rows[7].folded_into) == (S.PENDING, None)
+    assert rows[7].text == "NO DATA: Gateway (critical): fw (Prometheus unreachable)"
 
 
 # --- metrics not collected ---------------------------------------------------------------
@@ -297,6 +322,25 @@ async def test_device_down_folds_its_other_alerts_into_the_down_message(
         S.FOLDED,
         carrier.id,
     )
+
+
+async def test_device_down_folds_only_on_the_down_rules_channels(
+    engine: Engine, db: Session, prom: FakeProm
+) -> None:
+    db.add(Channel(id=8, type=ChannelType.TELEGRAM, name="ops"))
+    db.commit()
+    w = SW(engine, db, prom, channel_ids=[7, 8])
+    down = add_rule(db, name=DOWN.name, expr=DOWN.expr, for_seconds=0, channel_ids=[7])
+    w.device_down(False)
+    w.value(90)  # fire on both channels
+    await w.tick()
+    await device_goes_down(w)
+    w.device_down(True)
+    await w.tick(30, polled=False)
+    carrier = next(r for r in w.rows() if r.event_id == w.alert(down.id).id)
+    rows = {r.channel_id: r for r in w.rows() if r.kind == K.NO_DATA}
+    assert (rows[7].status, rows[7].folded_into) == (S.FOLDED, carrier.id)
+    assert (rows[8].status, rows[8].folded_into) == (S.PENDING, None)
 
 
 async def test_device_down_after_the_down_message_was_sent_gets_one_follow_up(
