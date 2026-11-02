@@ -39,6 +39,6 @@ describe("scrape status", () => {
           : vector([]),
       scrapeOnly("unknown"),
     );
-    expect(await screen.findByText("Up")).toBeInTheDocument();
+    expect(await screen.findByText("UP")).toBeInTheDocument();
   });
 });

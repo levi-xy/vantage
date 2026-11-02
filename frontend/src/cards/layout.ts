@@ -47,16 +47,24 @@ export function prepareLayout(
 ): CardPlacement[] {
   const offered = new Set(available.map((a) => cardKey({ instance_id: a.instanceId, ...a.spec })));
   const widgetTypes = new Set(widgets.map((w) => w.card_type));
-  let cards = saved.cards.filter((c) =>
-    c.instance_id === null
+  // A card is shown once: a layout holding the same card twice (an old layout that already
+  // had a dashboard-wide card, or a bad save) drew both copies on a phone, and on the grid
+  // the hidden second copy left a hole. The first one wins.
+  const seen = new Set<string>();
+  let cards = saved.cards.filter((c) => {
+    const key = cardKey(c);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return c.instance_id === null
       ? widgetTypes.has(c.card_type)
       : knownInstances.has(c.instance_id) &&
-        (!loadedInstances.has(c.instance_id) || offered.has(cardKey(c))),
-  );
+          (!loadedInstances.has(c.instance_id) || offered.has(key));
+  });
   if ((saved.version ?? 1) < LAYOUT_VERSION) {
     const row: CardPlacement[] = [];
     let x = 0;
     for (const w of widgets) {
+      if (seen.has(cardKey({ instance_id: null, card_type: w.card_type }))) continue;
       const [width, height] = w.default_size;
       if (x + width > GRID_COLUMNS) break;
       row.push({

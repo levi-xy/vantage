@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useTheme } from "../app/ThemeProvider";
 import { nextPreference } from "../app/theme";
 import type { ThemePreference } from "../app/theme";
@@ -8,13 +9,24 @@ const LABELS: Record<ThemePreference, string> = {
   dark: "Dark",
 };
 
-const ICONS: Record<ThemePreference, string> = {
-  system: "◐",
-  light: "☀",
-  dark: "☾",
+const ICONS: Record<ThemePreference, ReactNode> = {
+  // Half-filled circle: follows the OS.
+  system: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" />
+    </>
+  ),
+  light: (
+    <>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+    </>
+  ),
+  dark: <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />,
 };
 
-/** Cycles system → light → dark. */
+/** Cycles system → light → dark. An icon; the name says the current and next theme. */
 export function ThemeToggle() {
   const { preference, setPreference } = useTheme();
   const next = nextPreference(preference);
@@ -24,10 +36,20 @@ export function ThemeToggle() {
       onClick={() => setPreference(next)}
       aria-label={`Theme: ${LABELS[preference]}. Switch to ${LABELS[next]}`}
       title={`Theme: ${LABELS[preference]}`}
-      className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:outline-none dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-line text-muted hover:bg-chip hover:text-ink focus-visible:ring-2 focus-visible:ring-in focus-visible:outline-none"
     >
-      <span aria-hidden="true">{ICONS[preference]}</span>
-      <span>{LABELS[preference]}</span>
+      <svg
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        aria-hidden="true"
+      >
+        {ICONS[preference]}
+      </svg>
     </button>
   );
 }
