@@ -10,7 +10,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app import __version__
-from app.alerts.channels import ChannelNotifier, default_client_factory
+from app.alerts.channels import default_client_factory
+from app.alerts.delivery import DeliveryCollector, DeliveryDispatcher
 from app.alerts.evaluator import AlertEvaluator
 from app.api import api_router
 from app.api.auth import LOGIN_LIMITS, LOGIN_WINDOW_SECONDS
@@ -70,12 +71,15 @@ def create_app(
         live_rates.start()
         evaluator: AlertEvaluator = app.state.alert_evaluator
         evaluator.start()
+        dispatcher: DeliveryDispatcher = app.state.delivery
+        dispatcher.start()
         try:
             yield
         finally:
             seeding.cancel()
             await asyncio.gather(seeding, return_exceptions=True)
             await evaluator.stop()
+            await dispatcher.stop()
             await live_rates.stop()
             await poller.stop()
             await app.state.prometheus.aclose()
@@ -135,18 +139,19 @@ def create_app(
         hub=app.state.event_hub,
     )
 
-    # Alerts: firing/resolved notifications go to the rule's channels (Telegram, M7.2).
-    app.state.notifier = ChannelNotifier(
-        session_factory=app.state.session_factory,
-        secret_box=secret_box,
-        client_factory=default_client_factory,
-    )
+    # Alerts: the evaluator queues firing/resolved messages in the alert_notifications
+    # outbox; the dispatcher delivers them to the rule's channels (Telegram), P0-5.
     app.state.alert_evaluator = AlertEvaluator(
         session_factory=app.state.session_factory,
         prometheus=lambda: app.state.prometheus,
         hub=app.state.event_hub,
-        notifier=lambda: app.state.notifier,
     )
+    app.state.delivery = DeliveryDispatcher(
+        session_factory=app.state.session_factory,
+        secret_box=secret_box,
+        client_factory=default_client_factory,
+    )
+    app.state.metrics_registry.register(DeliveryCollector(app.state.delivery))
 
     app.include_router(api_router)
     app.include_router(sd_router)

@@ -84,6 +84,32 @@ export interface AlertEvent {
   ended_at: string | null;
   end_reason: AlertEndReason | null;
   summary: string;
+  /** The messages queued about this event, one per channel and change. */
+  deliveries: AlertDelivery[];
+}
+
+export type DeliveryKind = "firing" | "resolved" | "rule_change" | "summary";
+
+export type DeliveryStatus =
+  "pending" | "sending" | "delivered" | "failed" | "folded" | "cancelled";
+
+/** One message about an event to one channel. Never the text or a channel setting. */
+export interface AlertDelivery {
+  /** null once the channel is deleted. */
+  channel_id: number | null;
+  channel_name: string | null;
+  kind: DeliveryKind;
+  status: DeliveryStatus;
+  attempts: number;
+  /** A fixed code such as "timeout" or "unauthorized". */
+  error_kind: string | null;
+  created_at: string;
+  finished_at: string | null;
+}
+
+/** `GET /alerts/delivery-status`: messages undelivered for more than 15 minutes. */
+export interface DeliveryStatusSummary {
+  stuck: number;
 }
 
 export interface AlertEventQuery {

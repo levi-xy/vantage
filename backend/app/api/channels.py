@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.alerts import channels as ch
+from app.alerts.delivery import cancel_for_channel
 from app.api.deps import AdminDep, DbDep
 from app.api.instances import SecretBoxDep
 from app.core import audit
@@ -209,6 +210,8 @@ def update_channel(
 def delete_channel(channel_id: int, auth: AdminDep, db: DbDep) -> Response:
     row = _get_row(db, channel_id)
     _record(db, auth, audit.Action.DELETE, row, {"type": row.type.value, "name": row.name})
+    # Its queued messages can't be sent any more: cancelled, kept for the record.
+    cancel_for_channel(db, row.id)
     db.delete(row)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

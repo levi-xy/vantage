@@ -10,6 +10,7 @@ from app.models.dashboard import Dashboard
 from app.models.instance import Instance
 from app.models.link import Link
 from app.models.login_failure import LoginFailure
+from app.models.notification import AlertNotification, NotificationKind, NotificationStatus
 from app.models.session import UserSession
 from app.models.setting import Setting
 from app.models.user import Role, User
@@ -17,6 +18,7 @@ from app.models.user import Role, User
 __all__ = [
     "ActorType",
     "AlertEvent",
+    "AlertNotification",
     "AlertRule",
     "AlertState",
     "AuditLog",
@@ -27,6 +29,8 @@ __all__ = [
     "Instance",
     "Link",
     "LoginFailure",
+    "NotificationKind",
+    "NotificationStatus",
     "Role",
     "Setting",
     "User",

@@ -17,6 +17,7 @@ import type {
   Credentials,
   Dashboard,
   DashboardLayout,
+  DeliveryStatusSummary,
   DeviceLink,
   DeviceLinkCreate,
   Instance,
@@ -229,6 +230,11 @@ export class ApiClient {
     if (query.state !== undefined) params.set("state", query.state);
     const qs = params.toString();
     return this.request("GET", qs ? `/alerts/events?${qs}` : "/alerts/events");
+  }
+
+  /** Any logged-in user: how many alert messages are stuck (for the banner). */
+  alertDeliveryStatus(): Promise<DeliveryStatusSummary> {
+    return this.request("GET", "/alerts/delivery-status");
   }
 
   /** Admin only. Closes an open event by hand; 409 if it is already closed. */

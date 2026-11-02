@@ -28,6 +28,8 @@ EXPECTED_TABLES = {
     "sessions",
     # Added in M1.8 with maintainer approval.
     "login_failures",
+    # Added in P0-5 with maintainer approval (2026-11-01).
+    "alert_notifications",
 }
 
 

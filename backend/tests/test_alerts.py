@@ -1,6 +1,5 @@
 """Alert rules API, evaluator and templates (M7.1, M7.3); one alert per series (P0-3a)."""
 
-import logging
 import uuid
 from collections.abc import Iterator
 from datetime import datetime, timedelta
@@ -16,7 +15,19 @@ from app.alerts.templates import TEMPLATES
 from app.api.deps import CSRF_HEADER
 from app.collectors.hub import EventHub, Subscriber
 from app.core.db import make_session_factory, utcnow
-from app.models import AlertEvent, AlertRule, AlertState, AuditLog, EndReason, Instance, Role
+from app.models import (
+    AlertEvent,
+    AlertNotification,
+    AlertRule,
+    AlertState,
+    AuditLog,
+    Channel,
+    ChannelType,
+    EndReason,
+    Instance,
+    NotificationKind,
+    Role,
+)
 from app.query.proxy import PrometheusClient
 from tests.test_auth import ADMIN, add_user, do_setup, login, make_client
 
@@ -57,6 +68,8 @@ def admin(engine: Engine, db_url: str, prom: FakeProm) -> Iterator[TestClient]:
     with make_client(db_url) as c:
         c.app.state.prometheus = prom.client()  # type: ignore[attr-defined]
         c.headers[CSRF_HEADER] = do_setup(c)["csrf_token"]
+        with make_session_factory(engine)() as db:
+            add_channel(db)  # RULE sends to channel 7
         yield c
 
 
@@ -66,7 +79,13 @@ def db(engine: Engine) -> Iterator[Session]:
         yield s
 
 
-RULE = {"name": "Disk full", "expr": "up == 0", "for_seconds": 60, "severity": "critical"}
+RULE = {
+    "name": "Disk full",
+    "expr": "up == 0",
+    "for_seconds": 60,
+    "severity": "critical",
+    "channel_ids": [7],
+}
 
 
 def test_rule_crud_is_audited(admin: TestClient, db: Session) -> None:
@@ -157,15 +176,33 @@ def test_ping_check_has_instance_down_template() -> None:
 # --- evaluator ---------------------------------------------------------------------------
 
 
-class Recorder:
-    def __init__(self, fail: bool = False) -> None:
-        self.sent: list[tuple[list[int], str]] = []
-        self.fail = fail
+def add_channel(db: Session, channel_id: int = 7) -> None:
+    """A channel row for the outbox's foreign key (never sent to in these tests)."""
+    if db.get(Channel, channel_id) is None:
+        db.add(Channel(id=channel_id, type=ChannelType.TELEGRAM, name=f"ch{channel_id}"))
+        db.commit()
 
-    async def send(self, channel_ids: list[int], text: str) -> None:
-        if self.fail:
-            raise RuntimeError("example-token leaked in error")
-        self.sent.append((channel_ids, text))
+
+class Recorder:
+    """What was queued in the alert_notifications outbox, in order (P0-5). Only FIRING and
+    RESOLVED messages unless ``rule_changes``."""
+
+    def __init__(self, rule_changes: bool = False) -> None:
+        self.engine: Engine | None = None
+        self.kinds = [NotificationKind.FIRING, NotificationKind.RESOLVED]
+        if rule_changes:
+            self.kinds.append(NotificationKind.RULE_CHANGE)
+
+    @property
+    def sent(self) -> list[tuple[list[int], str]]:
+        assert self.engine is not None
+        with make_session_factory(self.engine)() as db:
+            rows = db.scalars(
+                select(AlertNotification)
+                .where(AlertNotification.kind.in_(self.kinds))
+                .order_by(AlertNotification.id)
+            )
+            return [([r.channel_id or 0], r.text) for r in rows]
 
 
 class Clock:
@@ -182,11 +219,13 @@ def make_eval(
     hub = EventHub()
     sub = hub.subscribe()
     assert sub is not None
+    notifier.engine = engine
+    with make_session_factory(engine)() as db:
+        add_channel(db)
     ev = AlertEvaluator(
         session_factory=make_session_factory(engine),
         prometheus=prom.client,
         hub=hub,
-        notifier=lambda: notifier,
         clock=clock,
     )
     return ev, sub
@@ -318,19 +357,6 @@ async def test_instance_scope_and_disabled_rule(
     event = db.scalars(select(AlertEvent)).one()
     assert event.state == AlertState.RESOLVED and event.end_reason == EndReason.RULE_DISABLED
     assert event.instance_id == INSTANCE_UUID
-
-
-async def test_failing_notifier_never_breaks_the_loop(
-    engine: Engine, db: Session, prom: FakeProm, caplog: pytest.LogCaptureFixture
-) -> None:
-    add_rule(db, for_seconds=0)
-    prom.vector = [{"a": "b"}]
-    ev, _ = make_eval(engine, prom, Recorder(fail=True), Clock())
-    with caplog.at_level(logging.DEBUG):
-        await ev.tick()
-    db.expire_all()
-    assert db.scalars(select(AlertEvent)).one().state == AlertState.FIRING
-    assert "example-token" not in caplog.text
 
 
 def test_clean_strips_control_characters_and_caps() -> None:
@@ -516,10 +542,11 @@ async def test_deleting_the_instance_of_a_scoped_rule_closes_its_events(
     assert len(rec.sent) == 1
 
 
-def test_deleting_a_rule_keeps_its_events(admin: TestClient, db: Session) -> None:
-    rec = Recorder()
-    admin.app.state.notifier = rec  # type: ignore[attr-defined]
-    rule_id = admin.post(f"{API}/alerts/rules", json={**RULE, "channel_ids": []}).json()["id"]
+def test_deleting_a_rule_keeps_its_events(admin: TestClient, db: Session, engine: Engine) -> None:
+    rec = Recorder(rule_changes=True)
+    rec.engine = engine
+    add_channel(db)
+    rule_id = admin.post(f"{API}/alerts/rules", json={**RULE, "channel_ids": [7]}).json()["id"]
     open_event(db, rule_id, "f1")
     assert admin.delete(f"{API}/alerts/rules/{rule_id}").status_code == 204
     assert admin.delete(f"{API}/alerts/rules/{rule_id}").status_code == 404
@@ -553,12 +580,13 @@ def test_no_rule_operation_loses_an_event(admin: TestClient, db: Session) -> Non
     assert db.query(AlertEvent).count() == 3
 
 
-def test_rule_edits_close_the_right_events(admin: TestClient, db: Session) -> None:
-    rec = Recorder()
-    admin.app.state.notifier = rec  # type: ignore[attr-defined]
+def test_rule_edits_close_the_right_events(admin: TestClient, db: Session, engine: Engine) -> None:
+    rec = Recorder(rule_changes=True)
+    rec.engine = engine
+    add_channel(db)
     add_instance(db, INSTANCE_UUID, "fw-a")
     add_instance(db, uuid.UUID(OTHER_ID), "fw-b")
-    rule_id = admin.post(f"{API}/alerts/rules", json=RULE).json()["id"]
+    rule_id = admin.post(f"{API}/alerts/rules", json={**RULE, "channel_ids": [7]}).json()["id"]
     url = f"{API}/alerts/rules/{rule_id}"
     open_event(db, rule_id, "a", INSTANCE_UUID)
     open_event(db, rule_id, "b", uuid.UUID(OTHER_ID))
