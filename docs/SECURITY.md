@@ -450,6 +450,14 @@ System alerts have no rule, open and resolve by themselves (they can't be closed
 hand), go through the same outbox to every channel with **Send Vantage's own alerts**
 (`system_alerts`, on by default), and show as a banner in the UI while firing.
 
+Shared failures send one message instead of a storm. While Prometheus is unreachable (or
+not collecting, for alerts on polled devices) every affected alert records NO DATA with
+that reason, but its message is stored *folded* into the system alert's message; when
+Prometheus returns, still-true alerts go back to FIRING silently and the RESOLVED
+message counts them ("5 alerts still firing, 2 recovering"). A device's other alerts are
+folded into its instance-down message the same way ("3 other alerts on this device can't
+be checked"), and while a device is failing but not yet marked down, its alerts' NO DATA
+messages are held.
 Outages shorter than 2 minutes change nothing. An intermittent Prometheus (down 2 minutes,
 back for a tick, down again) gives a FIRING/RESOLVED pair about every 2.5 minutes; the
 restart happens at most once until a tick really finishes again.

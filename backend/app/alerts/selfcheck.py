@@ -19,7 +19,9 @@ the probe (``vector(1)``) decides.
 
 **System alerts** are ``alert_events`` rows with ``source = system``, no rule and a fixed
 ``system_kind``, at most one open per kind (a partial unique index). They go through the
-outbox to every channel with ``system_alerts`` set, and need no Prometheus.
+outbox to every channel with ``system_alerts`` set, and need no Prometheus. The evaluator
+folds the affected alerts' NO DATA messages into the system alert's messages (see
+``app.alerts.evaluator``), so an outage sends one message, not one per alert.
 
 **/healthz** answers 200, or 503 with exactly one reason code, chosen in this order (the
 first that applies): ``evaluator_stalled`` (nothing else is being checked then),
@@ -48,6 +50,7 @@ from app.core.db import utcnow
 from app.models import (
     OPEN_STATES,
     AlertEvent,
+    AlertNotification,
     AlertState,
     Channel,
     EndReason,
@@ -265,6 +268,24 @@ class SelfMonitor:
                 AlertEvent.state.in_(OPEN_STATES),
             )
         )
+
+    @staticmethod
+    def carriers(db: Session, kind: SystemKind) -> dict[int, AlertNotification]:
+        """The open system alert's FIRING messages by channel id: what the affected
+        alerts' NO DATA messages fold into."""
+        event = SelfMonitor.open_event(db, kind)
+        if event is None:
+            return {}
+        rows = db.scalars(
+            select(AlertNotification)
+            .where(
+                AlertNotification.event_id == event.id,
+                AlertNotification.kind == NotificationKind.FIRING,
+                AlertNotification.channel_id.is_not(None),
+            )
+            .order_by(AlertNotification.id)
+        )
+        return {r.channel_id: r for r in rows if r.channel_id is not None}
 
     @staticmethod
     def channels(db: Session) -> list[int]:

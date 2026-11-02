@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.alerts.promql import Condition, Part, split
+from app.alerts.promql import Condition, Part, is_instance_down, split
 from app.alerts.templates import TEMPLATES
 
 
@@ -100,3 +100,13 @@ def test_instance_down_and_raid_templates() -> None:
         'node_md_degraded{vantage_integration="linux_host"}',
         'node_md_disks{vantage_integration="linux_host",state="failed"}',
     ]
+
+
+def test_instance_down_rules_are_recognised() -> None:
+    downs = [t for t in TEMPLATES if t.id.startswith("instance-down-")]
+    assert downs and all(is_instance_down(t.expr) for t in downs)
+    assert is_instance_down("up < 1")
+    others = [t for t in TEMPLATES if not t.id.startswith("instance-down-")]
+    assert not any(is_instance_down(t.expr) for t in others)
+    for expr in ("up == 1", "up > 0", "rate(up[5m]) == 0", 'up{a="b"} * 2 == 0', "upx == 0"):
+        assert not is_instance_down(expr), expr

@@ -13,6 +13,13 @@ The core rule: an alert resolves only after **two clean checks** on two differen
 where a fresh value was seen and the condition was false. A missing series, a stale source
 or a failed query never counts as recovery; they lead to NO DATA, which keeps the alert
 open.
+
+Shared causes (P0-4): when Prometheus has been unreachable for 2 minutes, or isn't
+collecting Vantage's metrics (polled devices only), the evaluator passes the cause as
+``shared_cause``: the alert goes into NO DATA with that reason whatever else it saw, its
+NO DATA message is folded into the one system alert (``no_data_wait`` zero), no 24-hour
+reminder is sent for it, and it returns to FIRING without a "data back" message (the
+system alert's RESOLVED message counts it).
 """
 
 from dataclasses import dataclass, replace
@@ -45,6 +52,12 @@ class NoDataReason(StrEnum):
     SOURCE_DOWN = "source_down"
     METRIC_MISSING = "metric_missing"
     QUERY_FAILED = "query_failed"
+    # Shared causes (P0-4): one system alert speaks for every alert they affect.
+    PROMETHEUS_UNREACHABLE = "prometheus_unreachable"
+    METRICS_NOT_COLLECTED = "metrics_not_collected"
+
+
+SHARED_CAUSES = frozenset({NoDataReason.PROMETHEUS_UNREACHABLE, NoDataReason.METRICS_NOT_COLLECTED})
 
 
 class Notice(StrEnum):
@@ -93,6 +106,13 @@ class Observation:
     mode: RecoveryMode = "value"
     # When the evaluator started (None: long ago).
     started_at: datetime | None = None
+    # A shared cause in force for this alert (P0-4): NO DATA with this reason, whatever
+    # the rest of the observation says.
+    shared_cause: NoDataReason | None = None
+    # How long the NO DATA message waits; None holds it (the device is in a failure
+    # streak and about to be marked down), zero when a shared cause's system alert
+    # carries it.
+    no_data_wait: timedelta | None = NO_DATA_MESSAGE_AFTER
 
 
 @dataclass(frozen=True)
@@ -131,14 +151,17 @@ class OpenAlert:
         return self.clean_checks > 0
 
 
-def no_data_message_due(alert: OpenAlert, now: datetime) -> bool:
-    """Whether the NO DATA message is queued now. PR 9 hooks in here to hold or fold the
-    message into a shared cause (Prometheus unreachable, a whole site down)."""
+def no_data_message_due(
+    alert: OpenAlert, now: datetime, wait: timedelta | None = NO_DATA_MESSAGE_AFTER
+) -> bool:
+    """Whether the NO DATA message is queued now: after ``wait`` in NO DATA (None: held).
+    The evaluator decides where it goes (sent, or folded into a shared message)."""
     return (
-        alert.state == "no_data"
+        wait is not None
+        and alert.state == "no_data"
         and not alert.no_data_sent
         and not alert.recovering  # a clean check was just seen: wait for the next tick
-        and now - alert.state_since >= NO_DATA_MESSAGE_AFTER
+        and now - alert.state_since >= wait
     )
 
 
@@ -151,7 +174,8 @@ def step_pending(
 ) -> tuple[Pending | None, bool]:
     """A series without an open event. Returns (new pending state or None, fire now)."""
     now = obs.now
-    if obs.in_result and obs.probe_ok and obs.query_ok:
+    has_data = obs.probe_ok and obs.query_ok and obs.shared_cause is None
+    if obs.in_result and has_data:
         if pending is None:
             pending = Pending(started_at=now, elapsed=0.0, last_at=now)
         elif pending.paused:  # the gap without data doesn't count
@@ -163,7 +187,7 @@ def step_pending(
         return pending, pending.elapsed >= for_seconds
     if pending is None:
         return None, False
-    if obs.probe_ok and obs.query_ok:
+    if has_data:
         if obs.mode == "empty_result" or obs.witness == "false":
             return None, False  # a value was seen and the condition is false: NORMAL
     # No fresh value (absent from both, a failed query or probe): paused, not reset.
@@ -225,10 +249,14 @@ def _no_data_reason(alert: OpenAlert, obs: Observation) -> NoDataReason | None:
 def step_open(alert: OpenAlert, obs: Observation) -> tuple[OpenAlert | None, list[Notice]]:
     """An alert with an open event. Returns (new state, or None once RESOLVED; notices)."""
     now = obs.now
-    if not obs.probe_ok:  # Prometheus itself is unreachable: no change, nothing counts
-        return alert, []
     notices: list[Notice] = []
-    if not obs.query_ok or obs.witness == "failed":
+    if obs.shared_cause is not None:
+        # Prometheus down for 2 min, or not collecting: nothing counts, NO DATA.
+        alert = replace(alert, clean_checks=0, query_failures=0)
+        alert = _enter_no_data(alert, obs.shared_cause, now)
+    elif not obs.probe_ok:  # Prometheus itself is unreachable: no change, nothing counts
+        return alert, []
+    elif not obs.query_ok or obs.witness == "failed":
         failures = alert.query_failures + 1
         alert = replace(alert, query_failures=failures, clean_checks=0)
         if failures >= QUERY_FAILED_TICKS:
@@ -236,7 +264,8 @@ def step_open(alert: OpenAlert, obs: Observation) -> tuple[OpenAlert | None, lis
     elif obs.in_result or obs.witness == "true":
         # The condition is true: FIRING (from RECOVERING without a new message).
         ref = obs.source.ts if obs.source.kind == "fresh" else alert.ref_ts
-        if alert.state == "no_data" and alert.no_data_sent:
+        shared = alert.no_data_reason in SHARED_CAUSES  # counted by the system alert
+        if alert.state == "no_data" and alert.no_data_sent and not shared:
             notices.append(Notice.DATA_BACK)
         if alert.state == "no_data":
             alert = replace(
@@ -268,11 +297,12 @@ def step_open(alert: OpenAlert, obs: Observation) -> tuple[OpenAlert | None, lis
             if reason is not None:
                 alert = _enter_no_data(alert, reason, now)
 
-    if no_data_message_due(alert, now):
+    if no_data_message_due(alert, now, obs.no_data_wait):
         notices.append(Notice.NO_DATA)
         alert = replace(alert, no_data_sent=True)
     if (
         alert.state == "no_data"
+        and alert.no_data_reason not in SHARED_CAUSES
         and alert.no_data_sent
         and alert.reminder_sent_at is None
         and not alert.recovering

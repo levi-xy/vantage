@@ -263,3 +263,29 @@ def split(expr: str) -> Split:
 
 def recovery_mode(expr: str) -> RecoveryMode:
     return split(expr).mode
+
+
+# Reachability metrics: the collector's for polled devices, Prometheus' own for scraped ones.
+_UP_METRICS = ("vantage_instance_up", "up")
+
+
+def is_instance_down(expr: str) -> bool:
+    """Whether the rule says "this device is down": every part is a reachability metric
+    (``vantage_instance_up`` or ``up``, with matchers only) whose condition holds for 0 and
+    not for 1, like the ``instance-down-*`` templates (P0-4: its message carries the
+    device's other alerts)."""
+    parsed = split(expr)
+    if parsed.mode != "value" or not parsed.parts:
+        return False
+    for part in parsed.parts:
+        try:
+            tokens = tokenize(part.value_query)
+        except Unsure:
+            return False
+        if not tokens or tokens[0].kind != "word" or tokens[0].text not in _UP_METRICS:
+            return False
+        if len(tokens) > 2 or (len(tokens) == 2 and not tokens[1].text.startswith("{")):
+            return False
+        if not part.condition.holds(0.0) or part.condition.holds(1.0):
+            return False
+    return True

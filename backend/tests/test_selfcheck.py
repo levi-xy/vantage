@@ -1,7 +1,8 @@
-"""Self-monitoring (P0-4 part 1): system alerts, the watchdog, /healthz; fake clock."""
+"""Self-monitoring and shared-failure folding (P0-4): a fake Prometheus and a fake clock."""
 
 import asyncio
 import logging
+import uuid
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 
@@ -11,11 +12,13 @@ from sqlalchemy import Engine, select, update
 from sqlalchemy.orm import Session
 
 from app.alerts import selfcheck
+from app.alerts.delivery import DeliveryDispatcher
 from app.alerts.evaluator import AlertEvaluator
 from app.alerts.selfcheck import METRICS_QUERY, Health, SelfMonitor, Watchdog
 from app.alerts.templates import TEMPLATES
 from app.api.deps import CSRF_HEADER
 from app.collectors.hub import EventHub
+from app.core.crypto import SecretBox
 from app.core.db import make_session_factory, utcnow
 from app.models import (
     AlertEvent,
@@ -30,11 +33,14 @@ from app.models import (
 )
 from app.query.proxy import PrometheusClient
 from tests import test_alerts
-from tests.test_alert_evaluator_states import World
-from tests.test_alerts import API, INSTANCE_UUID, Clock, FakeProm
+from tests.conftest import TEST_MASTER_KEY
+from tests.integrations.netfake import FakeNetwork
+from tests.test_alert_evaluator_states import LABELS, World
+from tests.test_alerts import API, INSTANCE_UUID, Clock, FakeProm, add_rule
 from tests.test_auth import do_setup, make_client
-from tests.test_channels import public_test_net
-from tests.test_delivery import TOKEN
+from tests.test_channels import ADDRESS, factory_for, public_test_net
+from tests.test_delivery import CHAT_A, TOKEN, FakeTelegram
+from tests.test_delivery import add_channel as add_telegram
 
 __all__ = ["public_test_net"]  # the autouse fixture: api.telegram.org on TEST-NET-1
 
@@ -49,7 +55,24 @@ LOAD_VALUE = "vantage_ping_check_load"
 
 
 class SW(World):
-    """``World`` plus helpers for system alerts."""
+    """``World`` plus the collector's failure streak."""
+
+    def __init__(self, engine: Engine, db: Session, prom: FakeProm, **rule: object) -> None:
+        self.failed: dict[uuid.UUID, int] = {}
+        super().__init__(engine, db, prom, **rule)
+
+    def evaluator(self) -> AlertEvaluator:
+        with make_session_factory(self.engine)() as db:
+            test_alerts.add_channel(db)
+        return AlertEvaluator(
+            session_factory=make_session_factory(self.engine),
+            prometheus=self.prom.client,
+            hub=EventHub(),
+            clock=self.clock,
+            poll_interval=lambda type_id: 60.0,
+            instance_state=self.states.get,
+            failed_cycles=lambda i: self.failed.get(i, 0),
+        )
 
     def systems(self) -> list[AlertEvent]:
         self.db.expire_all()
@@ -65,6 +88,14 @@ class SW(World):
         self.db.expire_all()
         return list(self.db.scalars(select(AlertNotification).order_by(AlertNotification.id)))
 
+    def load(self, value: float) -> None:
+        self.prom.answers[LOAD_VALUE] = [(LABELS, repr(value))]
+        self.prom.answers[LOAD] = [(LABELS, repr(value))] if value > 5 else []
+
+    def device_down(self, down: bool) -> None:
+        self.prom.answers[DOWN_VALUE] = [(LABELS, "0" if down else "1")]
+        self.prom.answers[DOWN.expr] = [(LABELS, "0")] if down else []
+
 
 # --- Prometheus unreachable --------------------------------------------------------------
 
@@ -74,10 +105,16 @@ async def test_prometheus_refusing_for_two_minutes_sends_one_system_alert(
 ) -> None:
     w = SW(engine, db, prom)
     await w.fire()
+    load = add_rule(db, name="Load", expr=LOAD, for_seconds=0)
+    w.load(9)
+    await w.tick(30)
+    assert w.alert(load.id).state == AlertState.FIRING
+    before = len(w.rows())
+
     prom.down = True
     for _ in range(4):  # 0 to 90 s of failed probes
         await w.tick(30, polled=False)
-    assert w.systems() == [] and len(w.rows()) == 1
+    assert w.systems() == [] and len(w.rows()) == before
     await w.tick(30, polled=False)  # 2 minutes
     (system,) = w.systems()
     assert (system.system_kind, system.state, system.rule_id) == (
@@ -85,25 +122,35 @@ async def test_prometheus_refusing_for_two_minutes_sends_one_system_alert(
         AlertState.FIRING,
         None,
     )
-    carrier = w.rows()[-1]
-    assert carrier.event_id == system.id and carrier.kind == K.FIRING
+    for rule_id in (w.rule.id, load.id):
+        alert = w.alert(rule_id)
+        assert (alert.state, alert.no_data_reason) == (AlertState.NO_DATA, "prometheus_unreachable")
+    new = w.rows()[before:]
+    carrier = next(r for r in new if r.event_id == system.id)
+    assert carrier.status == S.PENDING and carrier.kind == K.FIRING
     assert carrier.text.startswith("SYSTEM ALERT: Prometheus unreachable: since ")
-    assert carrier.text.endswith("UTC. 1 open alert and 1 rule can't be checked")
-    assert w.ev.monitor.health() == Health.PROMETHEUS_UNREACHABLE
+    assert carrier.text.endswith("UTC. 2 open alerts and 2 rules can't be checked")
+    folded = [r for r in new if r.event_id != system.id]
+    assert [(r.kind, r.status, r.folded_into) for r in folded] == [
+        (K.NO_DATA, S.FOLDED, carrier.id)
+    ] * 2
     count = len(w.rows())
     for _ in range(10):  # the outage goes on: nothing more
         await w.tick(30, polled=False)
     assert len(w.rows()) == count and len(w.systems()) == 1
 
+    # Back: the first tick re-checks everything. Still hot: FIRING again, silently.
     prom.down = False
+    w.load(1)  # recovering: one clean check
     await w.tick(30)
     assert w.alert().state == AlertState.FIRING
     assert w.systems()[0].state == AlertState.RESOLVED
-    resolved = w.rows()[-1]
-    assert (resolved.kind, resolved.event_id) == (K.RESOLVED, system.id)
-    assert resolved.text.startswith("RESOLVED: Prometheus back after ")
-    assert resolved.text.endswith(" min.")
-    assert w.ev.monitor.health() is None
+    tail = w.rows()[count:]
+    assert [(r.kind, r.event_id) for r in tail] == [(K.RESOLVED, system.id)]
+    assert tail[0].text.startswith("RESOLVED: Prometheus back after ")
+    assert tail[0].text.endswith(" min. 1 alert still firing, 1 recovering.")
+    await w.tick(30)  # the second clean check: RESOLVED as usual
+    assert w.rows()[-1].text == "RESOLVED: Load (critical): fw"
 
 
 async def test_a_90_second_outage_changes_nothing(
@@ -119,6 +166,36 @@ async def test_a_90_second_outage_changes_nothing(
     assert w.systems() == [] and w.alert().state == AlertState.FIRING
     assert len(w.rows()) == 1
     assert w.ev.monitor.health() is None
+
+
+async def test_system_alert_reaches_telegram_once_and_folded_rows_share_its_outcome(
+    engine: Engine, db: Session, prom: FakeProm, caplog: pytest.LogCaptureFixture
+) -> None:
+    network = FakeNetwork()
+    tg = FakeTelegram()
+    network.serve(ADDRESS, 443, tg)
+    cid = add_telegram(db)
+    w = SW(engine, db, prom, channel_ids=[cid])
+    db.execute(update(Channel).where(Channel.id != cid).values(system_alerts=False))
+    db.commit()
+    dispatcher = DeliveryDispatcher(
+        session_factory=make_session_factory(engine),
+        secret_box=SecretBox(TEST_MASTER_KEY),
+        client_factory=factory_for(network),
+        clock=w.clock,
+    )
+    caplog.set_level(logging.DEBUG)
+    await w.fire()
+    await dispatcher.run_once()
+    prom.down = True
+    for _ in range(5):
+        await w.tick(30, polled=False)
+    await dispatcher.run_once()
+    assert tg.texts[CHAT_A][1].startswith("SYSTEM ALERT: Prometheus unreachable")
+    assert len(tg.texts[CHAT_A]) == 2  # the FIRING before, then the system alert only
+    assert {r.status for r in w.rows()} == {S.DELIVERED, S.FOLDED}
+    assert all(r.finished_at is not None for r in w.rows())
+    assert TOKEN not in caplog.text and TOKEN not in str(tg.texts)
 
 
 async def test_channels_without_system_alerts_get_none(
@@ -137,6 +214,34 @@ async def test_channels_without_system_alerts_get_none(
     assert [r.channel_id for r in carriers] == [8]
 
 
+async def test_no_data_folds_only_into_a_message_to_the_same_channel(
+    engine: Engine, db: Session, prom: FakeProm
+) -> None:
+    """Channel 7 doesn't take system alerts, channel 8 does; the rule sends to both. Its
+    NO DATA row on 8 is folded into the system alert on 8; the one on 7 is never folded
+    into another channel's message: it waits the usual 5 minutes and is sent on 7."""
+    db.add(Channel(id=8, type=ChannelType.TELEGRAM, name="ops", system_alerts=True))
+    db.commit()
+    w = SW(engine, db, prom, channel_ids=[7, 8])
+    db.execute(update(Channel).where(Channel.id == 7).values(system_alerts=False))
+    db.commit()
+    w.value(90)  # fire on both channels
+    await w.tick()
+    prom.down = True
+    for _ in range(5):  # 2 minutes: the system alert, nothing for the alert yet
+        await w.tick(30, polled=False)
+    (system,) = w.systems()
+    (carrier,) = [r for r in w.rows() if r.event_id == system.id]
+    assert carrier.channel_id == 8
+    assert [r for r in w.rows() if r.kind == K.NO_DATA] == []
+    for _ in range(10):  # 5 minutes in NO DATA
+        await w.tick(30, polled=False)
+    rows = {r.channel_id: r for r in w.rows() if r.kind == K.NO_DATA}
+    assert (rows[8].status, rows[8].folded_into) == (S.FOLDED, carrier.id)
+    assert (rows[7].status, rows[7].folded_into) == (S.PENDING, None)
+    assert rows[7].text == "NO DATA: Gateway (critical): fw (Prometheus unreachable)"
+
+
 # --- metrics not collected ---------------------------------------------------------------
 
 
@@ -151,14 +256,18 @@ async def test_metrics_not_collected(engine: Engine, db: Session, prom: FakeProm
     await w.tick(30)  # 2 minutes without a scrape
     (system,) = w.systems()
     assert system.system_kind == "metrics_not_collected"
-    (carrier,) = w.rows()[1:]
+    alert = w.alert()
+    assert (alert.state, alert.no_data_reason) == (AlertState.NO_DATA, "metrics_not_collected")
+    carrier, folded = w.rows()[1:]
     assert carrier.text.endswith("1 open alert on polled devices can't be checked")
+    assert (folded.status, folded.folded_into) == (S.FOLDED, carrier.id)
     assert w.ev.monitor.health() == Health.METRICS_NOT_COLLECTED
 
     prom.answers[METRICS_QUERY] = [({}, "10")]
     await w.tick(30)
+    assert w.alert().state == AlertState.FIRING
     assert w.rows()[-1].text.startswith("RESOLVED: Metrics collected again after ")
-    assert w.ev.monitor.health() is None
+    assert w.rows()[-1].text.endswith("1 alert still firing.")
 
 
 async def test_old_scrape_right_after_prometheus_returns_is_not_an_alarm(
@@ -173,6 +282,113 @@ async def test_old_scrape_right_after_prometheus_returns_is_not_an_alarm(
     prom.answers[METRICS_QUERY] = [({}, "200")]  # the last scrape before the outage
     await w.tick(30)
     assert [s.system_kind for s in w.systems()] == ["prometheus_unreachable"]
+
+
+# --- a device down -----------------------------------------------------------------------
+
+
+async def device_goes_down(w: SW) -> None:
+    """The device stops answering: stale after 150 s, down at the third failed cycle."""
+    w.value(None)
+    w.failed[INSTANCE_UUID] = 1
+    await w.tick(60, polled=False)
+    w.failed[INSTANCE_UUID] = 2
+    await w.tick(60, polled=False)
+    w.failed[INSTANCE_UUID] = 3
+    w.states[INSTANCE_UUID] = "down"
+    await w.tick(60, polled=False)
+
+
+async def test_device_down_folds_its_other_alerts_into_the_down_message(
+    engine: Engine, db: Session, prom: FakeProm
+) -> None:
+    w = SW(engine, db, prom)
+    down = add_rule(db, name=DOWN.name, expr=DOWN.expr, for_seconds=0)
+    w.device_down(False)
+    await w.fire()
+    await device_goes_down(w)
+    assert w.alert().no_data_reason == "source_down"
+    w.device_down(True)  # Prometheus scrapes vantage_instance_up 0
+    await w.tick(30, polled=False)
+    down_event = w.alert(down.id)
+    assert down_event.state == AlertState.FIRING
+    for _ in range(12):  # well past the 5 minutes a NO DATA message waits
+        await w.tick(30, polled=False)
+    rows = w.rows()
+    assert [r.kind for r in rows] == [K.FIRING, K.FIRING, K.NO_DATA]
+    carrier, folded = rows[1], rows[2]
+    assert carrier.event_id == down_event.id and carrier.status == S.PENDING
+    assert carrier.text == (
+        f"FIRING: {down_event.summary}. 1 other alert on this device can't be checked"
+    )
+    assert (folded.event_id, folded.status, folded.folded_into) == (
+        w.alert().id,
+        S.FOLDED,
+        carrier.id,
+    )
+
+
+async def test_device_down_folds_only_on_the_down_rules_channels(
+    engine: Engine, db: Session, prom: FakeProm
+) -> None:
+    db.add(Channel(id=8, type=ChannelType.TELEGRAM, name="ops"))
+    db.commit()
+    w = SW(engine, db, prom, channel_ids=[7, 8])
+    down = add_rule(db, name=DOWN.name, expr=DOWN.expr, for_seconds=0, channel_ids=[7])
+    w.device_down(False)
+    w.value(90)  # fire on both channels
+    await w.tick()
+    await device_goes_down(w)
+    w.device_down(True)
+    await w.tick(30, polled=False)
+    carrier = next(r for r in w.rows() if r.event_id == w.alert(down.id).id)
+    rows = {r.channel_id: r for r in w.rows() if r.kind == K.NO_DATA}
+    assert (rows[7].status, rows[7].folded_into) == (S.FOLDED, carrier.id)
+    assert (rows[8].status, rows[8].folded_into) == (S.PENDING, None)
+
+
+async def test_device_down_after_the_down_message_was_sent_gets_one_follow_up(
+    engine: Engine, db: Session, prom: FakeProm
+) -> None:
+    w = SW(engine, db, prom)
+    down = add_rule(db, name=DOWN.name, expr=DOWN.expr, for_seconds=0)
+    await w.fire()
+    w.device_down(True)  # down per Prometheus while the last poll is still fresh
+    await w.tick(30)
+    db.execute(
+        update(AlertNotification)
+        .where(AlertNotification.event_id == w.alert(down.id).id)
+        .values(status=S.DELIVERED, finished_at=w.clock.now)
+    )
+    db.commit()
+    w.value(None)
+    for _ in range(18):  # stale from 150 s, its NO DATA message due 5 minutes later
+        await w.tick(30, polled=False)
+    folded, follow_up = w.rows()[2:]
+    assert follow_up.kind == K.NO_DATA and follow_up.status == S.PENDING
+    assert follow_up.text.startswith("STILL DOWN: ")
+    assert follow_up.text.endswith("1 other alert on this device can't be checked")
+    assert folded.folded_into == follow_up.id
+
+
+async def test_failure_streak_holds_no_data_messages(
+    engine: Engine, db: Session, prom: FakeProm
+) -> None:
+    w = SW(engine, db, prom)
+    await w.fire()
+    w.value(None)
+    w.failed[INSTANCE_UUID] = 1
+    await w.tick(160, polled=False)
+    assert w.alert().no_data_reason == "source_stale"
+    w.failed[INSTANCE_UUID] = 2
+    for _ in range(12):  # 6 minutes: the message would be due, but the streak holds it
+        await w.tick(30, polled=False)
+    assert len(w.rows()) == 1
+    w.failed[INSTANCE_UUID] = 3
+    w.states[INSTANCE_UUID] = "down"  # no instance-down rule: sent on its own
+    await w.tick(30, polled=False)
+    assert w.rows()[-1].text == "NO DATA: Gateway (critical): fw (device not answering)"
+    assert w.rows()[-1].status == S.PENDING
 
 
 # --- the watchdog ------------------------------------------------------------------------

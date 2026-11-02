@@ -66,7 +66,13 @@ export type AlertState = "firing" | "no_data" | "resolved";
 
 /** Why an open event has no data. Later versions may add reasons. */
 export type AlertNoDataReason =
-  "source_stale" | "source_down" | "metric_missing" | "query_failed" | (string & {});
+  | "source_stale"
+  | "source_down"
+  | "metric_missing"
+  | "query_failed"
+  | "prometheus_unreachable"
+  | "metrics_not_collected"
+  | (string & {});
 
 /** Vantage's own alerts (no rule). Later versions may add kinds. */
 export type SystemAlertKind =

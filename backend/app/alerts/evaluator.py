@@ -45,14 +45,30 @@ if exactly one series has no event yet; with several it is resolved quietly
 (``rule_changed``); with none it stays open (an empty result is no evidence of recovery)
 until a series appears or an admin closes it.
 
-Self-monitoring (P0-4, ``app.alerts.selfcheck``): every tick records the probe's outcome
-and, when it answers, how old Prometheus' newest scrape of Vantage is. Prometheus
-unreachable for 2 minutes opens the system alert "Prometheus unreachable" ("7 open alerts
-and 12 rules can't be checked"); shorter gaps change nothing (pending timers pause). Metrics
-not collected (the newest scrape older than 2 minutes, or none for 2 minutes) opens
-"Metrics not being collected". Each resolves on the first tick that sees the cause gone. A
-rule whose query fails 3 ticks in a row shows the error (the rule API's ``error``); that is
-a configuration problem and sends no message.
+Self-monitoring and shared failures (P0-4, ``app.alerts.selfcheck``): every tick records
+the probe's outcome and, when it answers, how old Prometheus' newest scrape of Vantage is.
+
+* Prometheus unreachable for 2 minutes: the system alert opens ("7 open alerts and 12
+  rules can't be checked") and every open alert goes into NO DATA
+  (``prometheus_unreachable``), its NO DATA message stored ``folded`` into the system
+  alert's message. Shorter gaps change nothing (pending timers pause). The first tick
+  that reaches Prometheus again re-checks every alert as usual: still-true ones return to
+  FIRING without a message, and the system alert's RESOLVED message counts them ("5 alerts
+  still firing, 2 recovering").
+* Metrics not collected (the newest scrape older than 2 minutes, or none for 2 minutes):
+  the same for the alerts on polled devices (``metrics_not_collected``); their values in
+  Prometheus are old, so nothing counts for them until scraping resumes.
+* A device down: when its instance-down rule (``promql.is_instance_down``) fires, the
+  device's other alerts already in NO DATA are folded into that message ("3 other alerts on
+  this device can't be checked"); one entering NO DATA later is folded into a short
+  follow-up message to the same channel (the FIRING message is usually sent by then). On a
+  channel the instance-down rule doesn't use, and without such a rule, they are sent
+  normally.
+* While a device is in a failure streak (failed poll cycles, not yet down), its alerts'
+  NO DATA messages are held, so a device about to be marked down doesn't first send one
+  per alert.
+* A rule whose query fails 3 ticks in a row shows the error (the rule API's ``error``);
+  that is a configuration problem and sends no message.
 
 Messages carry ids, numbers and a short summary built from the event's stored (filtered,
 cleaned, capped) labels. Prometheus' error text is never logged or stored (the proxy only
@@ -66,7 +82,7 @@ import math
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -75,7 +91,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.alerts import labels as alert_labels
 from app.alerts import promql
 from app.alerts import state as sm
-from app.alerts.delivery import enqueue
+from app.alerts.delivery import enqueue, fold_into
 from app.alerts.labels import INSTANCE_ID_LABEL, INSTANCE_NAME_LABEL, LEGACY_FINGERPRINT, REDACTED
 from app.alerts.selfcheck import (
     METRICS_QUERY,
@@ -98,6 +114,7 @@ from app.models import (
     EventSource,
     Instance,
     NotificationKind,
+    NotificationStatus,
     SystemKind,
 )
 from app.query.proxy import PrometheusClient, QueryError, QueryRequest, QueryResult, Series
@@ -129,7 +146,16 @@ NO_DATA_WORDS = {
     sm.NoDataReason.SOURCE_DOWN: "device not answering",
     sm.NoDataReason.METRIC_MISSING: "metric missing",
     sm.NoDataReason.QUERY_FAILED: "query failing",
+    sm.NoDataReason.PROMETHEUS_UNREACHABLE: "Prometheus unreachable",
+    sm.NoDataReason.METRICS_NOT_COLLECTED: "metrics not being collected",
 }
+# The system alert that speaks for each shared cause.
+SHARED_KIND = {
+    sm.NoDataReason.PROMETHEUS_UNREACHABLE: SystemKind.PROMETHEUS_UNREACHABLE,
+    sm.NoDataReason.METRICS_NOT_COLLECTED: SystemKind.METRICS_NOT_COLLECTED,
+}
+# NO DATA reasons that mean "the device itself isn't answering".
+DEVICE_REASONS = (sm.NoDataReason.SOURCE_DOWN.value, sm.NoDataReason.SOURCE_STALE.value)
 NO_DATA_PREFIX = "NO DATA: "
 
 
@@ -283,6 +309,7 @@ class AlertEvaluator:
         clock: Callable[[], datetime] = utcnow,
         poll_interval: Callable[[str], float | None] = lambda type_id: None,
         instance_state: Callable[[uuid.UUID], str | None] = lambda instance_id: None,
+        failed_cycles: Callable[[uuid.UUID], int] = lambda instance_id: 0,
         monitor: SelfMonitor | None = None,
     ) -> None:
         self._sessions = session_factory
@@ -294,6 +321,8 @@ class AlertEvaluator:
         self._poll_interval = poll_interval
         # instance id -> the collector's state ("pending" / "up" / "down"), None if unknown.
         self._instance_state = instance_state
+        # instance id -> failed poll cycles in a row (the collector's streak).
+        self._failed_cycles = failed_cycles
         self.monitor = monitor or SelfMonitor(
             session_factory=session_factory, hub=hub, clock=clock, interval=interval
         )
@@ -419,13 +448,24 @@ class AlertEvaluator:
                 await self._prometheus_down(rules, open_by_rule, system_open, now)
             return
 
-        # System alerts whose cause is gone with this tick.
-        ending: list[SystemKind] = []
+        # Shared causes that end with this tick: counted once every alert is re-checked.
+        ending: dict[SystemKind, list[tuple[int, str, int]]] = {}
         if SystemKind.PROMETHEUS_UNREACHABLE in system_open:
-            ending.append(SystemKind.PROMETHEUS_UNREACHABLE)
-        await self._check_metrics(open_by_rule, system_open, now)
+            ending[SystemKind.PROMETHEUS_UNREACHABLE] = []
+        metrics_down = await self._check_metrics(open_by_rule, system_open, now)
         if self.monitor.metrics_ok() and SystemKind.METRICS_NOT_COLLECTED in system_open:
-            ending.append(SystemKind.METRICS_NOT_COLLECTED)
+            ending[SystemKind.METRICS_NOT_COLLECTED] = []
+        for kind, affected in ending.items():
+            reason = next(r for r, k in SHARED_KIND.items() if k == kind)
+            affected += [
+                (rule_id, fp, row.id)
+                for rule_id, by_fp in open_by_rule.items()
+                for fp, row in by_fp.items()
+                if row.no_data_reason == reason.value
+            ]
+        carriers = (
+            self._carrier_channels(SystemKind.METRICS_NOT_COLLECTED) if metrics_down else set()
+        )
 
         fleet = await self._fleet()
         for rule in rules:
@@ -433,16 +473,32 @@ class AlertEvaluator:
 
         async def evaluate(rule: AlertRule) -> None:
             try:
-                await self._evaluate(rule, open_by_rule.get(rule.id, {}), fleet)
+                await self._evaluate(
+                    rule, open_by_rule.get(rule.id, {}), fleet, metrics_down, carriers
+                )
             except Exception as exc:
                 log.warning("alert rule %d failed (%s)", rule.id, type(exc).__name__)
 
         # Rules run side by side; _query keeps at most MAX_CONCURRENT_QUERIES in flight.
         await asyncio.gather(*(evaluate(rule) for rule in rules))
-        for kind in ending:
-            self._end_system(kind, now)
+        for kind, affected in ending.items():
+            self._end_shared(kind, affected, now)
 
-    # --- system alerts (P0-4) ----------------------------------------------------------------
+    # --- shared causes (P0-4) ----------------------------------------------------------------
+
+    def _carrier_channels(self, kind: SystemKind) -> set[int]:
+        """The channels the open system alert of ``kind`` was sent to."""
+        with self._sessions() as db:
+            return set(SelfMonitor.carriers(db, kind))
+
+    @staticmethod
+    def _shared_wait(rule: AlertRule, carriers: set[int]) -> timedelta:
+        """A shared cause's NO DATA message is folded at once when the system alert went
+        to every channel of the rule; otherwise it waits the usual 5 minutes and is sent on
+        the channels the system alert didn't reach (folded on the others)."""
+        if set(rule.channel_ids) <= carriers:
+            return timedelta(0)
+        return sm.NO_DATA_MESSAGE_AFTER
 
     async def _prometheus_down(
         self,
@@ -451,17 +507,28 @@ class AlertEvaluator:
         system_open: set[str | None],
         now: datetime,
     ) -> None:
-        """Prometheus unreachable for 2 minutes: one system alert."""
+        """Prometheus unreachable for 2 minutes: one system alert, every open alert NO DATA
+        with its message folded into it."""
         kind = SystemKind.PROMETHEUS_UNREACHABLE
-        if kind in system_open:
-            return
-        alerts = sum(len(by_fp) for by_fp in open_by_rule.values())
-        since = self.monitor.unreachable_since or now
-        detail = (
-            f"since {hhmm(since)}. {plural(alerts, 'open alert')} and "
-            f"{plural(len(rules), 'rule')} can't be checked"
-        )
-        self.monitor.open_alert(kind, detail, since=since)
+        if kind not in system_open:
+            alerts = sum(len(by_fp) for by_fp in open_by_rule.values())
+            since = self.monitor.unreachable_since or now
+            detail = (
+                f"since {hhmm(since)}. {plural(alerts, 'open alert')} and "
+                f"{plural(len(rules), 'rule')} can't be checked"
+            )
+            self.monitor.open_alert(kind, detail, since=since)
+        carriers = self._carrier_channels(kind)
+        for rule in rules:
+            obs = sm.Observation(
+                now=now,
+                probe_ok=False,
+                shared_cause=sm.NoDataReason.PROMETHEUS_UNREACHABLE,
+                no_data_wait=self._shared_wait(rule, carriers),
+            )
+            for fp, row in open_by_rule.get(rule.id, {}).items():
+                if fp != LEGACY_FINGERPRINT:
+                    await self._step_open(rule, row, obs)
 
     async def _check_metrics(
         self,
@@ -496,26 +563,57 @@ class AlertEvaluator:
             self.monitor.open_alert(kind, detail, since=since)
         return down
 
-    def _end_system(self, kind: SystemKind, now: datetime) -> None:
-        """Resolve a system alert whose cause is gone."""
+    def _end_shared(
+        self, kind: SystemKind, affected: list[tuple[int, str, int]], now: datetime
+    ) -> None:
+        """Resolve a shared cause's system alert, counting what became of its alerts."""
+        firing = recovering = no_data = 0
         with self._sessions() as db:
             event = SelfMonitor.open_event(db, kind)
             if event is None:
                 return
             since = event.started_at
+            for rule_id, fp, event_id in affected:
+                state = db.scalar(select(AlertEvent.state).where(AlertEvent.id == event_id))
+                memory = self._open.get((rule_id, fp))
+                if state == AlertState.FIRING:
+                    firing += 1
+                elif state == AlertState.RESOLVED or (memory is not None and memory.recovering):
+                    recovering += 1
+                elif state == AlertState.NO_DATA:
+                    no_data += 1
         took = minutes((now - since).total_seconds())
         what = (
             "Prometheus back"
             if kind == SystemKind.PROMETHEUS_UNREACHABLE
             else "Metrics collected again"
         )
-        self.monitor.resolve_alert(kind, f"{what} after {took}.")
+        counts = []
+        if firing:
+            counts.append(f"{plural(firing, 'alert')} still firing")
+        if recovering:
+            counts.append(f"{recovering} recovering")
+        if no_data:
+            counts.append(f"{no_data} still without data")
+        tail = f" {', '.join(counts)}." if counts else ""
+        self.monitor.resolve_alert(kind, f"{what} after {took}.{tail}")
 
     def _polled(self, labels: dict[str, str]) -> bool:
         """The series' device is polled by the collector (its metrics reach Prometheus
         only through Vantage's /metrics)."""
         instance_id = labels.get(INSTANCE_ID_LABEL)
         return bool(instance_id) and self._state_of(instance_id or "") is not None
+
+    def _in_failure_streak(self, labels: dict[str, str]) -> bool:
+        """The device has failed poll cycles in a row but isn't down yet."""
+        instance_id = labels.get(INSTANCE_ID_LABEL)
+        if not instance_id:
+            return False
+        try:
+            failed = self._failed_cycles(uuid.UUID(instance_id))
+        except ValueError:
+            return False
+        return failed >= 1 and self._state_of(instance_id) != "down"
 
     async def _query(self, query: str, max_series: int | None = None) -> QueryResult:
         if self._slots is None:
@@ -680,6 +778,8 @@ class AlertEvaluator:
         rule: AlertRule,
         open_rows: dict[str, _OpenRow],
         fleet: _Fleet | None,
+        metrics_down: bool = False,
+        metrics_carriers: set[int] | None = None,
     ) -> None:
         split = promql.split(rule.expr)
         now = self._clock()
@@ -711,6 +811,13 @@ class AlertEvaluator:
                 self.set_rule_error(rule.id, error)
 
         def observe(fp: str, labels: dict[str, str]) -> sm.Observation:
+            shared = None
+            wait: timedelta | None = sm.NO_DATA_MESSAGE_AFTER
+            if metrics_down and self._polled(labels):
+                shared = sm.NoDataReason.METRICS_NOT_COLLECTED
+                wait = self._shared_wait(rule, metrics_carriers or set())
+            elif self._in_failure_streak(labels):
+                wait = None
             witness: sm.Witness = "none"
             if split.mode == "value":
                 if witness_failed:
@@ -727,6 +834,8 @@ class AlertEvaluator:
                 source=self._source(labels, fleet, now),
                 mode=split.mode,
                 started_at=self._started_at,
+                shared_cause=shared,
+                no_data_wait=wait,
             )
 
         # Open alerts.
@@ -794,7 +903,7 @@ class AlertEvaluator:
 
     def _no_data_sent(self, event_id: int, since: datetime, db: Session | None = None) -> bool:
         """Whether the NO DATA message of this event's current NO DATA episode (since
-        ``since``) was already queued, after a restart."""
+        ``since``) was already queued (sent or folded), after a restart."""
         if db is None:
             with self._sessions() as own:
                 return self._no_data_sent(event_id, since, own)
@@ -842,6 +951,10 @@ class AlertEvaluator:
                 db.rollback()
                 return False
             for notice in notices:
+                text = self._notice_text(notice, event, after)
+                if notice == sm.Notice.NO_DATA:
+                    self._queue_no_data(db, rule, event, after.no_data_reason, text, now)
+                    continue
                 enqueue(
                     db,
                     channel_ids=list(rule.channel_ids),
@@ -850,7 +963,7 @@ class AlertEvaluator:
                         if notice == sm.Notice.DATA_BACK
                         else NotificationKind.NO_DATA
                     ),
-                    text=self._notice_text(notice, event, after),
+                    text=text,
                     event_id=event.id,
                     now=now,
                 )
@@ -859,6 +972,174 @@ class AlertEvaluator:
         if new_state != row.state or after.no_data_reason != _reason(row.no_data_reason):
             self._hub.publish(message)
         return True
+
+    # --- folding NO DATA messages (P0-4) -------------------------------------------------
+
+    def _queue_no_data(
+        self,
+        db: Session,
+        rule: AlertRule,
+        event: AlertEvent,
+        reason: sm.NoDataReason | None,
+        text: str,
+        now: datetime,
+    ) -> None:
+        """Queue an alert's NO DATA message (no commit): folded into the system alert of a
+        shared cause, or into its device's instance-down message, or sent on its own."""
+        rows = enqueue(
+            db,
+            channel_ids=list(rule.channel_ids),
+            kind=NotificationKind.NO_DATA,
+            text=text,
+            event_id=event.id,
+            now=now,
+        )
+        if reason in SHARED_KIND:
+            # Only into the system alert's message on the same channel: a channel that
+            # doesn't take system alerts gets the alert's own NO DATA message.
+            carriers = SelfMonitor.carriers(db, SHARED_KIND[reason])
+            for row in rows:
+                carrier = carriers.get(row.channel_id or 0)
+                if carrier is not None and row.status == NotificationStatus.PENDING:
+                    fold_into(db, row, carrier, now)
+            return
+        if reason is not None and reason.value in DEVICE_REASONS:
+            down = self._down_event(db, event)
+            if down is not None:
+                self._fold_into_down(db, down, rows, now)
+
+    @staticmethod
+    def _down_event(db: Session, event: AlertEvent) -> tuple[AlertEvent, list[int]] | None:
+        """The open FIRING instance-down event of ``event``'s device (another rule), with
+        that rule's channels."""
+        if event.instance_id is None:
+            return None
+        candidates = db.execute(
+            select(AlertEvent, AlertRule)
+            .join(AlertRule, AlertRule.id == AlertEvent.rule_id)
+            .where(
+                AlertEvent.instance_id == event.instance_id,
+                AlertEvent.state == AlertState.FIRING,
+                AlertEvent.source == EventSource.RULE,
+                AlertEvent.id != event.id,
+            )
+            .order_by(AlertEvent.id)
+        )
+        for down, rule in candidates:
+            if promql.is_instance_down(rule.expr):
+                return down, list(rule.channel_ids)
+        return None
+
+    @staticmethod
+    def _fold_into_down(
+        db: Session,
+        down: tuple[AlertEvent, list[int]],
+        rows: list[AlertNotification],
+        now: datetime,
+    ) -> None:
+        """Fold NO DATA rows into the instance-down message on the same channel: its FIRING
+        message while that is still queued, otherwise a short follow-up (one per channel,
+        reused while queued). Rows on channels the down rule doesn't use stay as they are."""
+        event, channels = down
+        for row in rows:
+            if row.channel_id not in channels or row.status != NotificationStatus.PENDING:
+                continue
+            while True:
+                carrier = db.scalar(
+                    select(AlertNotification)
+                    .where(
+                        AlertNotification.event_id == event.id,
+                        AlertNotification.channel_id == row.channel_id,
+                        AlertNotification.kind.in_(
+                            (NotificationKind.FIRING, NotificationKind.NO_DATA)
+                        ),
+                        AlertNotification.status == NotificationStatus.PENDING,
+                    )
+                    .order_by(AlertNotification.id.desc())
+                    .limit(1)
+                )
+                if carrier is None:
+                    carrier = AlertNotification(
+                        event_id=event.id,
+                        channel_id=row.channel_id,
+                        kind=NotificationKind.NO_DATA,
+                        text="",
+                        status=NotificationStatus.PENDING,
+                        next_attempt_at=now,
+                        created_at=now,
+                    )
+                    db.add(carrier)
+                    db.flush()
+                fold_into(db, row, carrier, now)
+                n = int(
+                    db.scalar(
+                        select(func.count()).where(
+                            AlertNotification.folded_into == carrier.id,
+                            AlertNotification.kind == NotificationKind.NO_DATA,
+                        )
+                    )
+                    or 0
+                )
+                head = "FIRING" if carrier.kind == NotificationKind.FIRING else "STILL DOWN"
+                others = "other alert" if n == 1 else "other alerts"
+                text = f"{head}: {event.summary}. {n} {others} on this device can't be checked"
+                written = db.execute(
+                    update(AlertNotification)
+                    .where(
+                        AlertNotification.id == carrier.id,
+                        AlertNotification.status == NotificationStatus.PENDING,
+                    )
+                    .values(text=text)
+                    .execution_options(synchronize_session=False)
+                )
+                if written.rowcount:  # type: ignore[attr-defined]
+                    break
+                # Claimed meanwhile, so its text won't mention this row: take another.
+                row.status = NotificationStatus.PENDING
+                row.folded_into = None
+                db.flush()
+
+    def _fold_waiting(
+        self, db: Session, rule: AlertRule, event: AlertEvent, now: datetime
+    ) -> list[tuple[int, str]]:
+        """An instance-down event just opened: fold the device's other alerts already in
+        NO DATA (their message not queued yet) into its message. Returns their keys."""
+        if event.instance_id is None or not promql.is_instance_down(rule.expr):
+            return []
+        waiting = db.execute(
+            select(AlertEvent, AlertRule)
+            .join(AlertRule, AlertRule.id == AlertEvent.rule_id)
+            .where(
+                AlertEvent.instance_id == event.instance_id,
+                AlertEvent.state == AlertState.NO_DATA,
+                AlertEvent.source == EventSource.RULE,
+                AlertEvent.no_data_reason.in_(DEVICE_REASONS),
+                AlertEvent.id != event.id,
+            )
+            .order_by(AlertEvent.id)
+        ).all()
+        folded: list[tuple[int, str]] = []
+        for other, other_rule in waiting:
+            key = (other_rule.id, other.fingerprint)
+            memory = self._open.get(key)
+            since = other.state_since or other.started_at
+            if (memory is not None and memory.no_data_sent) or self._no_data_sent(
+                other.id, since, db
+            ):
+                continue
+            reason = _reason(other.no_data_reason)
+            words = NO_DATA_WORDS.get(reason, "no data") if reason else "no data"
+            rows = enqueue(
+                db,
+                channel_ids=list(other_rule.channel_ids),
+                kind=NotificationKind.NO_DATA,
+                text=f"{NO_DATA_PREFIX}{other.summary} ({words})",
+                event_id=other.id,
+                now=now,
+            )
+            self._fold_into_down(db, (event, list(rule.channel_ids)), rows, now)
+            folded.append(key)
+        return folded
 
     @staticmethod
     def _notice_text(notice: sm.Notice, event: AlertEvent, alert: sm.OpenAlert) -> str:
@@ -960,12 +1241,16 @@ class AlertEvaluator:
                 event_id=event.id,
                 now=now,
             )
+            folded = self._fold_waiting(db, rule, event, now)
             try:
                 db.commit()
             except IntegrityError:
                 db.rollback()
                 return
             message = event_message(event)
+        for key in folded:  # their NO DATA message is queued (folded): not again
+            if key in self._open:
+                self._open[key] = replace(self._open[key], no_data_sent=True)
         source = self._source(series.labels, fleet, now)
         self._open[(rule.id, fp)] = sm.OpenAlert(
             state="firing",

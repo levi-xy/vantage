@@ -160,6 +160,7 @@ def create_app(
         hub=app.state.event_hub,
         poll_interval=app.state.poller.interval_for_type,
         instance_state=_instance_state(app.state.metrics_store),
+        failed_cycles=app.state.metrics_store.failed_cycles,
         monitor=app.state.self_monitor,
     )
     app.state.alert_watchdog = Watchdog(app.state.self_monitor, app.state.alert_evaluator.restart)
