@@ -178,4 +178,31 @@ describe("dashboard headline and summary tiles", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Active problems" })).not.toBeInTheDocument();
   });
+
+  it("doesn't call scrape-only devices fine when Prometheus can't be reached", async () => {
+    const backend = fakeBackend({
+      session: exampleMe("viewer"),
+      routes: {
+        "GET /instances": () =>
+          json([
+            exampleInstance({
+              type_id: "pfsense",
+              status: { state: "unknown", checked_at: null, last_success_at: null, error: null },
+            }),
+          ]),
+        "POST /query": () => json({ detail: "Prometheus is unreachable" }, 502),
+      },
+    });
+    renderApp("/", backend);
+    expect(
+      // After the client's two retries of a 5xx.
+      await screen.findByRole(
+        "heading",
+        { level: 2, name: "Status unknown for 1 device" },
+        { timeout: 6_000 },
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/^Prometheus can't be reached · 0 devices up · /)).toBeInTheDocument();
+    expect(screen.queryByText("All systems normal")).not.toBeInTheDocument();
+  }, 10_000);
 });

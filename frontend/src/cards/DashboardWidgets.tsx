@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { KpiTile } from "./metrics/KpiTile";
 import type { KpiTileProps } from "./metrics/KpiTile";
 import { formatMs } from "./metrics/format";
-import { shownState, useScrapeStates } from "./metrics/scrapeStatus";
+import { shownState, useScrapeStatus } from "./metrics/scrapeStatus";
 import { useApiClient } from "../app/session";
 import { useFleetQuery } from "./metrics/useMetricQuery";
 import { OPEN_ALERTS_LIMIT, useOpenAlerts } from "./openAlerts";
@@ -21,7 +21,8 @@ import { INSTANCES_KEY } from "../pages/devices/queries";
 
 export function DevicesHealthCard({ instances }: WidgetProps) {
   const client = useApiClient();
-  const scrape = useScrapeStates(instances);
+  const scrapeStatus = useScrapeStatus(instances);
+  const scrape = scrapeStatus.states;
   const state = (i: (typeof instances)[number]) => shownState(i, scrape);
   const counts = healthCounts(instances, state);
   const polled = counts.up + counts.down + counts.pending;
@@ -37,6 +38,8 @@ export function DevicesHealthCard({ instances }: WidgetProps) {
   if (counts.down) {
     const names = instances.filter((i) => state(i) === "down").map((i) => i.name);
     note = `${counts.down} down: ${names.join(", ")}`;
+  } else if (scrapeStatus.failed) {
+    note = `${scrapeStatus.needed} unknown: Prometheus can't be reached`;
   } else if (notFresh) {
     note = `${notFresh} ${notFresh === 1 ? "device" : "devices"} without fresh data`;
   } else if (counts.pending) {

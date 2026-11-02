@@ -154,15 +154,20 @@ export function problemSubline(problems: Problem[]): string {
     : `${first.brief} Everything else is up.`;
 }
 
-/** "4 devices up · 1 pending · no active alerts · checked 12 s ago" (parts left out when unknown). */
+/**
+ * "4 devices up · 1 pending · 1 not checked yet · no active alerts · checked 12 s ago"
+ * (parts left out when they don't apply).
+ */
 export function normalSubline(
   up: number,
   pending: number,
+  notChecked: number,
   alertsKnown: boolean,
   checkedAgoMs: number | null,
 ): string {
   const parts = [plural(up, "device") + " up"];
   if (pending) parts.push(`${pending} pending`);
+  if (notChecked) parts.push(`${notChecked} not checked yet`);
   parts.push(alertsKnown ? "no active alerts" : "alerts unavailable");
   if (checkedAgoMs !== null) parts.push(`checked ${ageText(checkedAgoMs)} ago`);
   return parts.join(" · ");

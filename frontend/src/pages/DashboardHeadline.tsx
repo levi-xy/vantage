@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 import type { Instance } from "../api";
-import { shownState, useScrapeStates } from "../cards/metrics/scrapeStatus";
+import { shownState, useScrapeStatus } from "../cards/metrics/scrapeStatus";
 import { useOpenAlerts } from "../cards/openAlerts";
 import { healthCounts } from "../cards/overview";
 import { findProblems, normalSubline, problemSubline, sinceText } from "../cards/problems";
@@ -20,6 +20,8 @@ function useNow(): number {
   }, []);
   return now;
 }
+
+const devices = (n: number) => `${n} ${n === 1 ? "device" : "devices"}`;
 
 /** The newest poll check of any device, or the list's own update time. */
 function lastChecked(instances: Instance[], listUpdatedAt: number): number | null {
@@ -81,33 +83,45 @@ export function DashboardHeadline({
 }) {
   const nowMs = useNow();
   const alerts = useOpenAlerts();
-  const scrape = useScrapeStates(instances ?? []);
+  const scrape = useScrapeStatus(instances ?? []);
   const list = instances ?? [];
-  const ready = instances !== undefined && (alerts.data !== undefined || alerts.isError);
+  const ready =
+    instances !== undefined && (alerts.data !== undefined || alerts.isError) && !scrape.pending;
 
   let headline = "";
   let subline = "";
   let problems: Problem[] = [];
   if (ready) {
-    const stateOf = (i: Instance) => shownState(i, scrape);
+    const stateOf = (i: Instance) => shownState(i, scrape.states);
     problems = findProblems(list, alerts.data ?? [], stateOf, nowMs);
+    // Enabled devices nobody could judge: scrape-only ones while Prometheus fails, or not
+    // checked yet. They are never counted as up.
+    const unknown = list.filter((i) => i.enabled && stateOf(i) === "unknown").length;
     if (problems.length) {
       headline = `${problems.length} ${problems.length === 1 ? "problem" : "problems"}`;
       subline = problemSubline(problems);
+      if (scrape.failed && unknown) subline += ` Status unknown for ${devices(unknown)}.`;
     } else if (list.length === 0) {
       headline = "No devices yet";
       subline = "Add a device to start monitoring.";
     } else {
       const counts = healthCounts(list, stateOf);
       const checked = lastChecked(list, listUpdatedAt);
-      // With the alert list unreadable, "normal" can't be claimed.
-      headline = alerts.isError ? "No device problems" : "All systems normal";
-      subline = normalSubline(
+      const rest = normalSubline(
         counts.up,
         counts.pending,
+        scrape.failed ? 0 : unknown,
         !alerts.isError,
         checked === null ? null : nowMs - checked,
       );
+      if (scrape.failed && unknown) {
+        headline = `Status unknown for ${devices(unknown)}`;
+        subline = `Prometheus can't be reached · ${rest}`;
+      } else {
+        // With the alert list unreadable, "normal" can't be claimed.
+        headline = alerts.isError ? "No device problems" : "All systems normal";
+        subline = rest;
+      }
     }
   }
 
