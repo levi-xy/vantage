@@ -23,6 +23,7 @@ export function HttpCheckCard({ instanceId, title, instance }: CardProps) {
   return (
     <CardFrame
       title={title}
+      showTitle={false}
       instance={instance}
       loading={success.isPending}
       error={success.error ?? status.error ?? duration.error}

@@ -37,7 +37,7 @@ describe("snmp cards", () => {
   it("overview shows the name, uptime and interface counts", async () => {
     renderCard(client, SnmpOverviewCard, answer);
     expect(await screen.findByText("switch-a")).toBeInTheDocument();
-    expect(screen.getByText("1d 1h")).toBeInTheDocument();
+    expect(screen.getByText(/· up 1d 1h/)).toBeInTheDocument(); // in the header
     expect(screen.getByText("Interfaces down").nextSibling).toHaveTextContent("2");
   });
 

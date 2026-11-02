@@ -1,7 +1,7 @@
 import type { CardProps } from "../registry";
 import { cardFreshness } from "../metrics/freshness";
 import { CardFrame, UsageBar } from "../metrics/CardFrame";
-import { formatBytes, formatCelsius, formatDuration, formatPercent } from "../metrics/format";
+import { formatBytes, formatCelsius, formatPercent } from "../metrics/format";
 import { byLabel, firstSeries, firstValue } from "../metrics/promql";
 import { StatTile } from "../metrics/StatTile";
 import { useInstantQuery, useRangeQuery } from "../metrics/useMetricQuery";
@@ -64,20 +64,21 @@ export function LinuxHostCard({ instanceId, title, instance }: CardProps) {
   return (
     <CardFrame
       title={title}
+      showTitle={false}
       instance={instance}
       loading={cpu.isPending && mem.isPending}
       error={cpu.error ?? mem.error}
       freshness={cardFreshness(cpu, mem, memTotal, uptime, rx, tx, disks, raid, zfs, temps)}
       empty={cpuValue === undefined && memValue === undefined && uptimeValue === undefined}
+      uptimeSeconds={uptimeValue}
     >
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-3">
         <StatTile label="CPU" value={formatPercent(cpuValue)} spark={firstSeries(cpuSpark.data)} />
         <StatTile
           label={`Memory${memTotalValue ? ` of ${formatBytes(memTotalValue)}` : ""}`}
           value={formatPercent(memValue)}
           spark={firstSeries(memSpark.data)}
         />
-        <StatTile label="Uptime" value={formatDuration(uptimeValue)} />
         <StatTile
           label="Network in"
           value={formatRate(firstValue(rx.data))}
@@ -113,13 +114,7 @@ export function LinuxHostCard({ instanceId, title, instance }: CardProps) {
             return (
               <span key={`md-${a.key}`}>
                 RAID {a.key}:{" "}
-                <span
-                  className={
-                    ok ? "text-emerald-700 dark:text-emerald-400" : "text-red-700 dark:text-red-400"
-                  }
-                >
-                  {ok ? "healthy" : "degraded"}
-                </span>
+                <span className={ok ? "" : "text-crit-text"}>{ok ? "healthy" : "degraded"}</span>
               </span>
             );
           })}
@@ -128,15 +123,7 @@ export function LinuxHostCard({ instanceId, title, instance }: CardProps) {
             return (
               <span key={`zfs-${p.key}`}>
                 ZFS {p.key}:{" "}
-                <span
-                  className={
-                    state === "online"
-                      ? "text-emerald-700 dark:text-emerald-400"
-                      : "text-red-700 dark:text-red-400"
-                  }
-                >
-                  {state}
-                </span>
+                <span className={state === "online" ? "" : "text-crit-text"}>{state}</span>
               </span>
             );
           })}

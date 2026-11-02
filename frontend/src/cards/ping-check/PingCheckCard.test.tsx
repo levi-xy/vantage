@@ -45,8 +45,16 @@ describe("PingCheckCard", () => {
   it("shows round-trip time and packet loss", async () => {
     renderCard((q) => vector(q.startsWith("vantage_ping_check_rtt") ? "0.0123" : "0"));
     expect(await screen.findByText("12.3 ms")).toBeInTheDocument();
-    expect(screen.getByText("0.0%")).toBeInTheDocument();
+    // Healthy is plain text: no green, and the header says a muted UP.
+    expect(screen.getByText("0.0%").className).not.toMatch(/emerald|crit/);
     expect(screen.getByText("router-ping")).toBeInTheDocument();
+    expect(screen.getByText("UP").className).toContain("text-muted");
+  });
+
+  it("shows 100% loss as the header's state, in the critical colour", async () => {
+    renderCard((q) => vector(q.startsWith("vantage_ping_check_rtt") ? null : "1"));
+    expect(await screen.findByText("100% LOSS")).toHaveClass("text-crit-text");
+    expect(screen.getByText("100%")).toHaveClass("text-crit-text");
   });
 
   it("says so when there is no data", async () => {

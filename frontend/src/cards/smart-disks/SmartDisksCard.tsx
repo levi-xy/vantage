@@ -46,13 +46,7 @@ export function SmartDisksCard({ instanceId, title, instance }: CardProps) {
             return (
               <li key={disk.key} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-sm">
                 <span className="font-medium">{disk.key}</span>
-                <span
-                  className={
-                    healthy
-                      ? "text-emerald-700 dark:text-emerald-400"
-                      : "text-red-700 dark:text-red-400"
-                  }
-                >
+                <span className={healthy ? "" : "text-crit-text"}>
                   {healthy ? "Healthy" : "Failing"}
                 </span>
                 <span className="tabular-nums">{formatCelsius(temp.get(disk.key))}</span>

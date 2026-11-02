@@ -34,6 +34,7 @@ export function EmbyOverviewCard({ instanceId, title, instance }: CardProps) {
   return (
     <CardFrame
       title={title}
+      showTitle={false}
       instance={instance}
       loading={scalars.isPending}
       error={scalars.error ?? streams.error}
@@ -42,11 +43,7 @@ export function EmbyOverviewCard({ instanceId, title, instance }: CardProps) {
       emptyHint="No Emby metrics yet. Check the instance status and the API key."
     >
       <div className="flex flex-wrap items-baseline gap-x-3 text-sm">
-        <span
-          className={
-            up === 1 ? "text-emerald-700 dark:text-emerald-400" : "text-red-700 dark:text-red-400"
-          }
-        >
+        <span className={up === 1 ? "" : "text-crit-text"}>
           {up === 1 ? "Server up" : "Server down"}
         </span>
         {serverInfo?.server_name && (

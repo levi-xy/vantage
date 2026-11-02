@@ -48,7 +48,7 @@ describe("dashboard page", () => {
     const backend = backendWith({ version: 2, cards: [PING] });
     renderApp("/", backend);
     const card = await screen.findByTestId("card");
-    expect(card).toHaveTextContent("Ping");
+    expect(card).toHaveTextContent("DOWN");
     expect(card).toHaveTextContent("nas-1");
     expect(screen.getAllByTestId("card")).toHaveLength(1);
     expect(puts(backend)).toHaveLength(0);

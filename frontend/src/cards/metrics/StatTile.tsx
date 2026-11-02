@@ -11,9 +11,10 @@ export interface StatTileProps {
   tone?: "ok" | "bad";
 }
 
+// Healthy is the plain text colour; only a problem stands out.
 const TONES = {
-  ok: "text-emerald-700 dark:text-emerald-400",
-  bad: "text-red-700 dark:text-red-400",
+  ok: "",
+  bad: "text-crit-text",
 };
 
 /** A label, a big value, and optionally a sparkline. */
