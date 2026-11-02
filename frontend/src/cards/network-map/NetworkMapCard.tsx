@@ -7,6 +7,9 @@ import { buttonPrimary, buttonSecondary, input } from "../../components/styles";
 import { firstValue } from "../metrics/promql";
 import { shownState, useScrapeStates } from "../metrics/scrapeStatus";
 import { useFleetQuery } from "../metrics/useMetricQuery";
+import { Figures, KeyFigure } from "../metrics/KeyFigure";
+import { StatTile } from "../metrics/StatTile";
+import { useCardTier } from "../metrics/tier";
 import { rateQuery } from "../throughput/ports";
 import type { PortOption, PortRef } from "../throughput/ports";
 import { usePortOptions } from "../throughput/ThroughputCard";
@@ -99,8 +102,43 @@ export function NetworkMapCard({ instances }: WidgetProps) {
   const scrape = useScrapeStates(instances);
   const { groups } = usePortOptions(instances);
   const points = circleLayout(instances);
+  const tier = useCardTier();
   if (instances.length === 0) {
     return <p className="p-4 text-sm text-slate-600 dark:text-slate-400">No devices yet.</p>;
+  }
+  if (tier !== "full") {
+    // No map: how many nodes, and which are down.
+    const down = instances.filter((i) => shownState(i, scrape) === "down");
+    const nodes = `${instances.length} ${instances.length === 1 ? "node" : "nodes"}`;
+    if (tier === "small") {
+      return (
+        <section
+          aria-label="Network map"
+          className="flex h-full min-w-0 flex-col justify-center gap-0.5 overflow-hidden px-3 py-2"
+        >
+          <span className="truncate text-[13px] leading-[18px] font-semibold">Network map</span>
+          <KeyFigure label="Nodes and nodes down" tone={down.length ? "bad" : undefined}>
+            {nodes} · {down.length} down
+          </KeyFigure>
+        </section>
+      );
+    }
+    return (
+      <section aria-label="Network map" className="flex h-full min-w-0 flex-col gap-2 p-3">
+        <span className="truncate text-[15px] font-semibold">Network map</span>
+        <Figures>
+          <StatTile label="Nodes" value={String(instances.length)} />
+          <StatTile
+            label="Down"
+            value={String(down.length)}
+            tone={down.length ? "bad" : undefined}
+          />
+        </Figures>
+        {down.length > 0 && (
+          <p className="truncate text-sm text-crit-text">{down.map((i) => i.name).join(", ")}</p>
+        )}
+      </section>
+    );
   }
   const lines = drawableLinks(links.data ?? [], instances);
   return (

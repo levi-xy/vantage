@@ -5,6 +5,8 @@ import type { Instance, QueryRequest, QueryResult } from "../../api";
 import { LIVE_RATE_KEY } from "../../app/live";
 import type { LiveRate } from "../../app/live";
 import { json } from "../../test-utils";
+import { CardTierContext } from "../metrics/tier";
+import type { CardTier } from "../metrics/tier";
 import { ThroughputCard } from "./ThroughputCard";
 
 const client = new ApiClient({ fetch: vi.fn() });
@@ -39,6 +41,7 @@ function renderCard(
   instance: Instance,
   cardSettings: Record<string, string> = settings,
   live?: LiveRate,
+  tier: CardTier = "full",
 ) {
   const queries: QueryRequest[] = [];
   const fetchMock = vi.fn<typeof fetch>(async (_url, init) => {
@@ -74,7 +77,9 @@ function renderCard(
   if (live) queryClient.setQueryData(LIVE_RATE_KEY, live);
   render(
     <QueryClientProvider client={queryClient}>
-      <ThroughputCard instances={[instance]} settings={cardSettings} />
+      <CardTierContext.Provider value={{ tier }}>
+        <ThroughputCard instances={[instance]} settings={cardSettings} />
+      </CardTierContext.Provider>
     </QueryClientProvider>,
   );
   return queries;
@@ -131,6 +136,21 @@ describe("ThroughputCard", () => {
     expect(await screen.findByText(/· live/)).toBeInTheDocument();
     // The chart's top gridline is the round step above its 84.2 Mbit/s last point.
     expect(await screen.findAllByText("100 Mbit/s")).not.toHaveLength(0);
+  });
+
+  it("small: the current rates, no chart; NO DATA when the device doesn't answer", async () => {
+    renderCard(firewall(10), settings, undefined, "small");
+    const rates = await screen.findByRole("group", { name: "Download and upload" });
+    await vi.waitFor(() => expect(rates).toHaveTextContent("↓84.2 Mbit/s ↑12.6 Mbit/s"));
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.queryByText("NO DATA")).not.toBeInTheDocument();
+  });
+
+  it("small, stale: NO DATA in red and no current value", async () => {
+    renderCard(firewall(600), settings, undefined, "small");
+    expect((await screen.findByText("NO DATA")).className).toContain("text-crit-text");
+    const rates = await screen.findByRole("group", { name: "Download and upload" });
+    expect(rates).toHaveTextContent("↓— ↑—");
   });
 
   it("says in and out for a port that isn't the WAN", async () => {

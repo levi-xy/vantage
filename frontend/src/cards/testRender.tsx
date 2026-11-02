@@ -5,6 +5,8 @@ import { ApiClient } from "../api";
 import type { Instance, QueryRequest, QueryResult } from "../api";
 import { json } from "../test-utils";
 import type { CardProps } from "./registry";
+import { CardTierContext } from "./metrics/tier";
+import type { CardTier } from "./metrics/tier";
 
 export const testInstance = {
   id: "inst-1",
@@ -25,14 +27,15 @@ export function vector(rows: [Record<string, string>, string][]): QueryResult {
  * Render a card whose queries are answered by `answer(promql)`. `client` is the ApiClient
  * the test's `vi.mock("../../app/session")` returns. `answer` also gets the request, for
  * range queries. With `cached`, the instance is in the instances list the dashboard keeps
- * (where the query hooks read `last_success_at` from).
+ * (where the query hooks read `last_success_at` from). With `tier`, the card is shown at that
+ * tier, as the dashboard grid does for a card below its full size.
  */
 export function renderCard(
   client: ApiClient,
   Card: ComponentType<CardProps>,
   answer: (query: string, request: QueryRequest) => QueryResult,
   instance: Instance = testInstance,
-  { cached = false }: { cached?: boolean } = {},
+  { cached = false, tier = "full" }: { cached?: boolean; tier?: CardTier } = {},
 ) {
   const fetchMock = vi.fn<typeof fetch>(async (_url, init) => {
     const request = JSON.parse(String(init?.body)) as QueryRequest;
@@ -45,7 +48,9 @@ export function renderCard(
   if (cached) queryClient.setQueryData(["instances"], [instance]);
   render(
     <QueryClientProvider client={queryClient}>
-      <Card instanceId="inst-1" settings={{}} title="Card" instance={instance} />
+      <CardTierContext.Provider value={{ tier }}>
+        <Card instanceId="inst-1" settings={{}} title="Card" instance={instance} />
+      </CardTierContext.Provider>
     </QueryClientProvider>,
   );
 }

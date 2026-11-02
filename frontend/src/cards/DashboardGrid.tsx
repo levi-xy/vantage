@@ -4,26 +4,31 @@ import type { Layout } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import type { CardPlacement, Instance } from "../api";
-import { cardMinSize, widget } from "./widgets";
-import { cardKey, GRID_COLUMNS } from "./layout";
+import { cardMinSize, cardTier, widget } from "./widgets";
+import { cardKey, GRID_COLUMNS, GRID_MARGIN, gridHeightPx, ROW_HEIGHT } from "./layout";
 import { cardComponent } from "./registry";
-
-const ROW_HEIGHT = 56;
+import { CardTierContext } from "./metrics/tier";
 // Used only until the container has been measured (and in test DOMs, which have no layout).
 const FALLBACK_WIDTH = 1200;
 const DRAG_HANDLE = "vantage-drag-handle";
 const NO_DRAG = "vantage-no-drag";
 
+/** A card's size on the grid: a card saved smaller than the minimum is shown at it. */
+function shownSize(c: CardPlacement): [number, number] {
+  const [minW, minH] = cardMinSize();
+  return [Math.max(c.w, minW), Math.max(c.h, minH)];
+}
+
 function toGridItems(cards: CardPlacement[], editing: boolean): Layout[] {
+  const [minW, minH] = cardMinSize();
   return cards.map((c) => {
-    const [minW, minH] = cardMinSize(c.card_type, c.instance_id);
+    const [w, h] = shownSize(c);
     return {
       i: cardKey(c),
       x: c.x,
       y: c.y,
-      // A card saved smaller than its minimum (before minimums existed) is shown at it.
-      w: Math.max(c.w, minW),
-      h: Math.max(c.h, minH),
+      w,
+      h,
       minW,
       minH,
       isDraggable: editing,
@@ -119,6 +124,17 @@ export function DashboardGrid({
         />
       );
     }
+    if (!compact) {
+      // On the grid, a card below its full size shows less (`metrics/tier.ts`). The phone
+      // list has no tier: each card is as tall as its content.
+      const size = shownSize(c);
+      const tier = cardTier(c.card_type, c.instance_id, size);
+      content = (
+        <CardTierContext.Provider value={{ tier, heightPx: gridHeightPx(size[1]) }}>
+          {content}
+        </CardTierContext.Provider>
+      );
+    }
     return (
       <div
         key={key}
@@ -179,7 +195,7 @@ export function DashboardGrid({
         layout={toGridItems(cards, editing)}
         cols={GRID_COLUMNS}
         rowHeight={ROW_HEIGHT}
-        margin={[16, 16]}
+        margin={[GRID_MARGIN, GRID_MARGIN]}
         containerPadding={[0, 0]}
         // Cards float up into any free space: no holes below a short card.
         compactType="vertical"

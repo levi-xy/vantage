@@ -2,6 +2,9 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import { useUnits } from "../../app/units";
 import { CardFrame } from "../metrics/CardFrame";
+import { Figures, KeyFigure } from "../metrics/KeyFigure";
+import { StatTile } from "../metrics/StatTile";
+import { useCardTier } from "../metrics/tier";
 import type { CardProps } from "../registry";
 import {
   busiest,
@@ -43,6 +46,35 @@ export function SwitchPanelCard({ instanceId, title, instance }: CardProps) {
   const chosen = ports.find((p) => p.index === selected);
   const up = physical.filter((p) => p.state === "up").length;
   const top = busiest(physical);
+  const tier = useCardTier();
+
+  if (tier !== "full") {
+    // Ports up, and at medium the busiest port; no front panel.
+    return (
+      <CardFrame
+        title={title}
+        instance={instance}
+        loading={loading}
+        error={error}
+        freshness={freshness}
+        empty={all.length === 0}
+      >
+        {tier === "small" ? (
+          <KeyFigure label="Ports up">
+            {up}/{physical.length} up
+          </KeyFigure>
+        ) : (
+          <Figures>
+            <StatTile label="Ports up" value={`${up}/${physical.length}`} />
+            <StatTile
+              label="Busiest"
+              value={top ? `${top.port.name} · ${formatRate(top.total)}` : "–"}
+            />
+          </Figures>
+        )}
+      </CardFrame>
+    );
+  }
 
   const tile = ({ port, column, row }: Placed<Port>, cage: boolean) => {
     const on = selected === port.index;

@@ -1,6 +1,9 @@
 import { useState } from "react";
 import type { CardProps } from "../registry";
 import { CardFrame } from "../metrics/CardFrame";
+import { Figures, KeyFigure } from "../metrics/KeyFigure";
+import { StatTile } from "../metrics/StatTile";
+import { useCardTier } from "../metrics/tier";
 import { useUnits } from "../../app/units";
 import { describe, isInternal, speedText, STATE_TEXT, TILE, useSnmpPorts } from "./ports";
 import { InternalToggle, PortLegend } from "./PortParts";
@@ -20,6 +23,37 @@ export function SnmpPortsCard({ instanceId, title, instance }: CardProps) {
     .sort((a, b) => b.total - a.total)
     .slice(0, 3);
   const chosen = ports.find((p) => p.index === selected);
+  const tier = useCardTier();
+
+  if (tier !== "full") {
+    // Ports up, and at medium the busiest port; no port grid.
+    const up = physical.filter((p) => p.state === "up").length;
+    const top = talkers[0];
+    return (
+      <CardFrame
+        title={title}
+        instance={instance}
+        loading={loading}
+        error={error}
+        freshness={freshness}
+        empty={all.length === 0}
+      >
+        {tier === "small" ? (
+          <KeyFigure label="Ports up">
+            {up}/{physical.length} up
+          </KeyFigure>
+        ) : (
+          <Figures>
+            <StatTile label="Ports up" value={`${up}/${physical.length}`} />
+            <StatTile
+              label="Busiest"
+              value={top ? `${top.port.name} · ${formatRate(top.total)}` : "–"}
+            />
+          </Figures>
+        )}
+      </CardFrame>
+    );
+  }
 
   return (
     <CardFrame

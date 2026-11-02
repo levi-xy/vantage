@@ -8,6 +8,8 @@ import { freshFor, POLL_INTERVAL_SECONDS, sourceOf, StaleContext } from "../metr
 import { firstSeries, firstValue } from "../metrics/promql";
 import { shownState, useScrapeStates } from "../metrics/scrapeStatus";
 import { useFleetQuery, useFleetRangeQuery } from "../metrics/useMetricQuery";
+import { KeyFigure } from "../metrics/KeyFigure";
+import { useCardTier } from "../metrics/tier";
 import type { WidgetProps, WidgetSettingsProps } from "../widgets";
 import {
   MAX_PORTS,
@@ -105,6 +107,7 @@ function Current({ label, value, tone }: { label: string; value: string; tone: "
  * the backend pushes live rates (every ~2 s), those replace Prometheus' 2-minute average.
  */
 export function ThroughputCard({ instances, settings }: WidgetProps) {
+  const tier = useCardTier();
   const { formatRate, unit } = useUnits();
   const ports = portsFromSettings(settings);
   const chosen = ports.length > 0;
@@ -113,8 +116,16 @@ export function ThroughputCard({ instances, settings }: WidgetProps) {
   const rx = useFleetQuery(inExpr);
   const tx = useFleetQuery(outExpr);
   // No `or vector(0)` here: a time the device didn't report is a gap, not 0 traffic.
-  const rxHistory = useFleetRangeQuery(historyQuery(ports, "in"), CHART_WINDOW_SECONDS, chosen);
-  const txHistory = useFleetRangeQuery(historyQuery(ports, "out"), CHART_WINDOW_SECONDS, chosen);
+  const rxHistory = useFleetRangeQuery(
+    historyQuery(ports, "in"),
+    CHART_WINDOW_SECONDS,
+    chosen && tier === "full",
+  );
+  const txHistory = useFleetRangeQuery(
+    historyQuery(ports, "out"),
+    CHART_WINDOW_SECONDS,
+    chosen && tier === "full",
+  );
   const { groups } = usePortOptions(instances);
   const now = useNow();
   // Live only when every chosen port was read; a partial sum would look like the total.
@@ -123,6 +134,14 @@ export function ThroughputCard({ instances, settings }: WidgetProps) {
   const staleDevices = useStaleDevices(ports, instances, now);
 
   if (!chosen) {
+    if (tier === "small") {
+      return (
+        <div className="flex h-full min-w-0 flex-col justify-center gap-0.5 px-3 py-2">
+          <span className="truncate text-[13px] leading-[18px] font-semibold">Throughput</span>
+          <span className="truncate text-xs leading-[18px] text-muted">No port chosen.</span>
+        </div>
+      );
+    }
     return (
       <div className="flex h-full flex-col justify-center gap-1 p-4">
         <span className="text-xs text-slate-500 dark:text-slate-400">Throughput</span>
@@ -150,6 +169,37 @@ export function ThroughputCard({ instances, settings }: WidgetProps) {
       : stale || q.isError
         ? "—"
         : formatRate(firstValue(q.data));
+  const rxText = current(live?.inBps, rx);
+  const txText = current(live?.outBps, tx);
+
+  if (tier === "small") {
+    // The name, "NO DATA" while a chosen device doesn't answer, and the current rates.
+    return (
+      <section
+        aria-label="Throughput"
+        className="flex h-full min-w-0 flex-col justify-center gap-0.5 overflow-hidden px-3 py-2"
+      >
+        <div className="flex min-w-0 items-baseline gap-2 leading-[18px]">
+          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold" title={label}>
+            Throughput
+          </span>
+          {stale && (
+            <span
+              title={`No recent data from ${staleDevices.map((i) => i.name).join(", ")}`}
+              className="shrink-0 text-xs font-semibold tracking-wide text-crit-text"
+            >
+              NO DATA
+            </span>
+          )}
+        </div>
+        <KeyFigure label={`${inName} and ${outName.toLowerCase()}`}>
+          <span className="text-in">↓</span>
+          {rxText} <span className="text-out">↑</span>
+          {txText}
+        </KeyFigure>
+      </section>
+    );
+  }
   const historyError = rxHistory.error ?? txHistory.error;
   // The whole 6 hours up to the last fetch, so a device that stopped reporting shows a gap
   // up to "now" instead of a chart that ends early.
@@ -191,18 +241,25 @@ export function ThroughputCard({ instances, settings }: WidgetProps) {
       <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
         <div className="min-w-0">
           <div className="text-[15px] font-semibold">Throughput</div>
-          <div className="truncate text-xs text-muted" title={label}>
-            {label}
-            {live ? " · live" : ""}
-          </div>
+          {stale && tier !== "full" ? (
+            <div className="truncate text-xs font-semibold text-crit-text" title={label}>
+              No recent data from {staleDevices.map((i) => i.name).join(", ")}
+            </div>
+          ) : (
+            <div className="truncate text-xs text-muted" title={label}>
+              {label}
+              {live ? " · live" : ""}
+            </div>
+          )}
         </div>
         <div className="ml-auto flex gap-5">
-          <Current label={inName} tone="in" value={current(live?.inBps, rx)} />
-          <Current label={outName} tone="out" value={current(live?.outBps, tx)} />
+          <Current label={inName} tone="in" value={rxText} />
+          <Current label={outName} tone="out" value={txText} />
         </div>
       </div>
-      <div className="flex min-h-40 flex-1 flex-col">{history}</div>
-      {stale && (
+      {/* Medium: the current rates only, no chart. */}
+      {tier === "full" && <div className="flex min-h-40 flex-1 flex-col">{history}</div>}
+      {stale && tier === "full" && (
         <p className="text-xs text-muted">
           No recent data from {staleDevices.map((i) => i.name).join(", ")}; history greyed.
         </p>

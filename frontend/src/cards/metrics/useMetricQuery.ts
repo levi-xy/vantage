@@ -207,6 +207,8 @@ export function useRangeQuery(
   instanceId: string,
   build: (sel: Selector) => string,
   windowSeconds: number = DEFAULT_WINDOW_SECONDS,
+  /** Off while nothing shows the result (a sparkline on a card below its full size). */
+  enabled = true,
 ) {
   const client = useApiClient();
   const expr = scopedQuery(instanceId, build);
@@ -214,6 +216,7 @@ export function useRangeQuery(
     queryKey: ["query", "range", expr, windowSeconds],
     queryFn: () => client.query({ query: expr, ...rangeWindow(windowSeconds) }),
     refetchInterval: RANGE_REFETCH_MS,
+    enabled,
   });
 }
 

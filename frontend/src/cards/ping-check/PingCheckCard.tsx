@@ -7,6 +7,8 @@ import { CardFrame } from "../metrics/CardFrame";
 import { formatMs, formatRatio } from "../metrics/format";
 import { firstSeries, firstValue } from "../metrics/promql";
 import { useInstantQuery, useRangeQuery } from "../metrics/useMetricQuery";
+import { KeyFigure } from "../metrics/KeyFigure";
+import { useCardTier } from "../metrics/tier";
 
 // Polled by Vantage (integrations/builtin/ping_check): vantage_ping_check_*.
 const RTT = "vantage_ping_check_rtt_avg_seconds";
@@ -27,9 +29,10 @@ function Loss({ ratio }: { ratio: number | undefined }) {
 }
 
 export function PingCheckCard({ instanceId, title, instance }: CardProps) {
+  const tier = useCardTier();
   const rtt = useInstantQuery(instanceId, (sel) => `${RTT}${sel()}`);
   const loss = useInstantQuery(instanceId, (sel) => `${LOSS}${sel()}`);
-  const rttHour = useRangeQuery(instanceId, (sel) => `${RTT}${sel()}`);
+  const rttHour = useRangeQuery(instanceId, (sel) => `${RTT}${sel()}`, undefined, tier === "full");
 
   const rttValue = firstValue(rtt.data);
   const lossValue = firstValue(loss.data);
@@ -51,13 +54,24 @@ export function PingCheckCard({ instanceId, title, instance }: CardProps) {
       }
       empty={rttValue === undefined && lossValue === undefined}
     >
-      <div className="flex items-baseline gap-4" role="group" aria-label="Round trip">
-        <span className="text-[28px] leading-tight font-medium tracking-tight tabular-nums">
-          {formatMs(rttValue)}
-        </span>
-        <Loss ratio={lossValue} />
-      </div>
-      {points.length > 1 && (
+      {tier === "small" ? (
+        <KeyFigure
+          label="Round trip and loss"
+          tone={
+            lossValue === undefined || lossValue <= 0 ? undefined : lossValue >= 1 ? "bad" : "warn"
+          }
+        >
+          {formatMs(rttValue)} · {formatRatio(lossValue)} loss
+        </KeyFigure>
+      ) : (
+        <div className="flex items-baseline gap-4" role="group" aria-label="Round trip">
+          <span className="text-[28px] leading-tight font-medium tracking-tight tabular-nums">
+            {formatMs(rttValue)}
+          </span>
+          <Loss ratio={lossValue} />
+        </div>
+      )}
+      {tier === "full" && points.length > 1 && (
         <div className="flex flex-col gap-1.5">
           <Sparkline points={points} label="Round trip time, last hour" />
           <div className="flex justify-between gap-2 text-xs text-muted">

@@ -35,6 +35,26 @@ function answer(query: string) {
 }
 
 describe("snmp cards", () => {
+  it("smaller tiers: ports up instead of the port grid or front panel", async () => {
+    renderCard(client, SnmpPortsCard, answer, undefined, { tier: "small" });
+    expect(await screen.findByRole("group", { name: "Ports up" })).toHaveTextContent("1/3 up");
+    expect(screen.queryByRole("button", { name: "port1: up" })).not.toBeInTheDocument();
+  });
+
+  it("medium switch panel: ports up and the busiest port, no front panel", async () => {
+    renderCard(client, SwitchPanelCard, answer, undefined, { tier: "medium" });
+    expect((await screen.findByText("Ports up")).nextSibling).toHaveTextContent("1/3");
+    expect(screen.getByText("Busiest").nextSibling).toHaveTextContent("port1");
+    expect(screen.queryByRole("group", { name: "Front panel" })).not.toBeInTheDocument();
+  });
+
+  it("small overview: interfaces down in red", async () => {
+    renderCard(client, SnmpOverviewCard, answer, undefined, { tier: "small" });
+    const figure = await screen.findByRole("group", { name: "Interfaces" });
+    expect(figure).toHaveTextContent("1 up · 2 down");
+    expect(figure.className).toContain("text-crit-text");
+  });
+
   it("overview shows the name, uptime and interface counts", async () => {
     renderCard(client, SnmpOverviewCard, answer);
     expect(await screen.findByText("switch-a")).toBeInTheDocument();

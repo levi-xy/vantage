@@ -97,6 +97,23 @@ describe("pfSense cards", () => {
     expect(screen.queryByText("up")).not.toBeInTheDocument(); // no badges
   });
 
+  it("small gateways: the worst one, in red", async () => {
+    renderCard(client, PfsenseGatewaysCard, answer, pfsense, { tier: "small" });
+    const worst = await screen.findByRole("group", { name: "Worst gateway: 192.0.2.254" });
+    expect(worst).toHaveTextContent("no reply · 100%");
+    expect(worst.className).toContain("text-crit-text");
+    expect(screen.queryByRole("list", { name: "Gateways" })).not.toBeInTheDocument();
+  });
+
+  it("medium interfaces: the top 3, no bars or show all", async () => {
+    const instance = { ...pfsense, config: { interface_names: ["vtnet0=WAN"] } };
+    renderCard(client, PfsenseInterfacesCard, answer, instance, { tier: "medium" });
+    const list = await screen.findByRole("list", { name: "Interfaces" });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(3);
+    expect(within(list).getAllByRole("listitem")[0]).toHaveTextContent("WAN");
+    expect(screen.queryByRole("button", { name: /Show all/ })).not.toBeInTheDocument();
+  });
+
   it("say so when there is no data", async () => {
     renderCard(client, PfsenseGatewaysCard, () => vector([]));
     expect(await screen.findByText(/No gateway ping data/)).toBeInTheDocument();

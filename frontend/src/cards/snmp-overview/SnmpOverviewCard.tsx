@@ -2,7 +2,9 @@ import type { CardProps } from "../registry";
 import { cardFreshness } from "../metrics/freshness";
 import { CardFrame } from "../metrics/CardFrame";
 import { byLabel, firstValue } from "../metrics/promql";
+import { Figures, KeyFigure } from "../metrics/KeyFigure";
 import { StatTile } from "../metrics/StatTile";
+import { useCardTier } from "../metrics/tier";
 import { useInstantQuery } from "../metrics/useMetricQuery";
 import { isInternal } from "../snmp-ports/ports";
 import { IF_UP, snmpMetric } from "./snmpMetrics";
@@ -24,6 +26,17 @@ export function SnmpOverviewCard({ instanceId, title, instance }: CardProps) {
   const internal = known.length - ports.length;
   const up = ports.filter((p) => p.value === IF_UP).length;
   const down = ports.length - up;
+  const tier = useCardTier();
+  const counts = (
+    <Figures>
+      <StatTile label="Interfaces up" value={ports.length ? String(up) : "–"} />
+      <StatTile
+        label="Interfaces down"
+        value={ports.length ? String(down) : "–"}
+        tone={down > 0 ? "bad" : undefined}
+      />
+    </Figures>
+  );
 
   return (
     <CardFrame
@@ -36,28 +49,31 @@ export function SnmpOverviewCard({ instanceId, title, instance }: CardProps) {
       empty={!labels && uptimeValue === undefined}
       uptimeSeconds={uptimeValue}
     >
-      <div>
-        <div className="truncate text-base font-semibold">
-          {labels?.sys_name || "Unnamed device"}
-        </div>
-        {labels?.sys_descr && (
-          <div className="line-clamp-2 text-xs text-slate-500 dark:text-slate-400">
-            {labels.sys_descr}
+      {tier === "small" ? (
+        <KeyFigure label="Interfaces" tone={down > 0 ? "bad" : undefined}>
+          {ports.length ? `${up} up · ${down} down` : "–"}
+        </KeyFigure>
+      ) : tier === "medium" ? (
+        counts
+      ) : (
+        <>
+          <div>
+            <div className="truncate text-base font-semibold">
+              {labels?.sys_name || "Unnamed device"}
+            </div>
+            {labels?.sys_descr && (
+              <div className="line-clamp-2 text-xs text-slate-500 dark:text-slate-400">
+                {labels.sys_descr}
+              </div>
+            )}
           </div>
-        )}
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <StatTile label="Interfaces up" value={ports.length ? String(up) : "–"} />
-        <StatTile
-          label="Interfaces down"
-          value={ports.length ? String(down) : "–"}
-          tone={down > 0 ? "bad" : undefined}
-        />
-      </div>
-      {internal > 0 && (
-        <p className="text-xs text-muted">
-          Physical ports only; {internal} internal (loopback, tunnel) not counted.
-        </p>
+          {counts}
+          {internal > 0 && (
+            <p className="text-xs text-muted">
+              Physical ports only; {internal} internal (loopback, tunnel) not counted.
+            </p>
+          )}
+        </>
       )}
     </CardFrame>
   );

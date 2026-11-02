@@ -24,7 +24,9 @@ export function StatTile({ label, value, spark, tone }: StatTileProps) {
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
       <span className="text-xs text-slate-500 dark:text-slate-400">{label}</span>
-      <span className={`text-xl font-semibold tabular-nums ${shownTone ? TONES[shownTone] : ""}`}>
+      <span
+        className={`truncate text-xl font-semibold tabular-nums ${shownTone ? TONES[shownTone] : ""}`}
+      >
         {value}
       </span>
       {spark && <Sparkline className="h-8" label={`${label} over the last hour`} points={spark} />}
