@@ -4,6 +4,7 @@ import { CardFrame } from "../metrics/CardFrame";
 import { byLabel, firstValue } from "../metrics/promql";
 import { StatTile } from "../metrics/StatTile";
 import { useInstantQuery } from "../metrics/useMetricQuery";
+import { isInternal } from "../snmp-ports/ports";
 import { IF_UP, snmpMetric } from "./snmpMetrics";
 
 export function SnmpOverviewCard({ instanceId, title, instance }: CardProps) {
@@ -17,7 +18,10 @@ export function SnmpOverviewCard({ instanceId, title, instance }: CardProps) {
 
   const labels = info.data?.series[0]?.labels;
   const uptimeValue = firstValue(uptime.data);
-  const ports = byLabel(oper.data, "if_index").filter((p) => p.value !== undefined);
+  const known = byLabel(oper.data, "if_index").filter((p) => p.value !== undefined);
+  // Physical ports only: loopbacks and tunnels are not counted (see `isInternal`).
+  const ports = known.filter((p) => !isInternal({ id: p.labels.if_name ?? "", name: "" }));
+  const internal = known.length - ports.length;
   const up = ports.filter((p) => p.value === IF_UP).length;
   const down = ports.length - up;
 
@@ -50,6 +54,11 @@ export function SnmpOverviewCard({ instanceId, title, instance }: CardProps) {
           tone={down > 0 ? "bad" : undefined}
         />
       </div>
+      {internal > 0 && (
+        <p className="text-xs text-muted">
+          Physical ports only; {internal} internal (loopback, tunnel) not counted.
+        </p>
+      )}
     </CardFrame>
   );
 }

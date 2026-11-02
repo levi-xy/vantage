@@ -25,6 +25,8 @@
   --vt-on-crit: #ffffff;
   --vt-crit-text: #b42323;
   --vt-warn: #b7791f;
+  /* The outline of a port with no link or disabled. */
+  --vt-port-off: #a9b4c4;
 }
 
 :root.dark {
@@ -44,6 +46,7 @@
   --vt-on-crit: #1a0b0b;
   --vt-crit-text: #fca5a5;
   --vt-warn: #fbbf24;
+  --vt-port-off: #4a5566;
 }
 
 @theme inline {
@@ -63,6 +66,7 @@
   --color-on-crit: var(--vt-on-crit);
   --color-crit-text: var(--vt-crit-text);
   --color-warn: var(--vt-warn);
+  --color-port-off: var(--vt-port-off);
 }
 
 @theme {
