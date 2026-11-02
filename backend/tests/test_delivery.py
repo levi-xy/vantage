@@ -725,3 +725,33 @@ def test_overflow_summary_counts_no_data(db: Session, clock: Clock) -> None:
     assert summary.text == (
         "103 more alert changes while Telegram was unreachable: 50 firing, 3 no data, 50 resolved"
     )
+
+
+async def test_row_folded_into_a_queued_folded_carrier_settles_with_the_summary(
+    engine: Engine, db: Session, network: FakeNetwork, tg: FakeTelegram, clock: Clock
+) -> None:
+    """A system alert's FIRING row stored folded into an overflow summary carries a later
+    NO DATA row: it settles when the summary does, never staying unfinished."""
+    cid = add_channel(db)
+    summary = overflow(db, clock, cid, n=OVERFLOW + 1)
+    queue(db, clock, [cid], "SYSTEM ALERT: Prometheus unreachable")
+    firing = rows(db)[-1]
+    assert (firing.status, firing.folded_into) == (S.FOLDED, summary.id)
+    # Some of the backlog went out meanwhile: the NO DATA row is queued normally ...
+    early = [r.id for r in rows(db)[:10]]
+    db.execute(
+        update(AlertNotification)
+        .where(AlertNotification.id.in_(early))
+        .values(status=S.DELIVERED, finished_at=clock.now)
+    )
+    queue(db, clock, [cid], "NO DATA: fw", kind=NotificationKind.NO_DATA)
+    no_data = rows(db)[-1]
+    assert no_data.status == S.PENDING
+    delivery.fold_into(db, no_data, firing, clock.now)  # ... and folded, as the evaluator does
+    db.commit()
+    assert (no_data.status, no_data.folded_into) == (S.FOLDED, summary.id)
+
+    await make_dispatcher(engine, network, clock).run_once()
+    db.expire_all()
+    assert all(r.status in FINAL and r.finished_at is not None for r in rows(db))
+    assert db.get(AlertNotification, no_data.id).status == S.FOLDED  # type: ignore[union-attr]

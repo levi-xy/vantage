@@ -191,7 +191,22 @@ def fold_into(
     db: Session, row: AlertNotification, carrier: AlertNotification, now: datetime
 ) -> None:
     """Store ``row`` as carried by ``carrier`` (no commit). It takes the carrier's outcome:
-    at once if the carrier has finished, otherwise when it does (:func:`settle_overflow`)."""
+    at once if the carrier has finished, otherwise when it does (:func:`settle_overflow`).
+
+    A carrier that is itself folded and unfinished (queued in an overflow summary) is
+    followed to the row that really carries it: only rows folded directly into a finished
+    row are settled, so a row folded into a waiting folded row would never finish."""
+    seen = {carrier.id}
+    while (
+        carrier.status == Status.FOLDED
+        and carrier.finished_at is None
+        and carrier.folded_into is not None
+    ):
+        parent = db.get(N, carrier.folded_into)
+        if parent is None or parent.id in seen:
+            break
+        seen.add(parent.id)
+        carrier = parent
     row.status = Status.FOLDED
     row.folded_into = carrier.id
     row.finished_at = None
