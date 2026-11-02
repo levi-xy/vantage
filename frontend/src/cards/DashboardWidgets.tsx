@@ -1,34 +1,29 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router";
-import type { ReactNode } from "react";
-import { StatTile } from "./metrics/StatTile";
-import type { StatTileProps } from "./metrics/StatTile";
+import { KpiTile } from "./metrics/KpiTile";
+import type { KpiTileProps } from "./metrics/KpiTile";
+import { formatMs } from "./metrics/format";
 import { shownState, useScrapeStates } from "./metrics/scrapeStatus";
 import { useApiClient } from "../app/session";
-import { INSTANT_REFETCH_MS, useFleetQuery } from "./metrics/useMetricQuery";
+import { useFleetQuery } from "./metrics/useMetricQuery";
+import { OPEN_ALERTS_LIMIT, useOpenAlerts } from "./openAlerts";
 import {
+  gateways,
   hasWanSource,
   healthCounts,
   WAN_LOSS_QUERY,
+  WAN_RTT_QUERY,
   wanSummary,
   withoutFreshData,
 } from "./overview";
+import { ageText } from "./problems";
 import type { WidgetProps } from "./widgets";
 import { INSTANCES_KEY } from "../pages/devices/queries";
-
-function Stat({ note, children }: { note?: string; children: ReactNode }) {
-  return (
-    <div className="flex h-full min-w-0 flex-col justify-center p-4">
-      {children}
-      {note && <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{note}</p>}
-    </div>
-  );
-}
 
 export function DevicesHealthCard({ instances }: WidgetProps) {
   const client = useApiClient();
   const scrape = useScrapeStates(instances);
-  const counts = healthCounts(instances, (i) => shownState(i, scrape));
+  const state = (i: (typeof instances)[number]) => shownState(i, scrape);
+  const counts = healthCounts(instances, state);
   const polled = counts.up + counts.down + counts.pending;
   // Judged as of the list's last update (refetch or `/ws` push), not render time: pure, and a
   // list that lags behind can't count a device as stale that isn't.
@@ -38,60 +33,96 @@ export function DevicesHealthCard({ instances }: WidgetProps) {
     enabled: false,
   }).dataUpdatedAt;
   const notFresh = listAt ? withoutFreshData(instances, scrape, listAt) : 0;
-  const notes: string[] = [];
-  if (counts.down) notes.push(`${counts.down} down`);
-  else if (counts.pending) notes.push(`${counts.pending} pending`);
-  if (notFresh)
-    notes.push(`${notFresh} ${notFresh === 1 ? "device" : "devices"} without fresh data`);
-  const note = notes.length ? notes.join(" · ") : undefined;
+  let note: string;
+  if (counts.down) {
+    const names = instances.filter((i) => state(i) === "down").map((i) => i.name);
+    note = `${counts.down} down: ${names.join(", ")}`;
+  } else if (notFresh) {
+    note = `${notFresh} ${notFresh === 1 ? "device" : "devices"} without fresh data`;
+  } else if (counts.pending) {
+    note = `${counts.pending} pending`;
+  } else {
+    note = polled
+      ? instances
+          .filter((i) => state(i) === "up")
+          .map((i) => i.name)
+          .join(", ")
+      : "No device polled yet";
+  }
   return (
-    <Stat note={note}>
-      <Link to="/devices" className="block">
-        <StatTile
-          label="Devices healthy"
-          value={polled ? `${counts.up} of ${polled}` : "—"}
-          tone={counts.down ? "bad" : polled ? "ok" : undefined}
-        />
-      </Link>
-    </Stat>
+    <KpiTile
+      label="Devices"
+      value={polled ? `${counts.up}/${polled}` : "—"}
+      unit={polled ? "up" : undefined}
+      note={note}
+      tone={counts.down ? "bad" : undefined}
+      to="/devices"
+    />
   );
 }
 
-const FIRING_LIMIT = 200;
-
 export function AlertsCard() {
-  const client = useApiClient();
-  const firing = useQuery({
-    queryKey: ["alerts", "open"],
-    queryFn: () => client.openAlertEvents(FIRING_LIMIT),
-    refetchInterval: INSTANT_REFETCH_MS,
-  });
-  const count = firing.data?.length;
-  const value =
-    count === undefined ? "\u2014" : count >= FIRING_LIMIT ? `${count}+` : String(count);
+  const open = useOpenAlerts();
+  const events = open.data;
+  if (!events) {
+    return (
+      <KpiTile
+        label="Active alerts"
+        value="—"
+        note={open.isError ? "Can't load alerts" : undefined}
+        to="/alerts"
+      />
+    );
+  }
+  const count = events.length;
+  // Judged as of the last fetch (pure); the query refetches every 15 s.
+  const oldest = Math.min(...events.map((e) => Date.parse(e.started_at)));
   return (
-    <Stat note={count === 0 ? "All clear" : undefined}>
-      <StatTile label="Active alerts" value={value} tone={count ? "bad" : undefined} />
-    </Stat>
+    <KpiTile
+      label="Active alerts"
+      value={count >= OPEN_ALERTS_LIMIT ? `${count}+` : String(count)}
+      unit={count ? (events.every((e) => e.state === "firing") ? "firing" : "open") : undefined}
+      note={
+        count === 0
+          ? "All clear"
+          : Number.isFinite(oldest)
+            ? `oldest ${ageText(open.dataUpdatedAt - oldest)}`
+            : undefined
+      }
+      tone={count ? "bad" : undefined}
+      to="/alerts"
+    />
   );
 }
 
 export function WanStatusCard({ instances }: WidgetProps) {
-  const wan = useFleetQuery(WAN_LOSS_QUERY);
-  const state = wanSummary(wan.data);
-  let value = "No WAN source";
-  let tone: StatTileProps["tone"];
-  if (hasWanSource(instances)) {
-    if (wan.isError || !state.total) {
-      value = "—";
-    } else {
-      value = `${state.up} of ${state.total} gateways up`;
-      tone = state.up === state.total ? "ok" : "bad";
+  const wan = hasWanSource(instances);
+  const loss = useFleetQuery(WAN_LOSS_QUERY);
+  const rtt = useFleetQuery(WAN_RTT_QUERY);
+  const state = wanSummary(loss.data);
+  const tile: KpiTileProps = { label: "Internet", value: "—" };
+  if (!wan) {
+    tile.note = "No WAN source";
+  } else if (loss.isError) {
+    tile.note = "Can't read the gateways";
+  } else if (!state.total) {
+    tile.note = loss.isPending ? undefined : "No gateway data yet";
+  } else {
+    if (state.up === state.total) tile.value = "Up";
+    else if (state.up === 0) tile.value = "Down";
+    else {
+      tile.value = `${state.up}/${state.total}`;
+      tile.unit = "gateways up";
+    }
+    if (state.up < state.total) tile.tone = "bad";
+    const first = gateways(loss.data, rtt.data)[0];
+    if (first) {
+      const parts = [first.url];
+      if (first.lossPct < 100 && first.rttMs !== undefined)
+        parts.push(formatMs(first.rttMs / 1000));
+      parts.push(`${Number(first.lossPct.toFixed(1))}% loss`);
+      tile.note = parts.join(" · ");
     }
   }
-  return (
-    <Stat>
-      <StatTile label="WAN status" value={value} tone={tone} />
-    </Stat>
-  );
+  return <KpiTile {...tile} />;
 }

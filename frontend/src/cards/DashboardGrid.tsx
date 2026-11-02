@@ -101,6 +101,8 @@ export function DashboardGrid({
   const renderCard = (c: CardPlacement, compact: boolean) => {
     const key = cardKey(c);
     const title = c.instance_id === null ? widget(c.card_type)?.title : titles.get(key);
+    // Phone width: summary tiles two per row, every other card a full row.
+    const tile = c.instance_id === null && widget(c.card_type)?.tile === true;
     let content;
     if (c.instance_id === null) {
       const Widget = widget(c.card_type)?.component;
@@ -121,9 +123,9 @@ export function DashboardGrid({
       <div
         key={key}
         data-testid="card"
-        className={`relative rounded-xl border bg-panel ${compact ? "" : "overflow-hidden "}${
-          editing ? "border-in" : "border-line"
-        }`}
+        className={`relative rounded-xl border bg-panel ${
+          compact ? (tile ? "min-w-0 " : "col-span-2 ") : "overflow-hidden "
+        }${editing ? "border-in" : "border-line"}`}
       >
         {content}
         {editing && (
@@ -160,9 +162,9 @@ export function DashboardGrid({
   };
 
   if (compact) {
-    // Phone width: one column in reading order, each card as tall as its content.
+    // Phone width: reading order, each card as tall as its content; tiles two per row.
     return (
-      <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-2 gap-4">
         {[...cards].sort((a, b) => a.y - b.y || a.x - b.x).map((c) => renderCard(c, true))}
       </div>
     );

@@ -57,7 +57,7 @@ describe("dashboard page", () => {
   it("puts the dashboard-wide cards on an old layout, without saving it", async () => {
     const backend = backendWith({ cards: [PING] });
     renderApp("/", backend);
-    expect(await screen.findByText("Devices healthy")).toBeInTheDocument();
+    expect(await screen.findByRole("group", { name: "Devices" })).toBeInTheDocument();
     expect(screen.getAllByTestId("card")).toHaveLength(
       WIDGETS.filter((w) => w.card_type !== "network-map").length + 1,
     );

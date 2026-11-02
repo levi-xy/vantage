@@ -12,8 +12,9 @@ import {
 } from "../cards/layout";
 import { cardMinSize, widget, WIDGETS } from "../cards/widgets";
 import type { AvailableCard } from "../cards/layout";
-import { EmptyState, PageHeader } from "../components/PageHeader";
+import { EmptyState } from "../components/PageHeader";
 import { alertError, buttonPrimary, buttonSecondary } from "../components/styles";
+import { DashboardHeadline } from "./DashboardHeadline";
 import { errorText, useInstances } from "./devices/queries";
 
 /** The one dashboard there is (the backend creates it on first read). */
@@ -290,7 +291,11 @@ export function DashboardPage() {
 
   return (
     <>
-      <PageHeader title="Dashboard">{actions}</PageHeader>
+      <DashboardHeadline
+        instances={instances.data}
+        listUpdatedAt={instances.dataUpdatedAt}
+        actions={actions}
+      />
       {save.isError && (
         <p role="alert" className={`mb-4 ${alertError}`}>
           {errorText(save.error)}

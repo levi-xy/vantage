@@ -18,6 +18,7 @@ import { ALERTS_KEY } from "../../app/live";
 import { EmptyState } from "../../components/PageHeader";
 import { alertError, buttonSecondary } from "../../components/styles";
 import { useInstances } from "../devices/queries";
+import { NO_DATA_REASONS } from "./noDataReasons";
 
 const PAGE = 50;
 const FIRING_LIMIT = 200;
@@ -31,15 +32,6 @@ const END_REASONS: Record<AlertEndReason, string> = {
   rule_deleted: "rule deleted",
   rule_changed: "rule changed",
   closed_by_user: "closed by an admin",
-};
-
-const NO_DATA_REASONS: Record<string, string> = {
-  source_stale: "device not reporting",
-  source_down: "device not answering",
-  metric_missing: "metric missing",
-  query_failed: "query failing",
-  prometheus_unreachable: "Prometheus unreachable",
-  metrics_not_collected: "metrics not being collected",
 };
 
 /** "No data: device not answering", in plain words. */
