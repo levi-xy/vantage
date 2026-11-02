@@ -11,7 +11,7 @@ vi.mock("../../app/session", () => ({ useApiClient: () => client }));
 vi.mock("./TimeSeriesChart", () => ({ TimeSeriesChart: () => null }));
 
 describe("a card with a stale value", () => {
-  it("shows the past value greyed, with neutral colours and 'as of'", async () => {
+  it("shows the past value greyed, with neutral colours and 'no data since' in the header", async () => {
     const last = Math.floor(Date.now() / 1000) - 600;
     const instance: Instance = {
       ...testInstance,
@@ -36,9 +36,9 @@ describe("a card with a stale value", () => {
       { cached: true },
     );
 
-    expect(
-      await screen.findByText(`Values as of ${formatAsOf(last)}, greyed.`),
-    ).toBeInTheDocument();
+    // How old the values are is in the header's subtitle, not a footer.
+    expect(await screen.findByText("0.0%")).toBeInTheDocument();
+    expect(screen.queryByText(/Values as of/)).not.toBeInTheDocument();
     // The header: a short state with the full error as its tooltip, never the error text.
     const state = screen.getByText("DOWN 10m");
     expect(state.className).toContain("text-crit-text");

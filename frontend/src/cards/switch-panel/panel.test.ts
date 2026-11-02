@@ -1,4 +1,4 @@
-import { isSfp, panelBlocks } from "./panel";
+import { faceplate, isSfp, panelBlocks } from "./panel";
 
 describe("switch front panel", () => {
   it("lays 28 ports out as 8-8-8-4, odd ports on the bottom, even on top", () => {
@@ -21,5 +21,15 @@ describe("switch front panel", () => {
     expect(isSfp({ id: "sfpplus25", speed: 1e9 })).toBe(true);
     expect(isSfp({ id: "port25", speed: 10e9 })).toBe(true);
     expect(isSfp({ id: "port3", speed: 1e9 })).toBe(false);
+  });
+
+  it("puts the SFP cages in a separate block after the copper ports", () => {
+    const ports = ["port1", "port2", "port3", "sfpplus1", "sfpplus2"].map((id) => ({ id }));
+    const { copper, sfp } = faceplate(ports);
+    expect(copper.flat().map((p) => p.port.id)).toEqual(["port1", "port2", "port3"]);
+    expect(sfp.map((p) => [p.port.id, p.column, p.row])).toEqual([
+      ["sfpplus1", 1, 2],
+      ["sfpplus2", 1, 1],
+    ]);
   });
 });
