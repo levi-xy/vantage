@@ -33,6 +33,11 @@ PENDING_RESET_AFTER = timedelta(minutes=10)
 # A series with no source (an aggregate) missing from both results this long is
 # ``metric_missing`` (the scraped freshness window).
 AGGREGATE_MISSING_AFTER = timedelta(seconds=90)
+# A series with no source can't prove two different polls, so its two clean checks must be
+# this far apart, and none counts this soon after the evaluator started (devices that
+# feed the aggregate may not have polled yet after a restart).
+AGGREGATE_CLEAN_GAP = timedelta(seconds=60)
+AGGREGATE_WARMUP = timedelta(seconds=150)
 
 
 class NoDataReason(StrEnum):
@@ -86,6 +91,8 @@ class Observation:
     witness: Witness = "none"
     source: Source = NO_SOURCE
     mode: RecoveryMode = "value"
+    # When the evaluator started (None: long ago).
+    started_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -116,6 +123,8 @@ class OpenAlert:
     query_failures: int = 0
     # The NO DATA message for this episode was queued.
     no_data_sent: bool = False
+    # When the first clean check of the current RECOVERING run happened.
+    clean_at: datetime | None = None
 
     @property
     def recovering(self) -> bool:
@@ -128,6 +137,7 @@ def no_data_message_due(alert: OpenAlert, now: datetime) -> bool:
     return (
         alert.state == "no_data"
         and not alert.no_data_sent
+        and not alert.recovering  # a clean check was just seen: wait for the next tick
         and now - alert.state_since >= NO_DATA_MESSAGE_AFTER
     )
 
@@ -145,10 +155,11 @@ def step_pending(
         if pending is None:
             pending = Pending(started_at=now, elapsed=0.0, last_at=now)
         elif pending.paused:  # the gap without data doesn't count
-            pending = replace(pending, last_at=now, paused=False)
+            pending = replace(pending, last_at=max(now, pending.last_at), paused=False)
         else:
             elapsed = pending.elapsed + max(0.0, (now - pending.last_at).total_seconds())
-            pending = replace(pending, elapsed=elapsed, last_at=now)
+            # A clock that went back never moves last_at back (nor counts twice).
+            pending = replace(pending, elapsed=elapsed, last_at=max(now, pending.last_at))
         return pending, pending.elapsed >= for_seconds
     if pending is None:
         return None, False
@@ -159,6 +170,14 @@ def step_pending(
     if now - pending.last_at >= PENDING_RESET_AFTER:
         return None, False
     return replace(pending, paused=True), False
+
+
+def _aggregate_may_count(alert: OpenAlert, obs: Observation) -> bool:
+    if obs.started_at is not None and obs.now - obs.started_at < AGGREGATE_WARMUP:
+        return False
+    if alert.clean_checks >= 1 and alert.clean_at is not None:
+        return obs.now - alert.clean_at >= AGGREGATE_CLEAN_GAP
+    return True
 
 
 def _source_advanced(alert: OpenAlert, source: Source) -> bool:
@@ -234,12 +253,15 @@ def step_open(alert: OpenAlert, obs: Observation) -> tuple[OpenAlert | None, lis
         if _value_seen(obs):
             alert = replace(alert, last_value_at=now)
         witness_clean = obs.mode == "empty_result" or obs.witness == "false"
-        if witness_clean and _source_advanced(alert, obs.source):
+        aggregate_wait = obs.source.kind == "none" and not _aggregate_may_count(alert, obs)
+        if witness_clean and not aggregate_wait and _source_advanced(alert, obs.source):
             if alert.clean_checks >= 1:
                 return None, [Notice.RESOLVED]
-            alert = replace(alert, clean_checks=1, ref_ts=obs.source.ts)
-        elif witness_clean and obs.source.kind in ("fresh", "unknown"):
-            pass  # the same poll seen again, or freshness unknown: neither clean nor reset
+            alert = replace(alert, clean_checks=1, ref_ts=obs.source.ts, clean_at=now)
+        elif witness_clean and obs.source.kind in ("fresh", "unknown", "none"):
+            # The same poll seen again, freshness unknown, or an aggregate too soon after
+            # the last clean check (or the start): neither clean nor a reset.
+            pass
         else:
             reason = _no_data_reason(alert, obs)
             alert = replace(alert, clean_checks=0)
@@ -253,6 +275,7 @@ def step_open(alert: OpenAlert, obs: Observation) -> tuple[OpenAlert | None, lis
         alert.state == "no_data"
         and alert.no_data_sent
         and alert.reminder_sent_at is None
+        and not alert.recovering
         and now - alert.state_since >= NO_DATA_REMINDER_AFTER
     ):
         notices.append(Notice.REMINDER)
