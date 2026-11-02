@@ -3,12 +3,15 @@
 import asyncio
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
 
+import httpx
 import pytest
 from sqlalchemy import Engine, select, update
 from sqlalchemy.orm import Session
 
+from app.alerts import selfcheck
 from app.alerts.delivery import DeliveryDispatcher
 from app.alerts.evaluator import AlertEvaluator
 from app.alerts.selfcheck import METRICS_QUERY, Health, SelfMonitor, Watchdog
@@ -28,11 +31,12 @@ from app.models import (
     NotificationStatus,
     SystemKind,
 )
+from app.query.proxy import PrometheusClient
 from tests import test_alerts
 from tests.conftest import TEST_MASTER_KEY
 from tests.integrations.netfake import FakeNetwork
 from tests.test_alert_evaluator_states import LABELS, World
-from tests.test_alerts import API, INSTANCE_UUID, FakeProm, add_rule
+from tests.test_alerts import API, INSTANCE_UUID, Clock, FakeProm, add_rule
 from tests.test_auth import do_setup, make_client
 from tests.test_channels import ADDRESS, factory_for, public_test_net
 from tests.test_delivery import CHAT_A, TOKEN, FakeTelegram
@@ -390,16 +394,47 @@ async def test_failure_streak_holds_no_data_messages(
 # --- the watchdog ------------------------------------------------------------------------
 
 
-async def test_blocked_evaluator_raises_a_system_alert_and_is_restarted_once(
-    engine: Engine, db: Session, prom: FakeProm, monkeypatch: pytest.MonkeyPatch
+class Gate(httpx.AsyncBaseTransport):
+    """Runs ``before`` ahead of every query FakeProm answers (inside the tick)."""
+
+    def __init__(self, prom: FakeProm, before: Callable[[], Awaitable[None]]) -> None:
+        self._inner = prom.client()._client._transport  # the FakeProm handler
+        self._before = before
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        await self._before()
+        return await self._inner.handle_async_request(request)
+
+
+def gated(w: SW, before: Callable[[], Awaitable[None]]) -> AlertEvaluator:
+    transport = Gate(w.prom, before)
+    return AlertEvaluator(
+        session_factory=make_session_factory(w.engine),
+        prometheus=lambda: PrometheusClient(
+            httpx.AsyncClient(transport=transport, base_url="http://prom.test")
+        ),
+        hub=EventHub(),
+        clock=w.clock,
+        poll_interval=lambda type_id: 60.0,
+        instance_state=w.states.get,
+    )
+
+
+def system_firing_rows(w: SW) -> list[AlertNotification]:
+    ids = {e.id for e in w.systems()}
+    return [r for r in w.rows() if r.event_id in ids and r.kind == K.FIRING]
+
+
+async def test_hung_tick_raises_one_system_alert_and_one_restart(
+    engine: Engine, db: Session, prom: FakeProm
 ) -> None:
     w = SW(engine, db, prom)
-    ev = w.ev
     block = asyncio.Event()
 
-    async def stuck() -> None:
+    async def hang() -> None:
         await block.wait()
 
+    ev = gated(w, hang)
     restarts = 0
 
     async def restart() -> None:
@@ -407,31 +442,101 @@ async def test_blocked_evaluator_raises_a_system_alert_and_is_restarted_once(
         restarts += 1
         await ev.restart()
 
-    monkeypatch.setattr(ev, "tick", stuck)
     dog = Watchdog(ev.monitor, restart)
     ev.start()
     try:
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.01)  # the first tick hangs on its probe
         await dog.check()
         assert restarts == 0 and w.systems() == []
         w.clock.now += timedelta(seconds=91)
         await dog.check()
         assert restarts == 1
+        assert ev.monitor.last_tick is None  # the cancelled tick didn't count as finished
+        assert ev.monitor.health() == Health.EVALUATOR_STALLED
+        for _ in range(6):  # the restarted tick hangs too: no second restart, no flapping
+            await asyncio.sleep(0.01)
+            w.clock.now += timedelta(seconds=100)
+            await dog.check()
+        assert restarts == 1
         (system,) = w.systems()
         assert (system.system_kind, system.state) == ("evaluator_stalled", AlertState.FIRING)
-        assert w.rows()[-1].text.startswith("SYSTEM ALERT: Alert evaluation stopped")
-        assert ev.monitor.health() == Health.EVALUATOR_STALLED
-        w.clock.now += timedelta(seconds=300)
-        await dog.check()
-        assert restarts == 1  # once
+        assert len(system_firing_rows(w)) == 1
+        assert system_firing_rows(w)[0].text.startswith("SYSTEM ALERT: Alert evaluation stopped")
 
-        monkeypatch.undo()
-        await ev.tick()  # it ticks again
+        block.set()  # it answers again: the restarted tick finishes
+        for _ in range(200):
+            if ev.monitor.last_tick is not None:
+                break
+            await asyncio.sleep(0.01)
         await dog.check()
         assert w.systems()[0].state == AlertState.RESOLVED
         assert ev.monitor.health() is None
     finally:
         await ev.stop()
+
+
+async def test_slow_tick_that_keeps_progressing_is_not_a_stall(
+    engine: Engine, db: Session, prom: FakeProm
+) -> None:
+    w = SW(engine, db, prom)
+    w.value(90)
+    restarts = 0
+    dog: Watchdog | None = None
+
+    async def slow() -> None:  # every query takes 40 s; the watchdog looks in between
+        w.clock.now += timedelta(seconds=40)
+        assert dog is not None
+        await dog.check()
+
+    ev = gated(w, slow)
+
+    async def restart() -> None:
+        nonlocal restarts
+        restarts += 1
+
+    dog = Watchdog(ev.monitor, restart)
+    start = w.clock.now
+    ev.monitor.evaluator_started(start)
+    await ev.tick()
+    assert (w.clock.now - start).total_seconds() >= 150
+    assert restarts == 0 and w.systems() == []
+    assert w.alert().state == AlertState.FIRING  # and the tick did its work
+
+
+async def test_leftover_stall_alert_waits_for_a_finished_tick(
+    engine: Engine, db: Session, prom: FakeProm
+) -> None:
+    w = SW(engine, db, prom)
+    monitor = w.ev.monitor
+    assert monitor.open_alert(SystemKind.EVALUATOR_STALLED, "before", since=w.clock.now)
+    dog = Watchdog(monitor, w.ev.restart)  # as after a backend restart
+    monitor.evaluator_started(w.clock.now)
+    await dog.check()
+    assert w.systems()[0].state == AlertState.FIRING  # no tick has finished yet
+    await w.tick(10)
+    await dog.check()
+    assert w.systems()[0].state == AlertState.RESOLVED
+
+
+def test_healthz_counts_stuck_notifications_at_most_every_5_seconds(
+    engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = 0
+
+    def counting(db: Session, now: object = None) -> int:
+        nonlocal calls
+        calls += 1
+        return 0
+
+    monkeypatch.setattr(selfcheck, "stuck_count", counting)
+    clock = Clock()
+    monitor = SelfMonitor(session_factory=make_session_factory(engine), hub=EventHub(), clock=clock)
+    for _ in range(50):
+        assert monitor.health() is None
+    assert calls == 1
+    clock.now += timedelta(seconds=6)
+    monitor.health()
+    assert calls == 2
 
 
 # --- /healthz ----------------------------------------------------------------------------
@@ -440,6 +545,7 @@ async def test_blocked_evaluator_raises_a_system_alert_and_is_restarted_once(
 def test_healthz_reasons(engine: Engine, db_url: str) -> None:
     client = make_client(db_url)
     monitor: SelfMonitor = client.app.state.self_monitor  # type: ignore[attr-defined]
+    monitor.stuck_cache_seconds = 0  # cached for 5 s in production
     now = utcnow()
 
     def check(reason: str | None) -> None:

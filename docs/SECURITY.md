@@ -424,7 +424,8 @@ outbound HTTPS to `api.telegram.org` in your firewall only if you use Telegram a
 ## Self-monitoring and /healthz
 
 **The limitation first: if the Vantage backend or its host is down, Vantage can't tell
-you.** Nothing below runs then. Point an external monitor on another machine (Uptime
+you.** Nothing below runs then. The same goes for the notification dispatcher itself being
+stuck: its messages never leave, so only `/healthz` (`notifications_stuck`) shows it. Point an external monitor on another machine (Uptime
 Kuma, cron + curl, a hosted dead-man's switch) at `https://<vantage>/healthz` and alert on
 anything but 200. For example, every 5 minutes from another host:
 
@@ -441,7 +442,7 @@ curl -fsS -o /dev/null --max-time 10 https://vantage.example.com:8443/healthz \
 |---|---|---|---|
 | Prometheus unreachable (refused, timeout, HTTP 5xx) | the evaluator's per-tick probe | 2 min of failed probes | system alert "Prometheus unreachable" |
 | Prometheus up but not scraping Vantage | age of the newest `up{job="vantage-backend"} == 1` | older than 2 min, or none for 2 min | system alert "Metrics not being collected" |
-| Alert evaluation hung or crashed | a watchdog task: the evaluator's last finished tick | 90 s (3 intervals) | system alert "Alert evaluation stopped"; the evaluator is restarted once |
+| Alert evaluation hung or crashed | a watchdog task: the evaluator's last progress (a query answered or failed, a tick finished), so a slow but working tick isn't a stall | 90 s (3 intervals) | system alert "Alert evaluation stopped"; the evaluator is restarted once |
 | One rule's query keeps failing | per-rule counter | 3 ticks in a row | the rule shows the error on the Alerts page; no message (a configuration problem) |
 
 A rule's own bad PromQL or too-many-series never counts as "Prometheus unreachable".
@@ -456,7 +457,10 @@ Prometheus returns, still-true alerts go back to FIRING silently and the RESOLVE
 message counts them ("5 alerts still firing, 2 recovering"). A device's other alerts are
 folded into its instance-down message the same way ("3 other alerts on this device can't
 be checked"), and while a device is failing but not yet marked down, its alerts' NO DATA
-messages are held. Outages shorter than 2 minutes change nothing.
+messages are held.
+Outages shorter than 2 minutes change nothing. An intermittent Prometheus (down 2 minutes,
+back for a tick, down again) gives a FIRING/RESOLVED pair about every 2.5 minutes; the
+restart happens at most once until a tick really finishes again.
 
 ### `/healthz` and `/healthz/live`
 
