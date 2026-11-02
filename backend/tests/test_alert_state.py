@@ -342,3 +342,57 @@ def test_recovering_from_no_data_falls_back_to_no_data() -> None:
     recovering = replace(NO_DATA, clean_checks=1, ref_ts=S + 60)
     new, _ = run(recovering, Observation(now=at(90), witness="absent", source=Source("stale", S)))
     assert new is not None and (new.state, new.clean_checks) == ("no_data", 0)
+
+
+# --- review cases ------------------------------------------------------------------------
+
+
+def test_series_in_the_result_with_a_stale_source_stays_firing() -> None:
+    """The instance-down templates: while a device is down its own samples are gone and its
+    last poll goes stale, but ``vantage_instance_up == 0`` (or ``up == 0``) is in the result.
+    A series in the result is Prometheus' current answer, so the condition holds."""
+    down = Source("down", S)
+    new, sent = run(FIRING, Observation(now=at(600), in_result=True, source=down))
+    assert new is not None and new.state == "firing" and sent == []
+    # From NO DATA (e.g. after a restart, before the first poll): FIRING again, quietly.
+    new, sent = run(NO_DATA, Observation(now=at(60), in_result=True, source=down))
+    assert new is not None and new.state == "firing" and sent == []
+
+
+def test_for_zero_fires_on_the_first_sighting() -> None:
+    pending, fired = step_pending(None, Observation(now=T0, in_result=True), 0)
+    assert fired and pending is not None and pending.elapsed == 0
+
+
+def test_clock_going_back_never_moves_last_at_back() -> None:
+    pending, _ = step_pending(PENDING, Observation(now=at(-120), in_result=True), 600)
+    assert pending is not None and (pending.last_at, pending.elapsed) == (T0, 30.0)
+    pending, _ = step_pending(pending, Observation(now=at(30), in_result=True), 600)
+    assert pending is not None and pending.elapsed == 60.0
+
+
+def test_no_data_to_recovering_to_resolved() -> None:
+    alert = replace(NO_DATA, ref_ts=S)
+    alert, sent = run(alert, Observation(now=at(400), witness="false", source=fresh(S + 400)))  # type: ignore[assignment]
+    # RECOVERING: the NO DATA message (due after 5 min) waits for the next tick.
+    assert alert is not None and (alert.state, alert.clean_checks) == ("no_data", 1)
+    assert sent == []
+    new, sent = run(alert, Observation(now=at(460), witness="false", source=fresh(S + 460)))
+    assert new is None and sent == [Notice.RESOLVED]
+
+
+def test_aggregate_needs_spaced_clean_checks_and_a_warm_evaluator() -> None:
+    alert = replace(FIRING, ref_ts=None)
+    started = at(0)
+
+    def obs(seconds: float) -> Observation:
+        return Observation(now=at(seconds), witness="false", source=NO_SOURCE, started_at=started)
+
+    new, _ = run(alert, obs(30))  # just after a restart: doesn't count
+    assert new is not None and new.clean_checks == 0
+    new, _ = run(new, obs(150))
+    assert new is not None and new.clean_checks == 1
+    new, _ = run(new, obs(180))  # 30 s later: too soon
+    assert new is not None and new.clean_checks == 1
+    new, sent = run(new, obs(210))
+    assert new is None and sent == [Notice.RESOLVED]

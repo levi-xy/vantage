@@ -179,8 +179,12 @@ def _number(tokens: list[_Token]) -> float | None:
     token = tokens[0]
     if token.kind == "number":
         text = token.text
-        value = float(int(text, 16)) if text[:2].lower() == "0x" else float(text)
-        return sign * value
+        if text[:2].lower() == "0x":  # exact, as Prometheus parses it
+            return sign * float(int(text, 16))
+        if len(text) > 1 and text[0] == "0" and text[1].isdigit():
+            # Prometheus reads 010 as octal 8; Python's float as 10.
+            raise Unsure("leading-zero number literal")
+        return sign * float(text)
     if _is_keyword(token, "inf", "nan"):
         return sign * float(token.text)
     return None
@@ -190,11 +194,30 @@ def _text(expr: str, tokens: list[_Token]) -> str:
     return expr[tokens[0].start : tokens[-1].end].strip()
 
 
+def _check_nested(tokens: list[_Token]) -> None:
+    """Unsure if ``absent()`` / ``absent_over_time()`` appears anywhere, or a comparison
+    or set operator inside a ``(...)`` or ``[...]`` group (``count(A > 85) > 2``). Matchers
+    (``{...}``) and strings are skipped: their ``=``, ``!=`` and text are not operators."""
+    for token in tokens:
+        if _is_keyword(token, "absent", "absent_over_time"):
+            raise Unsure("absent()")
+        if token.kind == "group" and token.text[0] in "([":
+            inner = tokenize(token.text[1:-1])
+            if any(
+                (t.kind == "op" and t.text in _COMPARISONS)
+                or _is_keyword(t, *_SET_OPS, "or", "bool")
+                for t in inner
+            ):
+                raise Unsure("comparison inside a group")
+            _check_nested(inner)
+
+
 def _part(expr: str, tokens: list[_Token]) -> Part:
     if not tokens:
         raise Unsure("empty operand")
     if any(_is_keyword(t, *_SET_OPS) for t in tokens):
         raise Unsure("and / unless")
+    _check_nested(tokens)
     found = [i for i, t in enumerate(tokens) if t.kind == "op" and t.text in _COMPARISONS]
     if len(found) != 1:
         raise Unsure("not exactly one top-level comparison")

@@ -36,6 +36,12 @@ def test_every_template_has_a_witness(template: object) -> None:
         ('x{l="a > 1 or b"} < 5', [('x{l="a > 1 or b"}', "<", 5)]),
         ('x{l="esc \\" > 3"} > 2', [('x{l="esc \\" > 3"}', ">", 2)]),
         ("x offset 5m > 2", [("x offset 5m", ">", 2)]),
+        ("A > 0x1F", [("A", ">", 31)]),
+        ("A > 0.5", [("A", ">", 0.5)]),
+        (
+            'sum by (job) (rate(x{a!="b"}[5m])) > 3',
+            [('sum by (job) (rate(x{a!="b"}[5m]))', ">", 3)],
+        ),
     ],
 )
 def test_splits(expr: str, parts: list[tuple[str, str, float]]) -> None:
@@ -64,6 +70,14 @@ def test_splits(expr: str, parts: list[tuple[str, str, float]]) -> None:
         "A >",
         "sum(x",  # unbalanced
         'x{a="unterminated}',
+        "A > 010",  # Prometheus: octal 8
+        "A > 0b1",
+        "A > 0o7",
+        "absent(A) == 1",
+        "absent_over_time(A[5m]) > 0",
+        "count(A > 85) > 2",  # comparison inside a group
+        "sum(A or B) > 1",
+        "max_over_time((A > 1)[5m:]) > 0",
     ],
 )
 def test_unsure_means_empty_result(expr: str) -> None:
