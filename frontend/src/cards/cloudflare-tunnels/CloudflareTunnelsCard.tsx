@@ -5,7 +5,7 @@ import { byLabel } from "../metrics/promql";
 import { useInstantQuery } from "../metrics/useMetricQuery";
 import { StatTile } from "../metrics/StatTile";
 import { Figures, KeyFigure } from "../metrics/KeyFigure";
-import { useCardTier } from "../metrics/tier";
+import { useCardTier, useRoomUnderFigures } from "../metrics/tier";
 
 // Polled by Vantage (integrations/builtin/cloudflare): vantage_cloudflare_tunnel_*.
 const P = "vantage_cloudflare_tunnel_";
@@ -29,6 +29,8 @@ export function CloudflareTunnelsCard({ instanceId, title, instance }: CardProps
     .map((t) => ({ id: t.key, name: t.labels.tunnel_name || t.key }))
     .sort((a, b) => a.name.localeCompare(b.name));
   const tier = useCardTier();
+  // The names only when they fit; the tile always shows the count in red.
+  const roomForNames = useRoomUnderFigures();
   const healthy = tunnels.filter((t) => state.get(t.id) === "healthy").length;
   // Down or degraded is a problem; inactive (no connector configured to run) is not.
   const troubled = tunnels.filter((t) => ["down", "degraded"].includes(state.get(t.id) ?? ""));
@@ -59,7 +61,7 @@ export function CloudflareTunnelsCard({ instanceId, title, instance }: CardProps
               tone={troubled.length ? "bad" : undefined}
             />
           </Figures>
-          {troubled.length > 0 && (
+          {troubled.length > 0 && roomForNames && (
             <p className="truncate text-sm text-crit-text">
               {troubled.map((t) => t.name).join(", ")}
             </p>

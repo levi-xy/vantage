@@ -19,19 +19,19 @@ function perSecond(v: number | undefined): string {
 }
 
 export function CloudflaredCard({ instanceId, title, instance }: CardProps) {
+  const tier = useCardTier();
   const reqExpr = (sel: (m?: string) => string) => `sum(rate(${REQUESTS}${sel()}[5m]))`;
   const errExpr = (sel: (m?: string) => string) => `sum(rate(${ERRORS}${sel()}[5m]))`;
   const connections = useInstantQuery(instanceId, (sel) => `${CONNECTIONS}${sel()}`);
   const requests = useInstantQuery(instanceId, reqExpr);
   const errors = useInstantQuery(instanceId, errExpr);
-  const reqSpark = useRangeQuery(instanceId, reqExpr);
-  const errSpark = useRangeQuery(instanceId, errExpr);
+  const reqSpark = useRangeQuery(instanceId, reqExpr, undefined, tier === "full");
+  const errSpark = useRangeQuery(instanceId, errExpr, undefined, tier === "full");
 
   const conn = firstValue(connections.data);
   const reqRate = firstValue(requests.data);
   const errRate = firstValue(errors.data);
   const errShare = reqRate && errRate !== undefined ? errRate / reqRate : undefined;
-  const tier = useCardTier();
   const connTone = conn === undefined ? undefined : conn > 0 ? "ok" : "bad";
   return (
     <CardFrame

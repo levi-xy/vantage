@@ -21,20 +21,20 @@ const uptimeExpr = (sel: Sel) => `system_uptime${sel()}`;
 
 /** CPU, memory, storage, firewall states, uptime, and temperature when there is a sensor. */
 export function PfsenseOverviewCard({ instanceId, title, instance }: CardProps) {
+  const tier = useCardTier();
   const cpu = useInstantQuery(instanceId, cpuExpr);
   const mem = useInstantQuery(instanceId, memExpr);
   const disk = useInstantQuery(instanceId, diskExpr);
   const states = useInstantQuery(instanceId, statesExpr);
   const temp = useInstantQuery(instanceId, tempExpr);
   const uptime = useInstantQuery(instanceId, uptimeExpr);
-  const cpuSpark = useRangeQuery(instanceId, cpuExpr);
-  const memSpark = useRangeQuery(instanceId, memExpr);
+  const cpuSpark = useRangeQuery(instanceId, cpuExpr, undefined, tier === "full");
+  const memSpark = useRangeQuery(instanceId, memExpr, undefined, tier === "full");
 
   const cpuValue = firstValue(cpu.data);
   const memValue = firstValue(mem.data);
   const statesValue = firstValue(states.data);
   const tempValue = firstValue(temp.data);
-  const tier = useCardTier();
 
   return (
     <CardFrame

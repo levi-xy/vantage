@@ -15,6 +15,7 @@ const REAL_FS = 'fstype!~"tmpfs|devtmpfs|overlay|squashfs|ramfs|fuse.*"';
 const REAL_NIC = 'device!~"lo|veth.*|docker.*|br-.*|virbr.*"';
 
 export function LinuxHostCard({ instanceId, title, instance }: CardProps) {
+  const tier = useCardTier();
   const { formatRate } = useUnits();
   const cpuExpr = (sel: (m?: string) => string) =>
     `100 * (1 - avg(rate(node_cpu_seconds_total${sel('mode="idle"')}[5m])))`;
@@ -40,10 +41,10 @@ export function LinuxHostCard({ instanceId, title, instance }: CardProps) {
   const zfs = useInstantQuery(instanceId, (sel) => `node_zfs_zpool_state${sel()} == 1`);
   const temps = useInstantQuery(instanceId, (sel) => `node_hwmon_temp_celsius${sel()}`);
 
-  const cpuSpark = useRangeQuery(instanceId, cpuExpr);
-  const memSpark = useRangeQuery(instanceId, memExpr);
-  const rxSpark = useRangeQuery(instanceId, rxExpr);
-  const txSpark = useRangeQuery(instanceId, txExpr);
+  const cpuSpark = useRangeQuery(instanceId, cpuExpr, undefined, tier === "full");
+  const memSpark = useRangeQuery(instanceId, memExpr, undefined, tier === "full");
+  const rxSpark = useRangeQuery(instanceId, rxExpr, undefined, tier === "full");
+  const txSpark = useRangeQuery(instanceId, txExpr, undefined, tier === "full");
 
   const cpuValue = firstValue(cpu.data);
   const memValue = firstValue(mem.data);
@@ -63,7 +64,6 @@ export function LinuxHostCard({ instanceId, title, instance }: CardProps) {
     .filter(Number.isFinite)
     .reduce<number | undefined>((max, v) => (max === undefined || v > max ? v : max), undefined);
 
-  const tier = useCardTier();
   // The fullest volume stands for "disk" below full size.
   const fullest = volumes.reduce<number | undefined>(
     (max, v) => (max === undefined || (v.value ?? 0) > max ? v.value : max),
@@ -101,18 +101,25 @@ export function LinuxHostCard({ instanceId, title, instance }: CardProps) {
           </KeyFigure>
         )
       ) : tier === "medium" ? (
-        <>
-          <Figures>
-            <StatTile label="CPU" value={formatPercent(cpuValue)} />
-            <StatTile label="Memory" value={formatPercent(memValue)} />
+        // One row only: a line under it would be clipped at 3 x 2. A storage problem takes
+        // the disk tile's place, so it is never the part that doesn't fit.
+        <Figures>
+          <StatTile label="CPU" value={formatPercent(cpuValue)} />
+          <StatTile label="Memory" value={formatPercent(memValue)} />
+          {storageProblem ? (
+            <StatTile
+              label={badArray ? `RAID ${badArray.key}` : `ZFS ${badPool?.key ?? ""}`}
+              value={badArray ? "degraded" : (badPool?.labels.state ?? "unknown")}
+              tone="bad"
+            />
+          ) : (
             <StatTile
               label="Disk"
               value={formatPercent(fullest)}
               tone={fullest !== undefined && fullest >= 90 ? "bad" : undefined}
             />
-          </Figures>
-          {storageProblem && <p className="truncate text-sm text-crit-text">{storageProblem}</p>}
-        </>
+          )}
+        </Figures>
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3">

@@ -29,16 +29,16 @@ function Loss({ ratio }: { ratio: number | undefined }) {
 }
 
 export function PingCheckCard({ instanceId, title, instance }: CardProps) {
+  const tier = useCardTier();
   const rtt = useInstantQuery(instanceId, (sel) => `${RTT}${sel()}`);
   const loss = useInstantQuery(instanceId, (sel) => `${LOSS}${sel()}`);
-  const rttHour = useRangeQuery(instanceId, (sel) => `${RTT}${sel()}`);
+  const rttHour = useRangeQuery(instanceId, (sel) => `${RTT}${sel()}`, undefined, tier === "full");
 
   const rttValue = firstValue(rtt.data);
   const lossValue = firstValue(loss.data);
   const points = firstSeries(rttHour.data);
   const hour = stats(points);
   const freshness = cardFreshness(rtt, loss);
-  const tier = useCardTier();
   return (
     <CardFrame
       title={title}

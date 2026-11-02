@@ -15,14 +15,19 @@ const STATUS = "vantage_http_check_status_code";
 const DURATION = "vantage_http_check_duration_seconds";
 
 export function HttpCheckCard({ instanceId, title, instance }: CardProps) {
+  const tier = useCardTier();
   const success = useInstantQuery(instanceId, (sel) => `${SUCCESS}${sel()}`);
   const status = useInstantQuery(instanceId, (sel) => `${STATUS}${sel()}`);
   const duration = useInstantQuery(instanceId, (sel) => `${DURATION}${sel()}`);
-  const spark = useRangeQuery(instanceId, (sel) => `${DURATION}${sel()}`);
+  const spark = useRangeQuery(
+    instanceId,
+    (sel) => `${DURATION}${sel()}`,
+    undefined,
+    tier === "full",
+  );
 
   const up = firstValue(success.data);
   const code = firstValue(status.data);
-  const tier = useCardTier();
   const ms = formatMs(firstValue(duration.data));
   return (
     <CardFrame

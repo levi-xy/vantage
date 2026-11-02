@@ -1,6 +1,7 @@
 import { screen, within } from "@testing-library/react";
 import { ApiClient } from "../../api";
 import type { Instance } from "../../api";
+import { LinuxHostCard } from "../linux-host/LinuxHostCard";
 import { PingCheckCard } from "../ping-check/PingCheckCard";
 import { SmartDisksCard } from "../smart-disks/SmartDisksCard";
 import { renderCard, testInstance, vector } from "../testRender";
@@ -78,16 +79,40 @@ describe("card tiers", () => {
     expect(figure.className).toContain("text-crit-text");
   });
 
-  it("medium: ping shows the figures without the sparkline", async () => {
+  it("medium: ping shows the figures, and asks for no sparkline history", async () => {
+    const ranges: string[] = [];
     renderCard(
       client,
       PingCheckCard,
-      (query) => vector([[{}, query.includes("rtt") ? "0.0018" : "0"]]),
+      (query, req) => {
+        if (req.start !== undefined) ranges.push(query);
+        return vector([[{}, query.includes("rtt") ? "0.0018" : "0"]]);
+      },
       testInstance,
       { tier: "medium" },
     );
     const rtt = await screen.findByRole("group", { name: "Round trip" });
     expect(await within(rtt).findByText("1.8 ms")).toBeInTheDocument();
     expect(screen.queryByText("last hour")).not.toBeInTheDocument();
+    expect(ranges).toEqual([]);
+  });
+
+  it("medium: a degraded RAID takes the disk tile, in red, so it is never clipped", async () => {
+    renderCard(
+      client,
+      LinuxHostCard,
+      (query) => {
+        if (query.includes("node_md_degraded")) return vector([[{ device: "md0" }, "1"]]);
+        if (query.includes("node_cpu_seconds_total")) return vector([[{}, "12"]]);
+        if (query.includes("MemAvailable")) return vector([[{}, "40"]]);
+        return vector([]);
+      },
+      testInstance,
+      { tier: "medium" },
+    );
+    const raid = await screen.findByText("RAID md0");
+    expect(raid.nextSibling).toHaveTextContent("degraded");
+    expect((raid.nextSibling as HTMLElement).className).toContain("text-crit-text");
+    expect(screen.queryByText("Disk")).not.toBeInTheDocument();
   });
 });

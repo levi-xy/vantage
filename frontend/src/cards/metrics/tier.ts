@@ -43,3 +43,15 @@ export function useFittingRows(rowPx: number, max: number): number {
   if (heightPx === undefined) return max;
   return Math.max(1, Math.min(max, Math.floor((heightPx - MEDIUM_CHROME_PX) / rowPx)));
 }
+
+// A row of figures (label and value) and the gap under it.
+const FIGURES_PX = 54;
+
+/**
+ * Whether a medium card has room for one more line of `linePx` under its row of figures.
+ * Only extra detail goes there: a problem belongs in a figure or the header, which always fit.
+ */
+export function useRoomUnderFigures(linePx = 20): boolean {
+  const { heightPx } = useContext(CardTierContext);
+  return heightPx === undefined || heightPx - MEDIUM_CHROME_PX - FIGURES_PX >= linePx;
+}

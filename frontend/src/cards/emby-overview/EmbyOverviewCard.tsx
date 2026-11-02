@@ -20,11 +20,17 @@ const METHODS: [string, string][] = [
 const num = (v: number | undefined) => (v === undefined || Number.isNaN(v) ? "–" : String(v));
 
 export function EmbyOverviewCard({ instanceId, title, instance }: CardProps) {
+  const tier = useCardTier();
   // One query for the scalar series; the metric name tells them apart.
   const scalars = useInstantQuery(instanceId, (sel) => sel(`__name__=~"${SCALARS}"`));
   const info = useInstantQuery(instanceId, (sel) => `vantage_emby_server_info${sel()}`);
   const streams = useInstantQuery(instanceId, (sel) => `vantage_emby_streams${sel()}`);
-  const playingSpark = useRangeQuery(instanceId, (sel) => `vantage_emby_now_playing${sel()}`);
+  const playingSpark = useRangeQuery(
+    instanceId,
+    (sel) => `vantage_emby_now_playing${sel()}`,
+    undefined,
+    tier === "full",
+  );
 
   const value = new Map(
     (scalars.data?.series ?? []).map((s) => [s.labels.__name__ ?? "", Number(s.values[0]?.[1])]),
@@ -32,7 +38,6 @@ export function EmbyOverviewCard({ instanceId, title, instance }: CardProps) {
   const up = value.get("vantage_instance_up");
   const serverInfo = info.data?.series[0]?.labels;
   const method = new Map(byLabel(streams.data, "play_method").map((r) => [r.key, r.value]));
-  const tier = useCardTier();
   const playing = num(value.get("vantage_emby_now_playing"));
 
   return (
@@ -55,14 +60,13 @@ export function EmbyOverviewCard({ instanceId, title, instance }: CardProps) {
           </KeyFigure>
         )
       ) : tier === "medium" ? (
-        <>
-          {up !== 1 && <p className="text-sm text-crit-text">Server down</p>}
-          <Figures>
-            <StatTile label="Now playing" value={playing} />
-            <StatTile label="Sessions" value={num(value.get("vantage_emby_sessions"))} />
-            <StatTile label="Transcode" value={num(method.get("transcode"))} />
-          </Figures>
-        </>
+        // One row, so nothing is clipped: a server down takes the first tile.
+        <Figures>
+          {up !== 1 && <StatTile label="Server" value="Down" tone="bad" />}
+          <StatTile label="Now playing" value={playing} />
+          <StatTile label="Sessions" value={num(value.get("vantage_emby_sessions"))} />
+          {up === 1 && <StatTile label="Transcode" value={num(method.get("transcode"))} />}
+        </Figures>
       ) : (
         <>
           <div className="flex flex-wrap items-baseline gap-x-3 text-sm">

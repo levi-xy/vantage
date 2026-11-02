@@ -107,6 +107,7 @@ function Current({ label, value, tone }: { label: string; value: string; tone: "
  * the backend pushes live rates (every ~2 s), those replace Prometheus' 2-minute average.
  */
 export function ThroughputCard({ instances, settings }: WidgetProps) {
+  const tier = useCardTier();
   const { formatRate, unit } = useUnits();
   const ports = portsFromSettings(settings);
   const chosen = ports.length > 0;
@@ -115,15 +116,22 @@ export function ThroughputCard({ instances, settings }: WidgetProps) {
   const rx = useFleetQuery(inExpr);
   const tx = useFleetQuery(outExpr);
   // No `or vector(0)` here: a time the device didn't report is a gap, not 0 traffic.
-  const rxHistory = useFleetRangeQuery(historyQuery(ports, "in"), CHART_WINDOW_SECONDS, chosen);
-  const txHistory = useFleetRangeQuery(historyQuery(ports, "out"), CHART_WINDOW_SECONDS, chosen);
+  const rxHistory = useFleetRangeQuery(
+    historyQuery(ports, "in"),
+    CHART_WINDOW_SECONDS,
+    chosen && tier === "full",
+  );
+  const txHistory = useFleetRangeQuery(
+    historyQuery(ports, "out"),
+    CHART_WINDOW_SECONDS,
+    chosen && tier === "full",
+  );
   const { groups } = usePortOptions(instances);
   const now = useNow();
   // Live only when every chosen port was read; a partial sum would look like the total.
   const pushed = useLiveRate(now);
   const live = pushed && pushed.ports === ports.length ? pushed : undefined;
   const staleDevices = useStaleDevices(ports, instances, now);
-  const tier = useCardTier();
 
   if (!chosen) {
     if (tier === "small") {
@@ -233,10 +241,16 @@ export function ThroughputCard({ instances, settings }: WidgetProps) {
       <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
         <div className="min-w-0">
           <div className="text-[15px] font-semibold">Throughput</div>
-          <div className="truncate text-xs text-muted" title={label}>
-            {label}
-            {live ? " · live" : ""}
-          </div>
+          {stale && tier !== "full" ? (
+            <div className="truncate text-xs font-semibold text-crit-text" title={label}>
+              No recent data from {staleDevices.map((i) => i.name).join(", ")}
+            </div>
+          ) : (
+            <div className="truncate text-xs text-muted" title={label}>
+              {label}
+              {live ? " · live" : ""}
+            </div>
+          )}
         </div>
         <div className="ml-auto flex gap-5">
           <Current label={inName} tone="in" value={rxText} />
@@ -245,10 +259,9 @@ export function ThroughputCard({ instances, settings }: WidgetProps) {
       </div>
       {/* Medium: the current rates only, no chart. */}
       {tier === "full" && <div className="flex min-h-40 flex-1 flex-col">{history}</div>}
-      {stale && (
-        <p className={`text-xs ${tier === "full" ? "text-muted" : "font-semibold text-crit-text"}`}>
-          No recent data from {staleDevices.map((i) => i.name).join(", ")}
-          {tier === "full" ? "; history greyed." : "."}
+      {stale && tier === "full" && (
+        <p className="text-xs text-muted">
+          No recent data from {staleDevices.map((i) => i.name).join(", ")}; history greyed.
         </p>
       )}
     </section>

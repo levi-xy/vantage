@@ -6,7 +6,7 @@ import { byLabel } from "../metrics/promql";
 import { useInstantQuery } from "../metrics/useMetricQuery";
 import { StatTile } from "../metrics/StatTile";
 import { Figures, KeyFigure } from "../metrics/KeyFigure";
-import { useCardTier } from "../metrics/tier";
+import { useCardTier, useRoomUnderFigures } from "../metrics/tier";
 
 // Scraped from smartctl_exporter (native names), per disk (label `device`).
 const INFO = "smartctl_device";
@@ -31,6 +31,8 @@ export function SmartDisksCard({ instanceId, title, instance }: CardProps) {
   const hours = new Map(byLabel(powerOn.data, "device").map((r) => [r.key, r.value]));
   const tier = useCardTier();
   const failing = statuses.filter((d) => d.value !== 1);
+  // The names only when they fit; the Failing tile always shows the count in red.
+  const roomForNames = useRoomUnderFigures();
   const hottest = [...temp.values()].reduce<number | undefined>(
     (max, v) => (v !== undefined && (max === undefined || v > max) ? v : max),
     undefined,
@@ -64,7 +66,7 @@ export function SmartDisksCard({ instanceId, title, instance }: CardProps) {
             />
             <StatTile label="Hottest" value={formatCelsius(hottest)} />
           </Figures>
-          {failing.length > 0 && (
+          {failing.length > 0 && roomForNames && (
             <p className="truncate text-sm text-crit-text">
               Failing: {failing.map((d) => d.key).join(", ")}
             </p>
