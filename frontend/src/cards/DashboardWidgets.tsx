@@ -62,8 +62,8 @@ const FIRING_LIMIT = 200;
 export function AlertsCard() {
   const client = useApiClient();
   const firing = useQuery({
-    queryKey: ["alerts", "firing"],
-    queryFn: () => client.alertEvents({ state: "firing", limit: FIRING_LIMIT }),
+    queryKey: ["alerts", "open"],
+    queryFn: () => client.openAlertEvents(FIRING_LIMIT),
     refetchInterval: INSTANT_REFETCH_MS,
   });
   const count = firing.data?.length;

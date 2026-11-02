@@ -126,6 +126,7 @@ def _summary_text(db: Session, summary_id: int, channel: Channel) -> str:
         f"{counts[k]} {label}"
         for k, label in (
             (Kind.FIRING, "firing"),
+            (Kind.NO_DATA, "no data"),
             (Kind.RESOLVED, "resolved"),
             (Kind.RULE_CHANGE, "rule changes"),
         )

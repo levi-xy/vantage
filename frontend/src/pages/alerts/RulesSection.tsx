@@ -255,6 +255,18 @@ function RuleRow({ rule }: { rule: AlertRule }) {
           <span className="text-xs text-slate-600 dark:text-slate-400">
             {rule.severity} · for {rule.for_seconds}s · {rule.enabled ? "enabled" : "disabled"}
           </span>
+          {rule.recovery_mode === "empty_result" && (
+            <span className="text-xs text-amber-700 dark:text-amber-300">
+              ⚠ Resolves when the result is empty: this expression can&apos;t be split into a value
+              and a threshold, so a missing value can&apos;t be told apart from a recovery (a
+              device&apos;s fresh poll is still required).
+            </span>
+          )}
+          {rule.error && (
+            <span role="status" className="text-xs break-words text-red-700 dark:text-red-300">
+              Last query error: {rule.error}
+            </span>
+          )}
         </div>
         <div className="flex flex-wrap gap-2 md:justify-end">
           {mode === "confirm-delete" ? (

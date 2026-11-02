@@ -707,3 +707,21 @@ def test_metrics_report_pending_and_failed(engine: Engine, db: Session, clock: C
 def test_backoff_schedule() -> None:
     got = [delivery.backoff_seconds(n) for n in range(1, 9)]
     assert got == [10, 30, 60, 120, 300, 600, 600, 600]
+
+
+def test_overflow_summary_counts_no_data(db: Session, clock: Clock) -> None:
+    cid = add_channel(db)
+    overflow(db, clock, cid)
+    for i in range(3):
+        enqueue(
+            db,
+            channel_ids=[cid],
+            kind=NotificationKind.NO_DATA,
+            text=f"NO DATA: device {i}",
+            now=clock.now,
+        )
+    db.commit()
+    (summary,) = [r for r in rows(db) if r.kind == NotificationKind.SUMMARY]
+    assert summary.text == (
+        "103 more alert changes while Telegram was unreachable: 50 firing, 3 no data, 50 resolved"
+    )

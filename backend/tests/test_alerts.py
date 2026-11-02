@@ -3,6 +3,7 @@
 import uuid
 from collections.abc import Iterator
 from datetime import datetime, timedelta
+from urllib.parse import parse_qs
 
 import httpx
 import pytest
@@ -10,7 +11,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from app.alerts.evaluator import AlertEvaluator, clean
+from app.alerts.evaluator import (
+    POLLED_QUERY,
+    PROBE_QUERY,
+    SCRAPED_QUERY,
+    AlertEvaluator,
+    clean,
+)
 from app.alerts.templates import TEMPLATES
 from app.api.deps import CSRF_HEADER
 from app.collectors.hub import EventHub, Subscriber
@@ -38,17 +45,40 @@ INSTANCE_UUID = uuid.UUID(INSTANCE_ID)
 
 
 class FakeProm:
-    """Answers every instant query with ``vector`` (a list of label dicts) or an error."""
+    """Answers instant queries. ``answers`` maps a query to ``(labels, value)`` pairs; any
+    other query gets ``vector`` (label dicts, value "1"). The probe always answers and the
+    fleet freshness queries are empty unless set. ``error`` fails every query, ``failing``
+    only those listed."""
 
     def __init__(self) -> None:
         self.vector: list[dict[str, str]] = []
+        self.answers: dict[str, list[tuple[dict[str, str], str]]] = {}
         self.error: dict[str, str] | None = None
+        self.failing: set[str] = set()
+        self.queries: list[str] = []
+
+    def poll(self, instance_id: str, ts: float, integration: str = "ping_check") -> None:
+        """The device's last successful poll, as Prometheus would report it."""
+        labels = {"vantage_instance_id": instance_id, "vantage_integration": integration}
+        rows = [r for r in self.answers.get(POLLED_QUERY, []) if r[0] != labels]
+        self.answers[POLLED_QUERY] = [*rows, (labels, repr(ts))]
 
     def client(self) -> PrometheusClient:
         def handler(request: httpx.Request) -> httpx.Response:
-            if self.error:
-                return httpx.Response(200, json={"status": "error", **self.error})
-            result = [{"metric": m, "value": [1.0, "1"]} for m in self.vector]
+            query = parse_qs(request.content.decode())["query"][0]
+            self.queries.append(query)
+            if self.error or query in self.failing:
+                error = self.error or {"errorType": "execution", "error": "boom"}
+                return httpx.Response(200, json={"status": "error", **error})
+            if query == PROBE_QUERY:
+                rows: list[tuple[dict[str, str], str]] = [({}, "1")]
+            elif query in self.answers:
+                rows = self.answers[query]
+            elif query in (POLLED_QUERY, SCRAPED_QUERY):
+                rows = []
+            else:
+                rows = [(m, "1") for m in self.vector]
+            result = [{"metric": m, "value": [1.0, v]} for m, v in rows]
             return httpx.Response(
                 200, json={"status": "success", "data": {"resultType": "vector", "result": result}}
             )
@@ -184,12 +214,12 @@ def add_channel(db: Session, channel_id: int = 7) -> None:
 
 
 class Recorder:
-    """What was queued in the alert_notifications outbox, in order (P0-5). Only FIRING and
-    RESOLVED messages unless ``rule_changes``."""
+    """What was queued in the alert_notifications outbox, in order (P0-5). Only FIRING,
+    RESOLVED and NO DATA messages unless ``rule_changes``."""
 
     def __init__(self, rule_changes: bool = False) -> None:
         self.engine: Engine | None = None
-        self.kinds = [NotificationKind.FIRING, NotificationKind.RESOLVED]
+        self.kinds = [NotificationKind.FIRING, NotificationKind.RESOLVED, NotificationKind.NO_DATA]
         if rule_changes:
             self.kinds.append(NotificationKind.RULE_CHANGE)
 
@@ -261,12 +291,17 @@ async def test_fires_after_for_then_resolves(engine: Engine, db: Session, prom: 
     msg = sub.queue.get_nowait()
     assert msg["type"] == "alert_event" and msg["state"] == "firing"
     assert INSTANCE_ID not in str(msg)
+    # Recovery needs two clean checks from two polls: the value seen, condition false.
     prom.vector = []
-    clock.now += timedelta(seconds=30)
-    await ev.tick()
+    prom.answers["up"] = [({"vantage_instance_id": INSTANCE_ID}, "1")]
+    for _ in range(2):
+        clock.now += timedelta(seconds=60)
+        prom.poll(INSTANCE_ID, clock.now.timestamp() - 5)
+        await ev.tick()
     db.expire_all()
     event = db.scalars(select(AlertEvent)).one()
     assert event.state == AlertState.RESOLVED and event.ended_at is not None
+    assert event.end_reason == EndReason.RECOVERED
     assert rec.sent[1][1].startswith("RESOLVED: ")
 
 
@@ -418,8 +453,13 @@ async def test_two_devices_down_under_one_rule_are_two_alerts(
     assert events[1].labels["vantage_instance"] == "fw-b"
     assert {e.rule_name for e in events} == {"Gateway"}
 
-    # One recovers: only its event resolves.
+    # One recovers (two clean checks from two polls): only its event resolves.
     prom.vector = prom.vector[:1]
+    prom.answers["up"] = [({"vantage_instance": "fw-b", "vantage_instance_id": OTHER_ID}, "1")]
+    prom.poll(OTHER_ID, clock.now.timestamp() - 5)
+    await ev.tick()
+    clock.now += timedelta(seconds=60)
+    prom.poll(OTHER_ID, clock.now.timestamp() - 5)
     await ev.tick()
     db.expire_all()
     assert [

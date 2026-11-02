@@ -222,7 +222,7 @@ export class ApiClient {
     return this.request("GET", qs ? `/audit?${qs}` : "/audit");
   }
 
-  /** Alert history, newest first; `state` filters to firing or resolved. */
+  /** Alert history, newest first; `state` filters to firing, no data or resolved. */
   alertEvents(query: AlertEventQuery = {}): Promise<AlertEvent[]> {
     const params = new URLSearchParams();
     if (query.limit !== undefined) params.set("limit", String(query.limit));
@@ -230,6 +230,16 @@ export class ApiClient {
     if (query.state !== undefined) params.set("state", query.state);
     const qs = params.toString();
     return this.request("GET", qs ? `/alerts/events?${qs}` : "/alerts/events");
+  }
+
+  /** Open alerts (firing and no data), newest first; at most `limit` of each state. */
+  async openAlertEvents(limit: number): Promise<AlertEvent[]> {
+    const [firing, noData] = await Promise.all([
+      this.alertEvents({ state: "firing", limit }),
+      this.alertEvents({ state: "no_data", limit }),
+    ]);
+    const byId = new Map([...firing, ...noData].map((e) => [e.id, e] as const));
+    return [...byId.values()].sort((a, b) => b.id - a.id);
   }
 
   /** Any logged-in user: how many alert messages are stuck (for the banner). */

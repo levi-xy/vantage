@@ -78,7 +78,7 @@ describe("alerts page: events and rules", () => {
     }));
     const backend = adminBackend({ "GET /alerts/events": () => json(full) });
     renderApp("/alerts", backend);
-    expect(await screen.findByRole("list", { name: "Firing alerts" })).toBeInTheDocument();
+    expect(await screen.findByRole("list", { name: "Open alerts" })).toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: "Load older" }));
     await waitFor(() =>
       expect(backend.requests().some((r) => r.route.includes("before_id=51"))).toBe(true),
@@ -126,7 +126,7 @@ describe("alerts page: events and rules", () => {
       routes: { "GET /alerts/events": () => json([FIRING_EVENT]) },
     });
     renderApp("/alerts", backend);
-    const firing = await screen.findByRole("list", { name: "Firing alerts" });
+    const firing = await screen.findByRole("list", { name: "Open alerts" });
     expect(within(firing).getByText("nas-1 is down")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Rules" })).toBeNull();
     const routes = backend.requests().map((r) => r.route);
@@ -149,7 +149,7 @@ describe("alerts page: events and rules", () => {
       "POST /alerts/events/7/close": () => json({ ...linked, state: "resolved" }),
     });
     renderApp("/alerts", backend);
-    const firing = await screen.findByRole("list", { name: "Firing alerts" });
+    const firing = await screen.findByRole("list", { name: "Open alerts" });
     expect(await within(firing).findByRole("link", { name: "fw-a" })).toHaveAttribute(
       "href",
       `/devices/${INSTANCE_ID}`,
@@ -174,7 +174,7 @@ describe("alerts page: events and rules", () => {
       routes: { "GET /alerts/events": () => json([FIRING_EVENT]) },
     });
     renderApp("/alerts", backend);
-    const firing = await screen.findByRole("list", { name: "Firing alerts" });
+    const firing = await screen.findByRole("list", { name: "Open alerts" });
     expect(within(firing).getByText("nas-1")).toBeInTheDocument();
     expect(within(firing).queryByRole("button", { name: /Close alert/ })).toBeNull();
   });
@@ -218,7 +218,7 @@ describe("alerts page: events and rules", () => {
       routes: { "GET /alerts/events": () => json([event]) },
     });
     renderApp("/alerts", backend);
-    const firing = await screen.findByRole("list", { name: "Firing alerts" });
+    const firing = await screen.findByRole("list", { name: "Open alerts" });
     const lines = within(firing).getByRole("list", { name: "Notifications" });
     expect(
       within(lines).getByText("firing to ops: queued (3 attempts, rate limited)"),
@@ -247,6 +247,55 @@ describe("alerts page: events and rules", () => {
       "href",
       "/alerts",
     );
+  });
+
+  it("shows a NO DATA alert with its reason in plain words, closable by an admin", async () => {
+    const noData = {
+      ...FIRING_EVENT,
+      state: "no_data",
+      no_data_reason: "source_down",
+      state_since: "2026-10-30T10:05:00Z",
+      deliveries: [
+        {
+          channel_id: 1,
+          channel_name: "ops",
+          kind: "no_data",
+          status: "delivered",
+          attempts: 1,
+          error_kind: null,
+          created_at: "2026-10-30T10:10:00Z",
+          finished_at: "2026-10-30T10:10:01Z",
+        },
+      ],
+    };
+    const backend = adminBackend({
+      "GET /alerts/events": () => json([noData]),
+      "POST /alerts/events/7/close": () => json({ ...noData, state: "resolved" }),
+    });
+    renderApp("/alerts", backend);
+    const open = await screen.findByRole("list", { name: "Open alerts" });
+    expect(within(open).getByText("No data: device not answering")).toBeVisible();
+    expect(within(open).getByText(/no data since/)).toBeVisible();
+    expect(within(open).getByText("no data to ops: delivered (1 attempt)")).toBeVisible();
+    fireEvent.click(within(open).getByRole("button", { name: "Close alert 7" }));
+    fireEvent.click(within(open).getByRole("button", { name: "Confirm closing alert 7" }));
+    await waitFor(() =>
+      expect(backend.requests().some((r) => r.route === "POST /alerts/events/7/close")).toBe(true),
+    );
+    // Both open states are asked for.
+    const urls = backend.fetch.mock.calls.map(([input]) => String(input));
+    expect(urls.some((u) => u.includes("state=no_data"))).toBe(true);
+    expect(urls.some((u) => u.includes("state=firing"))).toBe(true);
+  });
+
+  it("warns about rules that resolve on an empty result and shows the last error", async () => {
+    const backend = adminBackend({
+      "GET /alerts/rules": () =>
+        json([{ ...RULE, recovery_mode: "empty_result", error: "query timed out" }]),
+    });
+    renderApp("/alerts", backend);
+    expect(await screen.findByText(/Resolves when the result is empty/)).toBeVisible();
+    expect(screen.getByText("Last query error: query timed out")).toBeVisible();
   });
 
   it("refetches events when an alert_event is pushed", () => {
