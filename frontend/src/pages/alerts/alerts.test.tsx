@@ -179,6 +179,76 @@ describe("alerts page: events and rules", () => {
     expect(within(firing).queryByRole("button", { name: /Close alert/ })).toBeNull();
   });
 
+  it("shows each event's notifications compactly", async () => {
+    const delivery = {
+      channel_id: 1,
+      channel_name: "ops",
+      kind: "firing",
+      status: "pending",
+      attempts: 3,
+      error_kind: "rate_limited",
+      created_at: "2026-10-30T10:00:00Z",
+      finished_at: null,
+    };
+    const event = {
+      ...FIRING_EVENT,
+      deliveries: [
+        delivery,
+        {
+          ...delivery,
+          channel_id: null,
+          channel_name: null,
+          status: "cancelled",
+          attempts: 0,
+          error_kind: null,
+        },
+        { ...delivery, kind: "resolved", status: "folded", attempts: 0, error_kind: null },
+        {
+          ...delivery,
+          kind: "resolved",
+          status: "folded",
+          attempts: 1,
+          error_kind: null,
+          finished_at: "2026-10-30T10:05:00Z",
+        },
+      ],
+    };
+    const backend = fakeBackend({
+      session: exampleMe("viewer"),
+      routes: { "GET /alerts/events": () => json([event]) },
+    });
+    renderApp("/alerts", backend);
+    const firing = await screen.findByRole("list", { name: "Firing alerts" });
+    const lines = within(firing).getByRole("list", { name: "Notifications" });
+    expect(
+      within(lines).getByText("firing to ops: queued (3 attempts, rate limited)"),
+    ).toBeVisible();
+    expect(
+      within(lines).getByText(
+        "firing to deleted channel: cancelled (channel deleted) (0 attempts)",
+      ),
+    ).toBeVisible();
+    // Waiting in an overflow summary is not shown as sent until the summary is.
+    expect(within(lines).getByText("resolved to ops: queued in summary")).toBeVisible();
+    expect(
+      within(lines).getByText("resolved to ops: sent in a combined message (1 attempt)"),
+    ).toBeVisible();
+  });
+
+  it("shows a banner while notifications are stuck", async () => {
+    const backend = fakeBackend({
+      session: exampleMe("viewer"),
+      routes: { "GET /alerts/delivery-status": () => json({ stuck: 2 }) },
+    });
+    renderApp("/", backend);
+    const banner = await screen.findByText(/2 alert notifications have failed or waited/);
+    expect(banner).toBeVisible();
+    expect(within(banner).getByRole("link", { name: "See Alerts" })).toHaveAttribute(
+      "href",
+      "/alerts",
+    );
+  });
+
   it("refetches events when an alert_event is pushed", () => {
     const queryClient = new QueryClient();
     const spy = vi.spyOn(queryClient, "invalidateQueries");

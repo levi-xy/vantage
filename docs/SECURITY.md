@@ -411,6 +411,12 @@ Telegram puts the token in the URL path, so extra care keeps it out of logs and 
   hold the URL) is never used or chained.
 - httpx logs every request URL at INFO level; a log filter on the `httpx` and
   `httpcore` loggers rewrites `/bot<token>` to `/bot<redacted>`.
+- Alert messages wait in the `alert_notifications` outbox until delivered
+  (`backend/app/alerts/delivery.py`). A failed attempt stores only a fixed `error_kind`
+  code (`timeout`, `rate_limited`, `unauthorized`, ...), never Telegram's answer or the
+  token; log lines carry the channel id, row ids, attempt count and that code. The stored
+  message text is built from the alert's filtered labels and holds no secret. Delivery is
+  at least once: a crash right after Telegram accepted a message can send it twice.
 
 Recommended: give the bot only what it needs (a bot that can post to one chat), and allow
 outbound HTTPS to `api.telegram.org` in your firewall only if you use Telegram alerts.

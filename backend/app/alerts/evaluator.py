@@ -21,8 +21,10 @@ rule's ``revision``. When the evaluator sees a new revision whose expression dif
 drops that rule's pending timers; it never opens an event for a rule whose revision moved
 while its query ran.
 
-Messages (hub and notifier) carry ids, numbers and a short summary built from the event's
-stored (filtered, cleaned, capped) labels. Prometheus' error text is never logged or stored.
+Messages (hub pushes and channel texts) carry ids, numbers and a short summary built from
+the event's stored (filtered, cleaned, capped) labels. Prometheus' error text is never
+logged or stored. Channel messages are queued in the ``alert_notifications`` outbox in the
+same transaction as the event change (P0-5); the evaluator never waits for a send.
 """
 
 import asyncio
@@ -38,11 +40,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.alerts import labels as alert_labels
+from app.alerts.delivery import enqueue
 from app.alerts.labels import INSTANCE_ID_LABEL, INSTANCE_NAME_LABEL, LEGACY_FINGERPRINT, REDACTED
-from app.alerts.notifier import Notifier
 from app.collectors.hub import EventHub, Message
 from app.core.db import utcnow
-from app.models import AlertEvent, AlertRule, AlertState, EndReason, Instance
+from app.models import AlertEvent, AlertRule, AlertState, EndReason, Instance, NotificationKind
 from app.query.proxy import PrometheusClient, QueryError, QueryRequest, Series
 
 log = logging.getLogger(__name__)
@@ -146,14 +148,12 @@ class AlertEvaluator:
         session_factory: sessionmaker[Session],
         prometheus: Callable[[], PrometheusClient],
         hub: EventHub,
-        notifier: Callable[[], Notifier],
         interval: float = DEFAULT_INTERVAL_SECONDS,
         clock: Callable[[], datetime] = utcnow,
     ) -> None:
         self._sessions = session_factory
         self._prometheus = prometheus
         self._hub = hub
-        self._notifier = notifier
         self._interval = interval
         self._clock = clock
         self._pending_since: dict[tuple[int, str], datetime] = {}
@@ -351,29 +351,42 @@ class AlertEvaluator:
             )
             db.add(event)
             try:
-                db.commit()
+                db.flush()
             except IntegrityError:  # already open (another writer): nothing to announce
                 db.rollback()
                 return
+            enqueue(
+                db,
+                channel_ids=list(rule.channel_ids),
+                kind=NotificationKind.FIRING,
+                text=f"FIRING: {event.summary}",
+                event_id=event.id,
+                now=now,
+            )
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                return
             message = event_message(event)
-            summary = event.summary
-        await self._announce(list(rule.channel_ids), message, f"FIRING: {summary}")
+        self._hub.publish(message)
 
     async def _resolve(self, event_id: int, channel_ids: list[int]) -> None:
         with self._sessions() as db:
             event = db.get(AlertEvent, event_id)
             if event is None:
                 return
-            if not close_events(db, [event], EndReason.RECOVERED, self._clock()):
+            now = self._clock()
+            if not close_events(db, [event], EndReason.RECOVERED, now):
                 return
+            enqueue(
+                db,
+                channel_ids=channel_ids,
+                kind=NotificationKind.RESOLVED,
+                text=f"RESOLVED: {event.summary}",
+                event_id=event.id,
+                now=now,
+            )
             db.commit()
             message = event_message(event)
-            summary = event.summary
-        await self._announce(list(channel_ids), message, f"RESOLVED: {summary}")
-
-    async def _announce(self, channel_ids: list[int], message: Message, text: str) -> None:
         self._hub.publish(message)
-        try:
-            await self._notifier().send(channel_ids, text)
-        except Exception as exc:  # a broken channel must not stop evaluation
-            log.warning("alert notification failed (%s)", type(exc).__name__)

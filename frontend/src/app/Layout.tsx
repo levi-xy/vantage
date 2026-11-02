@@ -1,12 +1,38 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { NavLink, Outlet } from "react-router";
+import { Link, NavLink, Outlet } from "react-router";
 import type { Role } from "../api";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { buttonSecondary } from "../components/styles";
-import { useLiveUpdates } from "./live";
+import { ALERTS_KEY, useLiveUpdates } from "./live";
 import type { LiveState } from "./live";
-import { useSession, useUser } from "./session";
+import { useApiClient, useSession, useUser } from "./session";
+
+const DELIVERY_POLL_MS = 60_000;
+
+/** Shown to every logged-in user while alert messages wait 15+ minutes or recently failed. */
+function DeliveryBanner() {
+  const api = useApiClient();
+  const status = useQuery({
+    queryKey: [...ALERTS_KEY, "delivery-status"],
+    queryFn: () => api.alertDeliveryStatus(),
+    refetchInterval: DELIVERY_POLL_MS,
+  });
+  const stuck = status.data?.stuck ?? 0;
+  if (!(stuck > 0)) return null;
+  return (
+    <div
+      role="alert"
+      className="border-b border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
+    >
+      {stuck === 1 ? "1 alert notification has" : `${stuck} alert notifications have`} failed or
+      waited more than 15 minutes.{" "}
+      <Link to="/alerts" className="font-medium underline">
+        See Alerts
+      </Link>
+    </div>
+  );
+}
 
 interface NavItem {
   to: string;
@@ -121,6 +147,7 @@ export function Layout() {
           </div>
         </div>
       </header>
+      <DeliveryBanner />
 
       <div className="md:flex">
         <nav

@@ -22,7 +22,6 @@ message, an audit entry or an API response:
   which path is requested.
 """
 
-import asyncio
 import logging
 import re
 from collections.abc import Callable, Sequence
@@ -30,10 +29,8 @@ from typing import Annotated
 
 import httpx
 from pydantic import BaseModel, ConfigDict, SecretStr, StringConstraints, field_validator
-from sqlalchemy import select
-from sqlalchemy.orm import Session, sessionmaker
 
-from app.core.crypto import DecryptionError, SecretBox, row_context
+from app.core.crypto import SecretBox, row_context
 from app.core.net_guard import NetGuard, NetGuardError, NetPolicy, guarded_http_client
 from app.models import Channel, ChannelType
 
@@ -79,7 +76,26 @@ CHANNEL_SCHEMAS: dict[ChannelType, type[BaseModel]] = {ChannelType.TELEGRAM: Tel
 
 
 class SendError(Exception):
-    """A message wasn't delivered. The message holds no secret."""
+    """A message wasn't delivered. The message holds no secret.
+
+    ``kind`` is a fixed code for the delivery outbox (``timeout``, ``network``,
+    ``rate_limited``, ``http_4xx``, ``http_5xx``, ``unauthorized``, ``forbidden``,
+    ``chat_not_found``, ``bad_response``); ``permanent`` means retrying can't help;
+    ``retry_after`` is Telegram's requested wait in seconds on a 429.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        kind: str = "network",
+        permanent: bool = False,
+        retry_after: float | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.permanent = permanent
+        self.retry_after = retry_after
 
 
 # --- the token never reaches a log line ------------------------------------------------
@@ -159,14 +175,46 @@ def cap_text(text: str) -> str:
     return "".join(out) + _ELLIPSIS
 
 
-def _description(response: httpx.Response) -> str:
+def _answer(response: httpx.Response) -> dict[str, object]:
     try:
         data = response.json()
     except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _description(data: dict[str, object]) -> str:
+    text = data.get("description")
+    if not isinstance(text, str):
         return ""
-    if not isinstance(data, dict) or not isinstance(data.get("description"), str):
-        return ""
-    return " ".join(data["description"].split())[:_MAX_DESCRIPTION]
+    return " ".join(text.split())[:_MAX_DESCRIPTION]
+
+
+def _retry_after(data: dict[str, object]) -> float | None:
+    params = data.get("parameters")
+    value = params.get("retry_after") if isinstance(params, dict) else None
+    if isinstance(value, int | float) and not isinstance(value, bool) and value >= 0:
+        return float(value)
+    return None
+
+
+# Telegram answers that retrying cannot fix: 400 (bad request, e.g. chat not found), 401
+# (bad token), 403 (bot blocked or removed from the chat), and 404, which is how Telegram
+# answers a malformed or revoked bot token (the bot URL does not exist): "unauthorized".
+_PERMANENT_STATUS = {400: "http_4xx", 401: "unauthorized", 403: "forbidden", 404: "unauthorized"}
+
+
+def _http_error(status: int, data: dict[str, object]) -> tuple[str, bool]:
+    """(error kind, permanent) for a non-200 answer."""
+    if status == 429:
+        return "rate_limited", False
+    if status in _PERMANENT_STATUS:
+        if "chat not found" in _description(data).lower():
+            return "chat_not_found", True
+        return _PERMANENT_STATUS[status], True
+    if status >= 500:
+        return "http_5xx", False
+    return "http_4xx", False
 
 
 async def send_telegram(client: httpx.AsyncClient, config: TelegramConfig, text: str) -> None:
@@ -184,21 +232,24 @@ async def send_telegram(client: httpx.AsyncClient, config: TelegramConfig, text:
     except NetGuardError as exc:  # names the host and the reason, never the path
         raise SendError(scrub(f"refused by the network guard: {exc}", [token])) from None
     except httpx.TimeoutException:
-        raise SendError("Telegram API timed out") from None
+        raise SendError("Telegram API timed out", kind="timeout") from None
     except httpx.HTTPError as exc:
         # Never str(exc): httpx exceptions can carry the request URL, token included.
         raise SendError(f"Telegram API unreachable ({type(exc).__name__})") from None
+    data = _answer(response)
     if response.status_code == 200:
-        try:
-            ok = response.json().get("ok") is True
-        except (ValueError, AttributeError):
-            ok = False
-        if ok:
+        if data.get("ok") is True:
             return
-        raise SendError("Telegram API gave an unexpected answer")
-    detail = _description(response)
+        raise SendError("Telegram API gave an unexpected answer", kind="bad_response")
+    detail = _description(data)
     message = f"Telegram API answered HTTP {response.status_code}"
-    raise SendError(scrub(f"{message}: {detail}" if detail else message, [token]))
+    kind, permanent = _http_error(response.status_code, data)
+    raise SendError(
+        scrub(f"{message}: {detail}" if detail else message, [token]),
+        kind=kind,
+        permanent=permanent,
+        retry_after=_retry_after(data) if kind == "rate_limited" else None,
+    )
 
 
 # --- stored channels -------------------------------------------------------------------
@@ -234,59 +285,3 @@ async def deliver(client: httpx.AsyncClient, config: BaseModel, text: str) -> No
         await send_telegram(client, config, text)
         return
     raise SendError("unsupported channel type")  # pragma: no cover - one type so far
-
-
-class ChannelNotifier:
-    """Sends alert text to channels. Satisfies the alerts ``Notifier`` protocol.
-
-    Every channel has its own try: one failing channel doesn't stop the others, and
-    :meth:`send` never raises (failures are logged, without secrets).
-    """
-
-    def __init__(
-        self,
-        session_factory: sessionmaker[Session],
-        secret_box: SecretBox,
-        client_factory: ClientFactory = default_client_factory,
-    ) -> None:
-        self._session_factory = session_factory
-        self._box = secret_box
-        self._client_factory = client_factory
-
-    def _load(self, channel_ids: list[int]) -> list[tuple[int, BaseModel]]:
-        # TODO(maintainer): channels have no `enabled` column (Contract 2), so every
-        # listed channel is sent to; rules have their own `enabled` flag.
-        found: list[tuple[int, BaseModel]] = []
-        with self._session_factory() as db:
-            rows = db.scalars(select(Channel).where(Channel.id.in_(set(channel_ids))))
-            for row in rows:
-                try:
-                    found.append((row.id, load_config(self._box, row)))
-                except (ValueError, DecryptionError, KeyError) as exc:
-                    log.warning("alert channel %s skipped: %s", row.id, type(exc).__name__)
-        return found
-
-    async def _send_one(
-        self, client: httpx.AsyncClient, channel_id: int, config: BaseModel, text: str
-    ) -> None:
-        secrets = [v.get_secret_value() for v in vars(config).values() if isinstance(v, SecretStr)]
-        try:
-            await deliver(client, config, text)
-        except SendError as exc:
-            log.warning("alert to channel %s failed: %s", channel_id, scrub(str(exc), secrets))
-        except Exception as exc:
-            log.warning("alert to channel %s failed (%s)", channel_id, type(exc).__name__)
-
-    async def send(self, channel_ids: list[int], text: str) -> None:
-        if not channel_ids:
-            return
-        try:
-            targets = self._load(channel_ids)
-            if not targets:
-                return
-            async with self._client_factory() as client:
-                await asyncio.gather(
-                    *(self._send_one(client, cid, config, text) for cid, config in targets)
-                )
-        except Exception as exc:
-            log.warning("sending an alert failed (%s)", type(exc).__name__)

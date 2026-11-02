@@ -1,4 +1,4 @@
-"""Alert channels (M7.2): CRUD, the Telegram sender, the notifier.
+"""Alert channels (M7.2): CRUD, the Telegram sender and its error kinds (P0-5).
 
 Security assertions: the bot token never appears in a response body, a log line, an
 exception or the audit log; sending goes through the real SSRF guard to the declared
@@ -25,11 +25,10 @@ from app.api.channels import get_client_factory
 from app.api.deps import CSRF_HEADER
 from app.core import net_guard
 from app.core.crypto import SecretBox, row_context
-from app.core.db import make_session_factory
 from app.core.net_guard import NetGuard, NetPolicy
 from app.models import AuditLog, Channel, Role
 from tests.conftest import TEST_MASTER_KEY
-from tests.integrations.netfake import DNS, FakeNetwork, FakeRequest, fake_resolver, http_response
+from tests.integrations.netfake import DNS, FakeNetwork, fake_resolver, http_response
 from tests.test_auth import add_user, do_setup, login, make_client
 
 API = "/api/v1"
@@ -286,43 +285,34 @@ def test_text_is_capped_at_the_telegram_limit() -> None:
     assert len(wide.encode("utf-16-le")) // 2 <= ch.MAX_TEXT_LENGTH
 
 
-# --- the notifier ------------------------------------------------------------------------
+# --- error kinds for the delivery outbox -------------------------------------------------
 
 
-async def test_notifier_sends_to_each_channel_and_never_raises(
-    admin: TestClient, engine: Engine, network: FakeNetwork, caplog: pytest.LogCaptureFixture
+@pytest.mark.parametrize(
+    ("answer", "kind", "permanent", "retry_after"),
+    [
+        (telegram(429, {"ok": False, "parameters": {"retry_after": 7}}), "rate_limited", False, 7),
+        (telegram(401, {"ok": False, "description": f"x {TOKEN}"}), "unauthorized", True, None),
+        (
+            telegram(400, {"ok": False, "description": "chat not found"}),
+            "chat_not_found",
+            True,
+            None,
+        ),
+        (telegram(403, {"ok": False, "description": "bot was blocked"}), "forbidden", True, None),
+        (telegram(502, {"ok": False}), "http_5xx", False, None),
+        (telegram(409, {"ok": False}), "http_4xx", False, None),
+        (telegram(200, {"ok": False}), "bad_response", False, None),
+    ],
+)
+async def test_send_errors_carry_a_fixed_kind(
+    network: FakeNetwork, answer: bytes, kind: str, permanent: bool, retry_after: float | None
 ) -> None:
-    caplog.set_level(logging.DEBUG)
-    good = create(admin)["id"]
-    bad = create(admin, chat_id="-1009999999999")["id"]
-
-    def answer(request: FakeRequest) -> bytes:
-        if json.loads(request.body)["chat_id"] == CHAT:
-            return telegram()
-        return telegram(400, {"ok": False, "description": "Bad Request: chat not found"})
-
     network.serve(ADDRESS, 443, answer)
-    notifier = ch.ChannelNotifier(
-        make_session_factory(engine), SecretBox(TEST_MASTER_KEY), factory_for(network)
-    )
-    await notifier.send([bad, good, 4242], "disk > 85% on nas-1")
-    chats = sorted(json.loads(r.body)["chat_id"] for r in network.requests)
-    assert chats == sorted([CHAT, "-1009999999999"])
-    assert f"alert to channel {bad} failed: Telegram API answered HTTP 400" in caplog.text
-    assert_no_secrets(caplog.text)
-
-    def broken() -> httpx.AsyncClient:
-        raise RuntimeError(f"boom {TOKEN}")
-
-    await ch.ChannelNotifier(make_session_factory(engine), SecretBox(TEST_MASTER_KEY), broken).send(
-        [good], "x"
-    )
-    assert_no_secrets(caplog.text)
-
-
-def test_alerts_send_through_the_channel_notifier(engine: Engine, db_url: str) -> None:
-    """The alert evaluator's notifier is the real channel sender, not the no-op."""
-    from app.alerts.channels import ChannelNotifier
-
-    with make_client(db_url) as c:
-        assert isinstance(c.app.state.notifier, ChannelNotifier)  # type: ignore[attr-defined]
+    config = ch.TelegramConfig(chat_id=CHAT, bot_token=TOKEN)  # type: ignore[arg-type]
+    async with factory_for(network)() as client:
+        with pytest.raises(ch.SendError) as info:
+            await ch.send_telegram(client, config, "hello")
+    got = (info.value.kind, info.value.permanent, info.value.retry_after)
+    assert got == (kind, permanent, retry_after)
+    assert_no_secrets(str(info.value))

@@ -12,7 +12,12 @@ expression (ignoring whitespace) closes every open event (``rule_changed``); a n
 closes the events outside it (``rule_changed``); disabling closes all (``rule_disabled``);
 deleting is a soft delete that closes all (``rule_deleted``). Name, severity, ``for`` and
 channels keep them. No rule operation deletes an event row. When events were closed, one
-message per rule goes to its channels after the commit, best effort.
+message per rule and channel is queued in the ``alert_notifications`` outbox in that same
+transaction (P0-5); live pushes go out after the commit.
+
+Events carry their ``deliveries``: one entry per queued message about the event (P0-5,
+maintainer-approved 2026-11-01). ``GET /alerts/delivery-status`` tells any logged-in user
+how many messages have gone undelivered for more than 15 minutes (the UI's banner).
 """
 
 import logging
@@ -25,6 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.alerts.delivery import enqueue, stuck_count
 from app.alerts.evaluator import clean, close_events, event_message, normalize_expr
 from app.alerts.labels import stored_labels
 from app.alerts.templates import TEMPLATES, RuleTemplate
@@ -33,7 +39,17 @@ from app.api.query import PrometheusDep
 from app.collectors.hub import EventHub
 from app.core import audit
 from app.core.db import utcnow
-from app.models import AlertEvent, AlertRule, AlertState, Channel, EndReason, Instance
+from app.models import (
+    AlertEvent,
+    AlertNotification,
+    AlertRule,
+    AlertState,
+    Channel,
+    EndReason,
+    Instance,
+    NotificationKind,
+    NotificationStatus,
+)
 from app.query.proxy import MAX_QUERY_LENGTH, QueryError, QueryRequest
 
 log = logging.getLogger(__name__)
@@ -81,6 +97,28 @@ class RuleOut(BaseModel):
     enabled: bool
 
 
+class DeliveryOut(BaseModel):
+    """One message about an event to one channel. Never the text sent or any channel
+    setting: ids, statuses, counts and a fixed error code only."""
+
+    # None once the channel is deleted.
+    channel_id: int | None
+    channel_name: str | None
+    kind: NotificationKind
+    # "folded" with finished_at null: waiting in an overflow summary that is not sent yet.
+    status: NotificationStatus
+    attempts: int
+    error_kind: str | None
+    created_at: datetime
+    finished_at: datetime | None
+
+
+class DeliveryStatusOut(BaseModel):
+    # Messages unfinished for more than 15 minutes, plus messages that failed within the
+    # last 24 hours (counted at once).
+    stuck: int
+
+
 class EventOut(BaseModel):
     id: int
     # None once the rule is deleted.
@@ -96,6 +134,7 @@ class EventOut(BaseModel):
     ended_at: datetime | None
     end_reason: EndReason | None
     summary: str
+    deliveries: list[DeliveryOut] = []
 
 
 def _out(rule: AlertRule) -> RuleOut:
@@ -111,7 +150,9 @@ def _out(rule: AlertRule) -> RuleOut:
     )
 
 
-def _event_out(event: AlertEvent, rule_gone: bool) -> EventOut:
+def _event_out(
+    event: AlertEvent, rule_gone: bool, deliveries: list[DeliveryOut] | None = None
+) -> EventOut:
     return EventOut(
         id=event.id,
         rule_id=None if rule_gone else event.rule_id,
@@ -126,7 +167,36 @@ def _event_out(event: AlertEvent, rule_gone: bool) -> EventOut:
         ended_at=event.ended_at,
         end_reason=event.end_reason,
         summary=event.summary,
+        deliveries=deliveries or [],
     )
+
+
+def _deliveries(db: Session, event_ids: list[int]) -> dict[int, list[DeliveryOut]]:
+    out: dict[int, list[DeliveryOut]] = {}
+    if not event_ids:
+        return out
+    rows = db.execute(
+        select(AlertNotification, Channel.name)
+        .outerjoin(Channel, Channel.id == AlertNotification.channel_id)
+        .where(AlertNotification.event_id.in_(event_ids))
+        .order_by(AlertNotification.id)
+    )
+    for n, channel_name in rows:
+        if n.event_id is None:  # pragma: no cover - filtered above
+            continue
+        out.setdefault(n.event_id, []).append(
+            DeliveryOut(
+                channel_id=n.channel_id,
+                channel_name=channel_name,
+                kind=n.kind,
+                status=n.status,
+                attempts=n.attempts,
+                error_kind=n.error_kind,
+                created_at=n.created_at,
+                finished_at=n.finished_at,
+            )
+        )
+    return out
 
 
 def _snapshot(rule: AlertRule) -> dict[str, object]:
@@ -194,23 +264,27 @@ _CLOSED_TEXT = {
 }
 
 
-async def _after_close(
-    request: Request, rule: AlertRule, reason: EndReason, closed: list[AlertEvent]
+def _queue_closed(
+    db: Session, rule: AlertRule, reason: EndReason, closed: list[AlertEvent]
 ) -> None:
-    """After the commit: live pushes, then one best-effort message for the rule."""
+    """Before the commit: one message per channel saying how many events the edit closed."""
     if not closed:
         return
+    n = len(closed)
+    text = _CLOSED_TEXT[reason].format(n=n, alerts="alert" if n == 1 else "alerts")
+    enqueue(
+        db,
+        channel_ids=list(rule.channel_ids),
+        kind=NotificationKind.RULE_CHANGE,
+        text=f"{clean(rule.name, 80)}: {text}",
+    )
+
+
+def _publish_closed(request: Request, closed: list[AlertEvent]) -> None:
+    """After the commit: the live pushes."""
     hub: EventHub = request.app.state.event_hub
     for event in closed:
         hub.publish(event_message(event))
-    n = len(closed)
-    text = _CLOSED_TEXT[reason].format(n=n, alerts="alert" if n == 1 else "alerts")
-    try:
-        await request.app.state.notifier.send(
-            list(rule.channel_ids), f"{clean(rule.name, 80)}: {text}"
-        )
-    except Exception as exc:  # the edit is committed; a broken channel can't undo it
-        log.warning("rule change notification failed (%s)", type(exc).__name__)
 
 
 @router.get("/alerts/rules")
@@ -275,6 +349,7 @@ async def update_rule(
         rule.revision += 1
         if closing is not None:
             closed = close_events(db, closing[1], closing[0], utcnow())
+            _queue_closed(db, rule, closing[0], closed)
         audit.record(
             db,
             actor_type=audit.ActorType.USER,
@@ -285,8 +360,7 @@ async def update_rule(
             changes=changes,
         )
     db.commit()
-    if closing is not None:
-        await _after_close(request, rule, closing[0], closed)
+    _publish_closed(request, closed)
     return _out(rule)
 
 
@@ -298,6 +372,7 @@ async def delete_rule(rule_id: int, auth: AdminDep, db: DbDep, request: Request)
     rule.deleted_at = now
     rule.revision += 1
     closed = close_events(db, _firing(db, rule.id), EndReason.RULE_DELETED, now)
+    _queue_closed(db, rule, EndReason.RULE_DELETED, closed)
     audit.record(
         db,
         actor_type=audit.ActorType.USER,
@@ -308,7 +383,7 @@ async def delete_rule(rule_id: int, auth: AdminDep, db: DbDep, request: Request)
         changes={"name": rule.name},
     )
     db.commit()
-    await _after_close(request, rule, EndReason.RULE_DELETED, closed)
+    _publish_closed(request, closed)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -331,10 +406,18 @@ def list_events(
         stmt = stmt.where(AlertEvent.id < before_id)
     if state is not None:
         stmt = stmt.where(AlertEvent.state == state)
+    rows = list(db.execute(stmt))
+    deliveries = _deliveries(db, [e.id for e, _, _ in rows])
     return [
-        _event_out(e, rule_id is None or deleted_at is not None)
-        for e, deleted_at, rule_id in db.execute(stmt)
+        _event_out(e, rule_id is None or deleted_at is not None, deliveries.get(e.id))
+        for e, deleted_at, rule_id in rows
     ]
+
+
+@router.get("/alerts/delivery-status")
+def delivery_status(_auth: AuthDep, db: DbDep) -> DeliveryStatusOut:
+    """For the banner: how many alert messages are stuck (a count only)."""
+    return DeliveryStatusOut(stuck=stuck_count(db))
 
 
 @router.post("/alerts/events/{event_id}/close")
@@ -359,7 +442,8 @@ def close_event(event_id: int, auth: AdminDep, db: DbDep, request: Request) -> E
     hub: EventHub = request.app.state.event_hub
     hub.publish(event_message(event))
     rule = db.get(AlertRule, event.rule_id) if event.rule_id is not None else None
-    return _event_out(event, rule is None or rule.deleted_at is not None)
+    gone = rule is None or rule.deleted_at is not None
+    return _event_out(event, gone, _deliveries(db, [event.id]).get(event.id))
 
 
 @router.get("/alerts/templates")
