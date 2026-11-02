@@ -92,14 +92,19 @@ function inSummary(d: AlertDelivery): boolean {
   return d.status === "folded" && d.finished_at === null;
 }
 
+/** "no data", "rule change": the kind in plain words. */
+function kindText(d: AlertDelivery): string {
+  return d.kind.replace(/_/g, " ");
+}
+
 function deliveryText(d: AlertDelivery): string {
   const channel =
     d.channel_name ?? (d.channel_id !== null ? `channel ${d.channel_id}` : "deleted channel");
-  if (inSummary(d)) return `${d.kind} to ${channel}: queued in summary`;
+  if (inSummary(d)) return `${kindText(d)} to ${channel}: queued in summary`;
   const tries = d.attempts === 1 ? "1 attempt" : `${d.attempts} attempts`;
   const error =
     d.error_kind && d.status !== "delivered" ? `, ${d.error_kind.replace(/_/g, " ")}` : "";
-  return `${d.kind} to ${channel}: ${DELIVERY_LABELS[d.status] ?? d.status} (${tries}${error})`;
+  return `${kindText(d)} to ${channel}: ${DELIVERY_LABELS[d.status] ?? d.status} (${tries}${error})`;
 }
 
 function deliveryStyle(d: AlertDelivery): string {

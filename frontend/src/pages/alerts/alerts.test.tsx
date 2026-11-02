@@ -255,6 +255,18 @@ describe("alerts page: events and rules", () => {
       state: "no_data",
       no_data_reason: "source_down",
       state_since: "2026-10-30T10:05:00Z",
+      deliveries: [
+        {
+          channel_id: 1,
+          channel_name: "ops",
+          kind: "no_data",
+          status: "delivered",
+          attempts: 1,
+          error_kind: null,
+          created_at: "2026-10-30T10:10:00Z",
+          finished_at: "2026-10-30T10:10:01Z",
+        },
+      ],
     };
     const backend = adminBackend({
       "GET /alerts/events": () => json([noData]),
@@ -264,6 +276,7 @@ describe("alerts page: events and rules", () => {
     const open = await screen.findByRole("list", { name: "Open alerts" });
     expect(within(open).getByText("No data: device not answering")).toBeVisible();
     expect(within(open).getByText(/no data since/)).toBeVisible();
+    expect(within(open).getByText("no data to ops: delivered (1 attempt)")).toBeVisible();
     fireEvent.click(within(open).getByRole("button", { name: "Close alert 7" }));
     fireEvent.click(within(open).getByRole("button", { name: "Confirm closing alert 7" }));
     await waitFor(() =>

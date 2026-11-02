@@ -240,8 +240,18 @@ def test_0008_no_data_state_and_one_open_event_per_series(db_url: str) -> None:
             conn.execute(insert, {"id": 2, "state": "firing", "at": STAMP})
         with pytest.raises(IntegrityError), eng.begin() as conn:
             conn.execute(insert, {"id": 3, "state": "bogus", "at": STAMP})
+        notification = text(
+            "INSERT INTO alert_notifications (event_id, kind, text, status, attempts, "
+            "next_attempt_at, created_at) VALUES (1, :kind, 'x', 'pending', 0, :at, :at)"
+        )
+        with eng.begin() as conn:
+            conn.execute(notification, {"kind": "no_data", "at": STAMP})
+        with pytest.raises(IntegrityError), eng.begin() as conn:
+            conn.execute(notification, {"kind": "bogus", "at": STAMP})
         command.downgrade(cfg, "0007")
         with eng.connect() as conn:
             assert conn.execute(text("SELECT state FROM alert_events")).scalar() == "firing"
+            kind = conn.execute(text("SELECT kind FROM alert_notifications")).scalar()
+            assert kind == "firing"
     finally:
         eng.dispose()

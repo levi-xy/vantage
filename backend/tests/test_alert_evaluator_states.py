@@ -12,7 +12,14 @@ from app.alerts.evaluator import PROBE_QUERY, SCRAPED_QUERY, AlertEvaluator
 from app.alerts.templates import TEMPLATES
 from app.collectors.hub import EventHub
 from app.core.db import make_session_factory
-from app.models import AlertEvent, AlertRule, AlertState, EndReason
+from app.models import (
+    AlertEvent,
+    AlertNotification,
+    AlertRule,
+    AlertState,
+    EndReason,
+    NotificationKind,
+)
 from tests import test_alerts
 from tests.test_alerts import (
     API,
@@ -85,6 +92,11 @@ class World:
     def texts(self) -> list[str]:
         return [t for _, t in self.rec.sent]
 
+    @property
+    def kinds(self) -> list[NotificationKind]:
+        with make_session_factory(self.engine)() as db:
+            return list(db.scalars(select(AlertNotification.kind).order_by(AlertNotification.id)))
+
     async def fire(self) -> None:
         self.value(90)
         await self.tick()
@@ -108,6 +120,7 @@ async def test_device_down_while_firing_is_no_data_not_resolved(
     for _ in range(10):
         await w.tick(30, polled=False)
     assert w.texts[1:] == ["NO DATA: Gateway (critical): fw (device not answering)"]
+    assert w.kinds[1:] == [NotificationKind.NO_DATA]
     assert w.event().ended_at is None
 
     # Replugged: the value is back and fine; two polls later it resolves.
@@ -239,6 +252,8 @@ async def test_no_data_for_a_day_sends_one_reminder(
     w.value(95)
     await w.tick(60)
     assert w.texts[-1] == "DATA BACK, still firing: Gateway (critical): fw"
+    no_data = [NotificationKind.NO_DATA, NotificationKind.NO_DATA]  # message, reminder
+    assert w.kinds == [NotificationKind.FIRING, *no_data, NotificationKind.FIRING]
     assert w.event().state == AlertState.FIRING
 
 

@@ -639,9 +639,11 @@ class AlertEvaluator:
                 enqueue(
                     db,
                     channel_ids=list(rule.channel_ids),
-                    # TODO(maintainer): NO DATA, "data back" and the reminder reuse the
-                    # ``firing`` kind; a ``no_data`` kind would be a Contract 2 change.
-                    kind=NotificationKind.FIRING,
+                    kind=(
+                        NotificationKind.FIRING
+                        if notice == sm.Notice.DATA_BACK
+                        else NotificationKind.NO_DATA
+                    ),
                     text=self._notice_text(notice, event, after),
                     event_id=event.id,
                     now=now,

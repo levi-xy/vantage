@@ -12,6 +12,8 @@ class NotificationKind(StrEnum):
     FIRING = "firing"
     RESOLVED = "resolved"
     RULE_CHANGE = "rule_change"
+    # The NO DATA message and its 24-hour reminder (P0-3b, maintainer-approved 2026-11-02).
+    NO_DATA = "no_data"
     # Counts the rows a channel's overflow stored as folded.
     SUMMARY = "summary"
 

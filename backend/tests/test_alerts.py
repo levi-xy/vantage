@@ -214,12 +214,12 @@ def add_channel(db: Session, channel_id: int = 7) -> None:
 
 
 class Recorder:
-    """What was queued in the alert_notifications outbox, in order (P0-5). Only FIRING and
-    RESOLVED messages unless ``rule_changes``."""
+    """What was queued in the alert_notifications outbox, in order (P0-5). Only FIRING,
+    RESOLVED and NO DATA messages unless ``rule_changes``."""
 
     def __init__(self, rule_changes: bool = False) -> None:
         self.engine: Engine | None = None
-        self.kinds = [NotificationKind.FIRING, NotificationKind.RESOLVED]
+        self.kinds = [NotificationKind.FIRING, NotificationKind.RESOLVED, NotificationKind.NO_DATA]
         if rule_changes:
             self.kinds.append(NotificationKind.RULE_CHANGE)
 

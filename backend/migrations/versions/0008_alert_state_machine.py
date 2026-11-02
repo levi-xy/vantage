@@ -8,7 +8,8 @@ Additive. ``alert_events.state`` may now be ``no_data`` (open, but no fresh valu
 whether the condition still holds). New nullable columns: ``no_data_reason`` (free text
 without a CHECK, so later reasons need no migration), ``state_since`` (when the event
 entered its current state; existing open events get their ``started_at``) and
-``reminder_sent_at``. The partial unique index now allows one open event per
+``reminder_sent_at``. ``alert_notifications.kind`` may now be ``no_data`` (the NO DATA
+message and its reminder). The partial unique index now allows one open event per
 (rule_id, fingerprint) across ``firing`` and ``no_data``.
 
 Older code doesn't know ``no_data``: it treats such rows as neither firing nor resolved,
@@ -30,7 +31,11 @@ _OPEN_INDEX = "ux_alert_events_open_series"
 _STATE_CHECK = "ck_alert_events_alert_state"
 _OPEN_NEW = sa.text("state IN ('firing', 'no_data')")
 _OPEN_OLD = sa.text("state = 'firing'")
+_KIND_CHECK = "ck_alert_notifications_alert_notification_kind"
+_KINDS_OLD = "'firing', 'resolved', 'rule_change', 'summary'"
+_KINDS_NEW = _KINDS_OLD + ", 'no_data'"
 
+_notifications = sa.table("alert_notifications", sa.column("kind", sa.String()))
 _events = sa.table(
     "alert_events",
     sa.column("state", sa.String()),
@@ -59,9 +64,19 @@ def upgrade() -> None:
     op.execute(
         _events.update().where(_events.c.state == "firing").values(state_since=_events.c.started_at)
     )
+    with op.batch_alter_table("alert_notifications") as batch:
+        batch.drop_constraint(op.f(_KIND_CHECK), type_="check")
+        batch.create_check_constraint(op.f(_KIND_CHECK), sa.text(f"kind IN ({_KINDS_NEW})"))
 
 
 def downgrade() -> None:
+    # The old schema has no no_data kind: those messages become firing ones.
+    op.execute(
+        _notifications.update().where(_notifications.c.kind == "no_data").values(kind="firing")
+    )
+    with op.batch_alter_table("alert_notifications") as batch:
+        batch.drop_constraint(op.f(_KIND_CHECK), type_="check")
+        batch.create_check_constraint(op.f(_KIND_CHECK), sa.text(f"kind IN ({_KINDS_OLD})"))
     op.execute(_events.update().where(_events.c.state == "no_data").values(state="firing"))
     with op.batch_alter_table("alert_events") as batch:
         batch.drop_index(_OPEN_INDEX)

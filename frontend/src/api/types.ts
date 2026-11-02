@@ -97,7 +97,7 @@ export interface AlertEvent {
   deliveries: AlertDelivery[];
 }
 
-export type DeliveryKind = "firing" | "resolved" | "rule_change" | "summary";
+export type DeliveryKind = "firing" | "resolved" | "rule_change" | "summary" | "no_data";
 
 export type DeliveryStatus =
   "pending" | "sending" | "delivered" | "failed" | "folded" | "cancelled";
