@@ -210,7 +210,7 @@ async def test_probe_failure_changes_nothing_and_pauses_timers(
     await w.tick()
     await w.tick(60)  # 60 s pending
     prom.failing = {PROBE_QUERY}
-    for _ in range(8):
+    for _ in range(3):  # 90 s: under the 2 minutes of a system alert (P0-4)
         await w.tick(30)
     prom.failing = set()
     await w.tick(30)  # resumes: the outage doesn't count
@@ -218,10 +218,11 @@ async def test_probe_failure_changes_nothing_and_pauses_timers(
     await w.tick(60)
     assert w.event().state == AlertState.FIRING
 
-    # While firing: a probe failure keeps the alert as it is, even with stale sources.
+    # While firing: a short probe failure keeps the alert as it is, even with stale
+    # sources (2 minutes and more: test_selfcheck).
     w.value(None)
     prom.failing = {PROBE_QUERY}
-    for _ in range(20):
+    for _ in range(3):
         await w.tick(30, polled=False)
     assert w.event().state == AlertState.FIRING
 

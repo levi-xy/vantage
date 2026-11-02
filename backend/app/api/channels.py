@@ -5,6 +5,10 @@ the ``SecretStr`` fields (the Telegram bot token) are encrypted into ``channels.
 and never appear in a response, a log line, an error message or an audit entry.
 Responses say only whether each secret is set (``secrets_set``). On PATCH, ``config`` is
 merged into the stored one: an omitted secret keeps its value.
+
+``system_alerts`` (P0-4, maintainer-approved 2026-11-02; default true): whether the channel
+receives Vantage's own alerts (Prometheus unreachable, metrics not collected, evaluation
+stopped).
 """
 
 import asyncio
@@ -48,6 +52,7 @@ class ChannelCreate(BaseModel):
     name: Name
     # Every config field, secrets included. Validated against the type's schema.
     config: dict[str, Any] = Field(default_factory=dict)
+    system_alerts: bool = True
 
 
 class ChannelUpdate(BaseModel):
@@ -55,6 +60,7 @@ class ChannelUpdate(BaseModel):
     name: Name | None = None
     # Merged into the stored config: omitted fields, secrets included, stay unchanged.
     config: dict[str, Any] | None = None
+    system_alerts: bool | None = None
 
 
 class ChannelOut(BaseModel):
@@ -65,6 +71,8 @@ class ChannelOut(BaseModel):
     config: dict[str, Any]
     # For each secret field of the schema: whether a value is stored. Never the value.
     secrets_set: dict[str, bool]
+    # Receives system alerts (P0-4).
+    system_alerts: bool = True
 
 
 class ChannelTestResult(BaseModel):
@@ -122,6 +130,7 @@ def _out(row: Channel, box: SecretBox) -> ChannelOut:
         name=row.name,
         config=ic.public_config(row.config, schema),
         secrets_set={key: key in stored for key in sorted(ic.secret_field_keys(schema))},
+        system_alerts=row.system_alerts,
     )
 
 
@@ -151,7 +160,9 @@ def create_channel(body: ChannelCreate, auth: AdminDep, db: DbDep, box: SecretBo
     channel_type = ChannelType(body.type)
     model = _validate(ch.CHANNEL_SCHEMAS[channel_type], body.config)
     config, secrets = ic.split(model)
-    row = Channel(type=channel_type, name=body.name, config=config)
+    row = Channel(
+        type=channel_type, name=body.name, config=config, system_alerts=body.system_alerts
+    )
     db.add(row)
     db.flush()  # the id is part of the encryption context
     row.secrets = ch.encrypt(box, row.id, secrets)
@@ -164,6 +175,7 @@ def create_channel(body: ChannelCreate, auth: AdminDep, db: DbDep, box: SecretBo
             "type": channel_type.value,
             "name": row.name,
             "config": {**config, **dict.fromkeys(secrets, audit.REDACTED)},
+            "system_alerts": row.system_alerts,
         },
     )
     db.commit()
@@ -182,12 +194,19 @@ def update_channel(
     row = _get_row(db, channel_id)
     schema = ch.CHANNEL_SCHEMAS[row.type]
     sent = body.model_dump(exclude_unset=True)
-    if "name" in sent and sent["name"] is None:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            [{"loc": ["body", "name"], "msg": "may not be null", "type": "value_error"}],
-        )
-    changes = audit.diff({"name": row.name}, {"name": sent.get("name", row.name)})
+    for field in ("name", "system_alerts"):
+        if field in sent and sent[field] is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                [{"loc": ["body", field], "msg": "may not be null", "type": "value_error"}],
+            )
+    changes = audit.diff(
+        {"name": row.name, "system_alerts": row.system_alerts},
+        {
+            "name": sent.get("name", row.name),
+            "system_alerts": sent.get("system_alerts", row.system_alerts),
+        },
+    )
     if body.config is not None:
         merged = {**row.config, **_stored_secrets(box, row), **body.config}
         model = _validate(schema, merged)
@@ -201,6 +220,8 @@ def update_channel(
         row.secrets = ch.encrypt(box, row.id, secrets)
     if "name" in sent:
         row.name = sent["name"]
+    if "system_alerts" in sent:
+        row.system_alerts = sent["system_alerts"]
     _record(db, auth, audit.Action.UPDATE, row, changes)
     db.commit()
     return _out(row, box)

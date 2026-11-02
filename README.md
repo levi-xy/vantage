@@ -106,6 +106,8 @@ cd vantage/deploy
 
 `setup.sh` creates the master key, the Prometheus token, a self-signed HTTPS certificate and `.env` (keeping any that already exist), starts the stack and prints the address. Back up `deploy/secrets/master.key` somewhere off the server: without it, stored device credentials can't be decrypted. The dashboard listens on `https://127.0.0.1:8443` by default; set `VANTAGE_BIND_ADDRESS` in `.env` to reach it from other machines (add any other names you use in `VANTAGE_TLS_NAMES` before the first run), then run `docker compose up -d`.
 
+**Vantage can't tell you when Vantage itself is down.** It sends its own alerts when Prometheus is unreachable, isn't collecting metrics, or alert evaluation stops, but if the backend or its host is down, or the notification dispatcher itself is stuck, no message is sent. Point an external monitor (Uptime Kuma, cron + curl, a hosted dead-man's switch) on another machine at `https://<vantage>/healthz` and alert on anything but 200. See [Self-monitoring](docs/SECURITY.md#self-monitoring-and-healthz).
+
 ### HTTPS certificate
 
 The bundled nginx serves the dashboard over HTTPS (TLS 1.2+) from `deploy/certs/tls.crt` and `deploy/certs/tls.key`; plain HTTP to the same port is redirected. Browsers warn about the generated self-signed certificate until you accept it. To use your own certificate (from your internal CA or a public one):

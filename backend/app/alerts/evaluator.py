@@ -4,7 +4,8 @@ Every ``interval`` seconds the evaluator runs, through the guarded Prometheus cl
 (``app.query.proxy``, same budget as the browser's queries):
 
 1. a probe (``vector(1)``). If it fails, the tick changes no state: open alerts stay as
-   they are, pending timers pause, nothing counts;
+   they are, pending timers pause, nothing counts (after 2 minutes of failures, see
+   "Self-monitoring" below);
 2. two fleet freshness queries: the last successful poll per polled device
    (``vantage_poll_last_success_timestamp_seconds``) and the last ``up == 1`` scrape per
    scraped target;
@@ -44,6 +45,15 @@ if exactly one series has no event yet; with several it is resolved quietly
 (``rule_changed``); with none it stays open (an empty result is no evidence of recovery)
 until a series appears or an admin closes it.
 
+Self-monitoring (P0-4, ``app.alerts.selfcheck``): every tick records the probe's outcome
+and, when it answers, how old Prometheus' newest scrape of Vantage is. Prometheus
+unreachable for 2 minutes opens the system alert "Prometheus unreachable" ("7 open alerts
+and 12 rules can't be checked"); shorter gaps change nothing (pending timers pause). Metrics
+not collected (the newest scrape older than 2 minutes, or none for 2 minutes) opens
+"Metrics not being collected". Each resolves on the first tick that sees the cause gone. A
+rule whose query fails 3 ticks in a row shows the error (the rule API's ``error``); that is
+a configuration problem and sends no message.
+
 Messages carry ids, numbers and a short summary built from the event's stored (filtered,
 cleaned, capped) labels. Prometheus' error text is never logged or stored (the proxy only
 passes on fixed messages).
@@ -67,6 +77,14 @@ from app.alerts import promql
 from app.alerts import state as sm
 from app.alerts.delivery import enqueue
 from app.alerts.labels import INSTANCE_ID_LABEL, INSTANCE_NAME_LABEL, LEGACY_FINGERPRINT, REDACTED
+from app.alerts.selfcheck import (
+    METRICS_QUERY,
+    RESTART_GRACE_SECONDS,
+    SelfMonitor,
+    hhmm,
+    minutes,
+    plural,
+)
 from app.collectors.hub import EventHub, Message
 from app.collectors.store import LAST_SUCCESS
 from app.core.db import utcnow
@@ -77,8 +95,10 @@ from app.models import (
     AlertRule,
     AlertState,
     EndReason,
+    EventSource,
     Instance,
     NotificationKind,
+    SystemKind,
 )
 from app.query.proxy import PrometheusClient, QueryError, QueryRequest, QueryResult, Series
 
@@ -158,6 +178,8 @@ def event_message(event: AlertEvent) -> Message:
         "state_since": event.state_since.isoformat() if event.state_since else None,
         "ended_at": event.ended_at.isoformat() if event.ended_at else None,
         "summary": event.summary,
+        "source": EventSource.RULE.value,
+        "system_kind": None,
     }
 
 
@@ -261,6 +283,7 @@ class AlertEvaluator:
         clock: Callable[[], datetime] = utcnow,
         poll_interval: Callable[[str], float | None] = lambda type_id: None,
         instance_state: Callable[[uuid.UUID], str | None] = lambda instance_id: None,
+        monitor: SelfMonitor | None = None,
     ) -> None:
         self._sessions = session_factory
         self._prometheus = prometheus
@@ -271,6 +294,11 @@ class AlertEvaluator:
         self._poll_interval = poll_interval
         # instance id -> the collector's state ("pending" / "up" / "down"), None if unknown.
         self._instance_state = instance_state
+        self.monitor = monitor or SelfMonitor(
+            session_factory=session_factory, hub=hub, clock=clock, interval=interval
+        )
+        # Query failures in a row per rule: the error shows from the third (P0-4).
+        self._fails: dict[int, int] = {}
         self._pending: dict[tuple[int, str], sm.Pending] = {}
         self._open: dict[tuple[int, str], sm.OpenAlert] = {}
         self._seen: dict[int, _Seen] = {}
@@ -285,6 +313,7 @@ class AlertEvaluator:
 
     def start(self) -> None:
         if self._task is None:
+            self.monitor.evaluator_started(self._clock())
             self._task = asyncio.create_task(self._run(), name="vantage-alert-evaluator")
 
     async def stop(self) -> None:
@@ -293,6 +322,16 @@ class AlertEvaluator:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
             self._task = None
+
+    async def restart(self) -> None:
+        """Cancel the (hung or dead) loop and start a new one (the watchdog)."""
+        task, self._task = self._task, None
+        if task is not None and not task.done():
+            task.cancel()
+            # A task stuck past cancellation is abandoned, not awaited forever.
+            await asyncio.wait({task}, timeout=RESTART_GRACE_SECONDS)
+        self._slots = None  # a cancelled query may still hold a slot
+        self.start()
 
     async def _run(self) -> None:
         while True:
@@ -317,6 +356,17 @@ class AlertEvaluator:
     # --- one tick --------------------------------------------------------------------------
 
     async def tick(self) -> None:
+        """One evaluation. It counts as finished (for the watchdog) when it returns or
+        fails with an exception, never when it is cancelled: a hung tick the watchdog
+        cancels must not look like a working evaluator."""
+        try:
+            await self._tick()
+        except Exception:
+            self.monitor.tick_finished(self._clock())
+            raise
+        self.monitor.tick_finished(self._clock())
+
+    async def _tick(self) -> None:
         with self._sessions() as db:
             rules = list(
                 db.scalars(
@@ -327,6 +377,8 @@ class AlertEvaluator:
             )
             rows = list(db.scalars(select(AlertEvent).where(AlertEvent.state.in_(OPEN_STATES))))
             db.expunge_all()
+        system_open = {e.system_kind for e in rows if e.source == EventSource.SYSTEM}
+        rows = [e for e in rows if e.source != EventSource.SYSTEM]
         active = {r.id for r in rules}
         open_by_rule: dict[int, dict[str, _OpenRow]] = {}
         orphans: list[int] = []
@@ -349,18 +401,32 @@ class AlertEvaluator:
         self._open = {k: v for k, v in self._open.items() if k[1] in open_by_rule.get(k[0], {})}
         self._seen = {k: v for k, v in self._seen.items() if k in active}
         self._errors = {k: v for k, v in self._errors.items() if k in active}
+        self._fails = {k: v for k, v in self._fails.items() if k in active}
 
         now = self._clock()
         if self._started_at is None:
             self._started_at = now
-        if not await self._probe():
+        probe_ok = await self._probe()
+        self.monitor.record_probe(probe_ok, now)
+        if not probe_ok:
             # Prometheus is unreachable: no state changes, pending timers pause.
             obs = sm.Observation(now=now, probe_ok=False)
             for key, pending in list(self._pending.items()):
                 rule = next((r for r in rules if r.id == key[0]), None)
                 new, _ = sm.step_pending(pending, obs, rule.for_seconds if rule else 0)
                 self._set_pending(key, new)
+            if self.monitor.prometheus_down(now):  # 2 minutes and more
+                await self._prometheus_down(rules, open_by_rule, system_open, now)
             return
+
+        # System alerts whose cause is gone with this tick.
+        ending: list[SystemKind] = []
+        if SystemKind.PROMETHEUS_UNREACHABLE in system_open:
+            ending.append(SystemKind.PROMETHEUS_UNREACHABLE)
+        await self._check_metrics(open_by_rule, system_open, now)
+        if self.monitor.metrics_ok() and SystemKind.METRICS_NOT_COLLECTED in system_open:
+            ending.append(SystemKind.METRICS_NOT_COLLECTED)
+
         fleet = await self._fleet()
         for rule in rules:
             self._check_revision(rule)
@@ -373,20 +439,107 @@ class AlertEvaluator:
 
         # Rules run side by side; _query keeps at most MAX_CONCURRENT_QUERIES in flight.
         await asyncio.gather(*(evaluate(rule) for rule in rules))
+        for kind in ending:
+            self._end_system(kind, now)
+
+    # --- system alerts (P0-4) ----------------------------------------------------------------
+
+    async def _prometheus_down(
+        self,
+        rules: list[AlertRule],
+        open_by_rule: dict[int, dict[str, _OpenRow]],
+        system_open: set[str | None],
+        now: datetime,
+    ) -> None:
+        """Prometheus unreachable for 2 minutes: one system alert."""
+        kind = SystemKind.PROMETHEUS_UNREACHABLE
+        if kind in system_open:
+            return
+        alerts = sum(len(by_fp) for by_fp in open_by_rule.values())
+        since = self.monitor.unreachable_since or now
+        detail = (
+            f"since {hhmm(since)}. {plural(alerts, 'open alert')} and "
+            f"{plural(len(rules), 'rule')} can't be checked"
+        )
+        self.monitor.open_alert(kind, detail, since=since)
+
+    async def _check_metrics(
+        self,
+        open_by_rule: dict[int, dict[str, _OpenRow]],
+        system_open: set[str | None],
+        now: datetime,
+    ) -> bool:
+        """Whether Prometheus has stopped collecting Vantage's metrics (2 minutes); opens
+        the system alert then."""
+        try:
+            result = await self._query(METRICS_QUERY)
+        except QueryError:
+            self.monitor.record_metrics(None, now, known=False)
+        else:
+            ages = [v for v in (_value(s) for s in result.series) if v is not None]
+            finite = [v for v in ages if math.isfinite(v)]
+            self.monitor.record_metrics(min(finite) if finite else None, now)
+        down = self.monitor.metrics_down(now)
+        kind = SystemKind.METRICS_NOT_COLLECTED
+        if down and kind not in system_open:
+            alerts = sum(
+                1
+                for by_fp in open_by_rule.values()
+                for row in by_fp.values()
+                if self._polled(row.labels)
+            )
+            since = self.monitor.metrics_bad_since or now
+            detail = (
+                f"Prometheus hasn't collected Vantage's metrics since {hhmm(since)}. "
+                f"{plural(alerts, 'open alert')} on polled devices can't be checked"
+            )
+            self.monitor.open_alert(kind, detail, since=since)
+        return down
+
+    def _end_system(self, kind: SystemKind, now: datetime) -> None:
+        """Resolve a system alert whose cause is gone."""
+        with self._sessions() as db:
+            event = SelfMonitor.open_event(db, kind)
+            if event is None:
+                return
+            since = event.started_at
+        took = minutes((now - since).total_seconds())
+        what = (
+            "Prometheus back"
+            if kind == SystemKind.PROMETHEUS_UNREACHABLE
+            else "Metrics collected again"
+        )
+        self.monitor.resolve_alert(kind, f"{what} after {took}.")
+
+    def _polled(self, labels: dict[str, str]) -> bool:
+        """The series' device is polled by the collector (its metrics reach Prometheus
+        only through Vantage's /metrics)."""
+        instance_id = labels.get(INSTANCE_ID_LABEL)
+        return bool(instance_id) and self._state_of(instance_id or "") is not None
 
     async def _query(self, query: str, max_series: int | None = None) -> QueryResult:
         if self._slots is None:
             self._slots = asyncio.Semaphore(MAX_CONCURRENT_QUERIES)
         async with self._slots:
-            if max_series is None:
-                return await self._prometheus().query(QueryRequest(query=query))
-            return await self._prometheus().query(QueryRequest(query=query), max_series=max_series)
+            request = QueryRequest(query=query)
+            try:
+                if max_series is None:
+                    result = await self._prometheus().query(request)
+                else:
+                    result = await self._prometheus().query(request, max_series=max_series)
+            except QueryError:  # answered or failed, not cancelled: the tick is moving
+                self.monitor.progress(self._clock())
+                raise
+            self.monitor.progress(self._clock())
+            return result
 
     async def _probe(self) -> bool:
         try:
             await self._prometheus().query(QueryRequest(query=PROBE_QUERY))
         except QueryError:
+            self.monitor.progress(self._clock())
             return False
+        self.monitor.progress(self._clock())
         return True
 
     async def _fleet(self) -> _Fleet | None:
@@ -523,7 +676,10 @@ class AlertEvaluator:
         return verdicts, None
 
     async def _evaluate(
-        self, rule: AlertRule, open_rows: dict[str, _OpenRow], fleet: _Fleet | None
+        self,
+        rule: AlertRule,
+        open_rows: dict[str, _OpenRow],
+        fleet: _Fleet | None,
     ) -> None:
         split = promql.split(rule.expr)
         now = self._clock()
@@ -544,7 +700,15 @@ class AlertEvaluator:
         if query_ok and split.mode == "value":
             verdicts, error = await self._witness(rule, split)
             witness_failed = error is not None
-        self.set_rule_error(rule.id, error)  # once per tick: no flicker
+        # A config problem, not an outage: shown from the third failure in a row, and
+        # never sent to a channel.
+        if error is None:
+            self._fails.pop(rule.id, None)
+            self.set_rule_error(rule.id, None)
+        else:
+            self._fails[rule.id] = self._fails.get(rule.id, 0) + 1
+            if self._fails[rule.id] >= sm.QUERY_FAILED_TICKS:
+                self.set_rule_error(rule.id, error)
 
         def observe(fp: str, labels: dict[str, str]) -> sm.Observation:
             witness: sm.Witness = "none"
@@ -628,22 +792,24 @@ class AlertEvaluator:
                 return
         self._open[key] = after
 
-    def _no_data_sent(self, event_id: int, since: datetime) -> bool:
+    def _no_data_sent(self, event_id: int, since: datetime, db: Session | None = None) -> bool:
         """Whether the NO DATA message of this event's current NO DATA episode (since
         ``since``) was already queued, after a restart."""
-        with self._sessions() as db:
-            return (
-                db.scalar(
-                    select(AlertNotification.id)
-                    .where(
-                        AlertNotification.event_id == event_id,
-                        AlertNotification.kind == NotificationKind.NO_DATA,
-                        AlertNotification.created_at >= since,
-                    )
-                    .limit(1)
+        if db is None:
+            with self._sessions() as own:
+                return self._no_data_sent(event_id, since, own)
+        return (
+            db.scalar(
+                select(AlertNotification.id)
+                .where(
+                    AlertNotification.event_id == event_id,
+                    AlertNotification.kind == NotificationKind.NO_DATA,
+                    AlertNotification.created_at >= since,
                 )
-                is not None
+                .limit(1)
             )
+            is not None
+        )
 
     def _store(
         self,

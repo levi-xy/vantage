@@ -659,20 +659,20 @@ async def test_banner_counts_stuck_messages(
 ) -> None:
     cid = create_channel(admin)
     queue(db, clock, [cid], "FIRING: fw")
-    assert admin.get(f"{API}/alerts/delivery-status").json() == {"stuck": 0}
+    assert admin.get(f"{API}/alerts/delivery-status").json()["stuck"] == 0
     row = one(db)
     row.created_at = utcnow() - timedelta(minutes=16)
     db.commit()
-    assert admin.get(f"{API}/alerts/delivery-status").json() == {"stuck": 1}
+    assert admin.get(f"{API}/alerts/delivery-status").json()["stuck"] == 1
     # A failed row counts at once, for 24 h after it failed.
     queue(db, clock, [cid], "FIRING: other")
     failed = rows(db)[1]
     failed.status, failed.finished_at = S.FAILED, utcnow()
     db.commit()
-    assert admin.get(f"{API}/alerts/delivery-status").json() == {"stuck": 2}
+    assert admin.get(f"{API}/alerts/delivery-status").json()["stuck"] == 2
     failed.finished_at = utcnow() - timedelta(hours=25)
     db.commit()
-    assert admin.get(f"{API}/alerts/delivery-status").json() == {"stuck": 1}
+    assert admin.get(f"{API}/alerts/delivery-status").json()["stuck"] == 1
     admin.cookies.clear()
     assert admin.get(f"{API}/alerts/delivery-status").status_code == 401
 

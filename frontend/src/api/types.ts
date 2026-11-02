@@ -68,6 +68,10 @@ export type AlertState = "firing" | "no_data" | "resolved";
 export type AlertNoDataReason =
   "source_stale" | "source_down" | "metric_missing" | "query_failed" | (string & {});
 
+/** Vantage's own alerts (no rule). Later versions may add kinds. */
+export type SystemAlertKind =
+  "prometheus_unreachable" | "metrics_not_collected" | "evaluator_stalled" | (string & {});
+
 export type AlertEndReason =
   "recovered" | "rule_disabled" | "rule_deleted" | "rule_changed" | "closed_by_user";
 
@@ -95,6 +99,9 @@ export interface AlertEvent {
   summary: string;
   /** The messages queued about this event, one per channel and change. */
   deliveries: AlertDelivery[];
+  /** `system`: one of Vantage's own alerts; it has no rule and closes by itself. */
+  source?: "rule" | "system";
+  system_kind?: SystemAlertKind | null;
 }
 
 export type DeliveryKind = "firing" | "resolved" | "rule_change" | "summary" | "no_data";
@@ -119,6 +126,8 @@ export interface AlertDelivery {
 /** `GET /alerts/delivery-status`: messages waiting 15+ minutes or failed in the last 24 h. */
 export interface DeliveryStatusSummary {
   stuck: number;
+  /** Firing system alerts, oldest first. */
+  system_alerts?: { system_kind: SystemAlertKind; since: string }[];
 }
 
 export interface AlertEventQuery {
@@ -359,6 +368,8 @@ export interface Channel {
   config: { chat_id?: string };
   /** Whether each secret is stored (`{bot_token: true}`). Never the value. */
   secrets_set: Record<string, boolean>;
+  /** Receives Vantage's own alerts (Prometheus unreachable, ...). */
+  system_alerts?: boolean;
 }
 
 /** Body of `POST /channels`. */
@@ -366,12 +377,14 @@ export interface ChannelCreate {
   type: "telegram";
   name: string;
   config: { chat_id: string; bot_token: string };
+  system_alerts?: boolean;
 }
 
 /** Body of `PATCH /channels/{id}`. An omitted `bot_token` keeps the stored one. */
 export interface ChannelUpdate {
   name?: string;
   config?: { chat_id?: string; bot_token?: string };
+  system_alerts?: boolean;
 }
 
 /** Result of `POST /channels/{id}/test`. */

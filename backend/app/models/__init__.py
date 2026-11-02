@@ -3,7 +3,15 @@
 Importing this package registers all tables on ``Base.metadata``.
 """
 
-from app.models.alert import OPEN_STATES, AlertEvent, AlertRule, AlertState, EndReason
+from app.models.alert import (
+    OPEN_STATES,
+    AlertEvent,
+    AlertRule,
+    AlertState,
+    EndReason,
+    EventSource,
+    SystemKind,
+)
 from app.models.audit import ActorType, AuditLog
 from app.models.channel import Channel, ChannelType
 from app.models.dashboard import Dashboard
@@ -27,6 +35,7 @@ __all__ = [
     "ChannelType",
     "Dashboard",
     "EndReason",
+    "EventSource",
     "Instance",
     "Link",
     "LoginFailure",
@@ -34,6 +43,7 @@ __all__ = [
     "NotificationStatus",
     "Role",
     "Setting",
+    "SystemKind",
     "User",
     "UserSession",
 ]

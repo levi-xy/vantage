@@ -249,6 +249,25 @@ describe("alerts page: events and rules", () => {
     );
   });
 
+  it("shows a banner while a system alert fires", async () => {
+    const backend = fakeBackend({
+      session: exampleMe("viewer"),
+      routes: {
+        "GET /alerts/delivery-status": () =>
+          json({
+            stuck: 0,
+            system_alerts: [
+              { system_kind: "prometheus_unreachable", since: "2026-10-30T10:00:00Z" },
+            ],
+          }),
+      },
+    });
+    renderApp("/", backend);
+    const banner = await screen.findByText(/Prometheus is unreachable/);
+    expect(banner).toBeVisible();
+    expect(screen.queryByText(/alert notifications have failed/)).toBeNull();
+  });
+
   it("shows a NO DATA alert with its reason in plain words, closable by an admin", async () => {
     const noData = {
       ...FIRING_EVENT,

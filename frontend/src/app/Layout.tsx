@@ -10,7 +10,19 @@ import { useApiClient, useSession, useUser } from "./session";
 
 const DELIVERY_POLL_MS = 60_000;
 
-/** Shown to every logged-in user while alert messages wait 15+ minutes or recently failed. */
+const SYSTEM_ALERT_TEXT: Record<string, string> = {
+  prometheus_unreachable: "Prometheus is unreachable: alert rules can't be checked.",
+  metrics_not_collected:
+    "Prometheus isn't collecting Vantage's metrics: polled devices can't be checked.",
+  evaluator_stalled: "Alert evaluation has stopped.",
+};
+
+function systemAlertText(kind: string): string {
+  return SYSTEM_ALERT_TEXT[kind] ?? `System alert: ${kind.replace(/_/g, " ")}.`;
+}
+
+/** Shown to every logged-in user while a system alert fires (Prometheus unreachable, ...)
+ * or alert messages wait 15+ minutes or recently failed. One poll for both. */
 function DeliveryBanner() {
   const api = useApiClient();
   const status = useQuery({
@@ -19,18 +31,34 @@ function DeliveryBanner() {
     refetchInterval: DELIVERY_POLL_MS,
   });
   const stuck = status.data?.stuck ?? 0;
-  if (!(stuck > 0)) return null;
+  const system = status.data?.system_alerts ?? [];
   return (
-    <div
-      role="alert"
-      className="border-b border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
-    >
-      {stuck === 1 ? "1 alert notification has" : `${stuck} alert notifications have`} failed or
-      waited more than 15 minutes.{" "}
-      <Link to="/alerts" className="font-medium underline">
-        See Alerts
-      </Link>
-    </div>
+    <>
+      {system.map((alert) => (
+        <div
+          key={alert.system_kind}
+          role="alert"
+          className="border-b border-red-300 bg-red-50 px-4 py-2 text-sm text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-100"
+        >
+          {systemAlertText(alert.system_kind)}{" "}
+          <Link to="/alerts" className="font-medium underline">
+            See Alerts
+          </Link>
+        </div>
+      ))}
+      {stuck > 0 && (
+        <div
+          role="alert"
+          className="border-b border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
+        >
+          {stuck === 1 ? "1 alert notification has" : `${stuck} alert notifications have`} failed or
+          waited more than 15 minutes.{" "}
+          <Link to="/alerts" className="font-medium underline">
+            See Alerts
+          </Link>
+        </div>
+      )}
+    </>
   );
 }
 
