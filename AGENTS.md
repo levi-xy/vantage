@@ -32,7 +32,7 @@ Vantage is a self-hosted, read-only, security-first infrastructure dashboard. Us
 | Backend | Python 3.12+, FastAPI, Pydantic v2, SQLAlchemy 2 + Alembic, httpx (async), pysnmp, prometheus_client, APScheduler or an asyncio task loop |
 | Auth/crypto | argon2-cffi, `cryptography` (AES-GCM via Fernet or AESGCM), itsdangerous or signed session cookies |
 | Database | SQLite by default; Postgres supported through SQLAlchemy |
-| Frontend | React 18+, TypeScript (strict), Vite, Tailwind CSS, ECharts, react-grid-layout, TanStack Query, react-jsonschema-form (or equivalent) for dynamic forms |
+| Frontend | React 18+, TypeScript (strict), Vite, Tailwind CSS, small charts as plain inline SVG (no chart library), react-grid-layout, TanStack Query, react-jsonschema-form (or equivalent) for dynamic forms |
 | Metrics | Prometheus (bootstrap config only) |
 | Quality | ruff, mypy (strict for `core/` and `integrations/base.py`), pytest + pytest-asyncio, ESLint, Prettier, Vitest, Playwright for a few end-to-end tests |
 | Security tooling | gitleaks (pre-commit + CI), pip-audit, npm audit, bandit |

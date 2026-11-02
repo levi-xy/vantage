@@ -15,6 +15,7 @@ import {
   portKey,
   portOptions,
   portsFromSettings,
+  isWanPort,
   rateQuery,
   settingsWithPorts,
   SNMP_INFO_QUERY,
@@ -135,6 +136,9 @@ export function ThroughputCard({ instances, settings }: WidgetProps) {
     groups.flatMap((g) => g.ports.map((o) => [portKey(o.port), o.name] as const)),
   );
   const label = ports.map((p) => names.get(portKey(p)) ?? p.iface).join(", ");
+  // In/out as the port counts it. Only for WAN ports is that the network's download/upload.
+  const wan = ports.every((p) => isWanPort(p.iface, names.get(portKey(p))));
+  const [inName, outName] = wan ? ["Download", "Upload"] : ["In", "Out"];
   // A missing counter sums as 0 ("or vector(0)"), so with a device not answering "now" would
   // read 0: it shows a dash instead, and the history is greyed.
   const stale = !live && staleDevices.length > 0;
@@ -147,12 +151,12 @@ export function ThroughputCard({ instances, settings }: WidgetProps) {
   const historyError = rxHistory.error ?? txHistory.error;
   const chart = (
     <AreaChart
-      label="Download and upload over the last 6 hours"
+      label={`${inName} and ${outName.toLowerCase()} over the last 6 hours`}
       format={formatRate}
       tickScale={unit === "bytes" ? 8 : 1}
       series={[
-        { name: "Download", points: firstSeries(rxHistory.data), tone: "in", area: true },
-        { name: "Upload", points: firstSeries(txHistory.data), tone: "out" },
+        { name: inName, points: firstSeries(rxHistory.data), tone: "in", area: true },
+        { name: outName, points: firstSeries(txHistory.data), tone: "out" },
       ]}
     />
   );
@@ -174,7 +178,6 @@ export function ThroughputCard({ instances, settings }: WidgetProps) {
   } else {
     history = chart;
   }
-  // "In"/"out" as the port counts it: for a firewall's WAN port that is download/upload.
   return (
     <section aria-label="Throughput" className="flex h-full min-w-0 flex-col gap-3 p-4">
       <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
@@ -186,8 +189,8 @@ export function ThroughputCard({ instances, settings }: WidgetProps) {
           </div>
         </div>
         <div className="ml-auto flex gap-5">
-          <Current label="Download" tone="in" value={current(live?.inBps, rx)} />
-          <Current label="Upload" tone="out" value={current(live?.outBps, tx)} />
+          <Current label={inName} tone="in" value={current(live?.inBps, rx)} />
+          <Current label={outName} tone="out" value={current(live?.outBps, tx)} />
         </div>
       </div>
       <div className="flex min-h-40 flex-1 flex-col">{history}</div>

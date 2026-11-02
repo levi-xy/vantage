@@ -97,6 +97,14 @@ export function rateQuery(ports: PortRef[], dir: "in" | "out"): string {
   return `8 * (${parts.join(" + ")})`;
 }
 
+/**
+ * A WAN port: named, or mapped in the device settings to, "WAN" (as the pfSense Interfaces
+ * card pins it). Its in/out is the network's download/upload; on other ports, just in/out.
+ */
+export function isWanPort(iface: string, name: string | undefined): boolean {
+  return iface.toLowerCase() === "wan" || name?.toLowerCase() === "wan";
+}
+
 export interface PortOption {
   port: PortRef;
   name: string;

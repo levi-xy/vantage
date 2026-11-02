@@ -8,7 +8,6 @@ import { SnmpPortsCard } from "./SnmpPortsCard";
 
 const client = new ApiClient({ fetch: vi.fn() });
 vi.mock("../../app/session", () => ({ useApiClient: () => client }));
-vi.mock("../metrics/TimeSeriesChart", () => ({ TimeSeriesChart: () => null }));
 
 const port = (n: string) => ({ if_index: n, if_name: `port${n}` });
 function answer(query: string) {

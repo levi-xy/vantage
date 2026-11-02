@@ -10,19 +10,21 @@ vi.mock("../../app/session", () => ({ useApiClient: () => client }));
 
 const settings = { port1: "pfsense:inst-1:igc0" };
 
-function firewall(lastSuccessSecondsAgo: number): Instance {
+/** A pfSense whose igc0 is mapped to "WAN" in its settings, unless `wan` is false. */
+function firewall(lastSuccessSecondsAgo: number, wan = true): Instance {
   return {
     id: "inst-1",
     name: "fw-1",
     type_id: "pfsense",
     enabled: true,
+    config: { interface_names: wan ? ["igc0=WAN"] : [] },
     status: {
       state: "up",
       checked_at: null,
       last_success_at: new Date(Date.now() - lastSuccessSecondsAgo * 1000).toISOString(),
       error: null,
     },
-  } as Instance;
+  } as unknown as Instance;
 }
 
 const result = (type: "vector" | "matrix", values: [number, string][]): QueryResult => ({
@@ -45,6 +47,14 @@ function renderCard(instance: Instance, cardSettings: Record<string, string> = s
           [t0 + 3600, download ? "84200000" : "12600000"],
         ]),
       );
+    }
+    if (req.query.startsWith("count by (vantage_instance_id, interface)")) {
+      const labels = { vantage_instance_id: "inst-1", interface: "igc0" };
+      return json({
+        result_type: "vector",
+        series: [{ labels, values: [[0, "1"]] }],
+        warnings: [],
+      });
     }
     if (req.query.startsWith("8 *")) {
       return json(result("vector", [[0, download ? "84200000" : "12600000"]]));
@@ -71,7 +81,7 @@ describe("ThroughputCard", () => {
 
   it("shows download and upload now, and a 6-hour chart", async () => {
     const queries = renderCard(firewall(10));
-    const download = screen.getByRole("group", { name: "Download" });
+    const download = await screen.findByRole("group", { name: "Download" });
     expect(await within(download).findByText("84.2 Mbit/s")).toBeInTheDocument();
     expect(
       within(screen.getByRole("group", { name: "Upload" })).getByText("12.6 Mbit/s"),
@@ -92,6 +102,16 @@ describe("ThroughputCard", () => {
     });
     expect(chart.closest('[data-stale="true"]')).not.toBeNull();
     expect(screen.getByText("No recent data from fw-1; history greyed.")).toBeInTheDocument();
-    expect(within(screen.getByRole("group", { name: "Download" })).getByText("—")).toBeTruthy();
+    expect(
+      within(await screen.findByRole("group", { name: "Download" })).getByText("—"),
+    ).toBeTruthy();
+  });
+
+  it("says in and out for a port that isn't the WAN", async () => {
+    renderCard(firewall(10, false));
+    const inbound = await screen.findByRole("group", { name: "In" });
+    expect(await within(inbound).findByText("84.2 Mbit/s")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Out" })).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Download" })).not.toBeInTheDocument();
   });
 });
