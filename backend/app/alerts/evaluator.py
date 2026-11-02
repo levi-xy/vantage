@@ -356,10 +356,15 @@ class AlertEvaluator:
     # --- one tick --------------------------------------------------------------------------
 
     async def tick(self) -> None:
+        """One evaluation. It counts as finished (for the watchdog) when it returns or
+        fails with an exception, never when it is cancelled: a hung tick the watchdog
+        cancels must not look like a working evaluator."""
         try:
             await self._tick()
-        finally:
+        except Exception:
             self.monitor.tick_finished(self._clock())
+            raise
+        self.monitor.tick_finished(self._clock())
 
     async def _tick(self) -> None:
         with self._sessions() as db:
@@ -516,15 +521,25 @@ class AlertEvaluator:
         if self._slots is None:
             self._slots = asyncio.Semaphore(MAX_CONCURRENT_QUERIES)
         async with self._slots:
-            if max_series is None:
-                return await self._prometheus().query(QueryRequest(query=query))
-            return await self._prometheus().query(QueryRequest(query=query), max_series=max_series)
+            request = QueryRequest(query=query)
+            try:
+                if max_series is None:
+                    result = await self._prometheus().query(request)
+                else:
+                    result = await self._prometheus().query(request, max_series=max_series)
+            except QueryError:  # answered or failed, not cancelled: the tick is moving
+                self.monitor.progress(self._clock())
+                raise
+            self.monitor.progress(self._clock())
+            return result
 
     async def _probe(self) -> bool:
         try:
             await self._prometheus().query(QueryRequest(query=PROBE_QUERY))
         except QueryError:
+            self.monitor.progress(self._clock())
             return False
+        self.monitor.progress(self._clock())
         return True
 
     async def _fleet(self) -> _Fleet | None:

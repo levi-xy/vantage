@@ -9,8 +9,9 @@ Prometheus unreachable the evaluator's per-tick probe            2 min of failed
                        (connection refused, timeout, HTTP 5xx)
 Metrics not collected  each tick: the age of the newest           newest sample older than 2 min,
                        ``up{job="vantage-backend"} == 1``         or none for 2 min
-Evaluation stopped     :class:`Watchdog`: the evaluator's last   no tick for 3 x the interval
-                       finished tick                             (90 s); restarts it once
+Evaluation stopped     :class:`Watchdog`: the evaluator's last   no progress for 3 x the
+                       progress (a query answered or failed, a   interval (90 s); restarts it
+                       tick finished)                            once
 =====================  ========================================  ===============================
 
 A rule's own bad PromQL or too-many-series never counts as "Prometheus unreachable": only
@@ -64,6 +65,8 @@ STALL_INTERVALS = 3
 WATCHDOG_SECONDS = 15.0
 # How long a cancelled, hung evaluator task gets to finish before it is abandoned.
 RESTART_GRACE_SECONDS = 5.0
+# /healthz counts stuck notifications at most this often (it is unauthenticated).
+STUCK_CACHE_SECONDS = 5.0
 BACKEND_JOB = "vantage-backend"
 # Seconds since Prometheus last scraped Vantage successfully (computed by Prometheus, so
 # the two clocks needn't agree); empty when there is no recent successful scrape.
@@ -151,6 +154,10 @@ class SelfMonitor:
         self._metrics_known = False
         self._started_at: datetime | None = None
         self.last_tick: datetime | None = None
+        # The last sign of a working tick: a query answered or failed, or a tick finished.
+        self.last_progress: datetime | None = None
+        self.stuck_cache_seconds = STUCK_CACHE_SECONDS
+        self._stuck: tuple[datetime, int] | None = None
         # Set when the watchdog saw the evaluator stalled; cleared by its next tick.
         self.stalled_at: datetime | None = None
 
@@ -161,16 +168,21 @@ class SelfMonitor:
 
     def tick_finished(self, now: datetime) -> None:
         self.last_tick = now
+        self.last_progress = now
+
+    def progress(self, now: datetime) -> None:
+        self.last_progress = now
 
     @property
     def stall_after(self) -> timedelta:
         return timedelta(seconds=STALL_INTERVALS * self._interval)
 
     def stalled(self, now: datetime) -> bool:
-        """No tick finished for 3 intervals since the evaluator (re)started."""
+        """No progress for 3 intervals since the evaluator (re)started: a slow tick that
+        keeps getting answers isn't stalled; a hung one is."""
         if self._started_at is None:
             return False
-        latest = max(self._started_at, self.last_tick or self._started_at)
+        latest = max(self._started_at, self.last_progress or self._started_at)
         return now - latest >= self.stall_after
 
     def record_probe(self, ok: bool, now: datetime) -> None:
@@ -227,12 +239,20 @@ class SelfMonitor:
         }
         for reason in HEALTH_PRIORITY:
             if reason == Health.NOTIFICATIONS_STUCK:
-                with self._sessions() as db:
-                    if stuck_count(db, now) > 0:
-                        return reason
+                if self._stuck_count(now) > 0:
+                    return reason
             elif active.get(reason):
                 return reason
         return None
+
+    def _stuck_count(self, now: datetime) -> int:
+        cached = self._stuck
+        if cached is not None and abs((now - cached[0]).total_seconds()) < self.stuck_cache_seconds:
+            return cached[1]
+        with self._sessions() as db:
+            n = stuck_count(db, now)
+        self._stuck = (now, n)
+        return n
 
     # --- system alerts -------------------------------------------------------------------
 
@@ -324,7 +344,8 @@ class SelfMonitor:
 class Watchdog:
     """Checks every :data:`WATCHDOG_SECONDS` that the evaluator still finishes ticks.
 
-    Stalled (no tick for 3 intervals, hung or crashed): the system alert "Alert evaluation
+    Stalled (no progress for 3 intervals: hung or crashed; a slow tick whose queries
+    keep finishing isn't stalled): the system alert "Alert evaluation
     stopped" fires and the evaluator task is restarted, once. The next finished tick
     resolves it and re-arms the restart. A tick blocked in synchronous code blocks the
     whole event loop, this watchdog included; only ``/healthz`` from outside sees that.
@@ -387,6 +408,8 @@ class Watchdog:
             log.warning("alert evaluator stalled: restarting it")
             await self._restart()
             return
-        if self._maybe_open:  # not stalled: close one left open (e.g. before a restart)
+        # Not stalled: close one left open (e.g. before a restart), once a tick has
+        # really finished.
+        if self._maybe_open and monitor.last_tick is not None:
             monitor.resolve_alert(SystemKind.EVALUATOR_STALLED, "Alert evaluation running again")
             self._maybe_open = False
