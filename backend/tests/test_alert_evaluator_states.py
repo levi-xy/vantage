@@ -8,7 +8,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from app.alerts.evaluator import PROBE_QUERY, SCRAPED_QUERY, AlertEvaluator
+from app.alerts.evaluator import (
+    POLLED_QUERY,
+    PROBE_QUERY,
+    SCRAPED_QUERY,
+    AlertEvaluator,
+    scoped_query,
+)
 from app.alerts.templates import TEMPLATES
 from app.collectors.hub import EventHub
 from app.core.db import make_session_factory
@@ -19,6 +25,7 @@ from app.models import (
     AlertState,
     EndReason,
     NotificationKind,
+    NotificationStatus,
 )
 from tests import test_alerts
 from tests.test_alerts import (
@@ -362,3 +369,65 @@ def test_no_data_event_in_the_api_and_closable(admin: TestClient, db: Session, r
     r = admin.post(f"{API}/alerts/events/{event.id}/close")
     assert r.status_code == 200 and r.json()["end_reason"] == "closed_by_user"
     assert r.json()["no_data_reason"] is None
+
+
+async def test_witness_and_fleet_queries_over_500_series(
+    engine: Engine, db: Session, prom: FakeProm
+) -> None:
+    w = World(engine, db, prom)
+    await w.fire()
+    others = [
+        ({"vantage_instance_id": str(uuid.UUID(int=i + 10)), "vantage_integration": "x"}, "1")
+        for i in range(600)
+    ]
+    w.value(70)
+    prom.answers[VALUE] += others
+    for _ in range(2):
+        await w.tick(60)
+        prom.answers[POLLED_QUERY] += others
+    event = w.event()
+    assert (event.state, event.end_reason) == (AlertState.RESOLVED, EndReason.RECOVERED)
+    assert w.ev.rule_error(w.rule.id) is None
+
+
+async def test_scoped_rule_scopes_its_witness_in_promql(
+    engine: Engine, db: Session, prom: FakeProm
+) -> None:
+    w = World(engine, db, prom, instance_id=INSTANCE_UUID)
+    await w.fire()
+    scoped = scoped_query(VALUE, INSTANCE_UUID)
+    assert scoped in prom.queries and INSTANCE_ID in scoped
+    w.value(70, query=scoped)
+    await w.tick(60)
+    await w.tick(60)
+    assert w.event().state == AlertState.RESOLVED
+
+
+async def test_restart_sends_the_no_data_message_of_a_new_episode(
+    engine: Engine, db: Session, prom: FakeProm
+) -> None:
+    """A NO DATA message from an earlier episode of the same event doesn't count."""
+    w = World(engine, db, prom)
+    await w.fire()
+    event = w.event()
+    old = w.clock.now
+    db.add(
+        AlertNotification(
+            event_id=event.id,
+            channel_id=7,
+            kind=NotificationKind.NO_DATA,
+            text="NO DATA: earlier",
+            status=NotificationStatus.DELIVERED,
+            attempts=1,
+            next_attempt_at=old,
+            created_at=old,
+        )
+    )
+    event.state, event.no_data_reason = AlertState.NO_DATA, "source_stale"
+    event.state_since = old + timedelta(minutes=1)
+    db.commit()
+    w.ev = w.evaluator()  # restart
+    w.value(None)
+    w.clock.now += timedelta(minutes=7)
+    await w.ev.tick()
+    assert w.texts[-1] == "NO DATA: Gateway (critical): fw (device not reporting)"

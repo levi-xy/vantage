@@ -9,7 +9,9 @@ Every ``interval`` seconds the evaluator runs, through the guarded Prometheus cl
    (``vantage_poll_last_success_timestamp_seconds``) and the last ``up == 1`` scrape per
    scraped target;
 3. per enabled rule: the rule's query, then (for a *value* rule, see ``app.alerts.promql``)
-   its witness queries, scoped like the rule.
+   its witness queries, scoped like the rule (in PromQL, :func:`scoped_query`). Rules run
+   side by side with at most 4 queries in flight; the witness and fleet queries may
+   return up to 10,000 series (the browser's budget is 500).
 
 Each series of a rule's result is its own alert, identified by (rule id, fingerprint) (see
 ``app.alerts.labels``). The transitions are pure functions in ``app.alerts.state``; this
@@ -78,7 +80,7 @@ from app.models import (
     Instance,
     NotificationKind,
 )
-from app.query.proxy import PrometheusClient, QueryError, QueryRequest, Series
+from app.query.proxy import PrometheusClient, QueryError, QueryRequest, QueryResult, Series
 
 log = logging.getLogger(__name__)
 
@@ -88,6 +90,11 @@ SCRAPE_INTERVAL_SECONDS = 30.0
 MAX_PART_LENGTH = 48
 MAX_SUMMARY_LENGTH = 300
 MAX_ERROR_LENGTH = 120
+# The witness and fleet queries are the backend's own: like seeding (collectors/seed.py)
+# they may return more series than the browser's budget allows.
+INTERNAL_MAX_SERIES = 10_000
+# Rule and witness queries in flight at once.
+MAX_CONCURRENT_QUERIES = 4
 PROBE_QUERY = "vector(1)"
 POLLED_QUERY = LAST_SUCCESS
 _SCRAPED = f'up{{{INSTANCE_ID_LABEL}!=""}}'
@@ -191,6 +198,16 @@ def close_events(
     return closed
 
 
+def scoped_query(query: str, instance_id: uuid.UUID | None) -> str:
+    """``query`` limited to one instance's series, for a rule scoped to it: Prometheus then
+    returns only that device's series however big the fleet is. ``instance_id`` is a UUID
+    from the database, never user text."""
+    if instance_id is None:
+        return query
+    one = f'label_replace(vector(1), "{INSTANCE_ID_LABEL}", "{instance_id}", "", "")'
+    return f"({query}) and on ({INSTANCE_ID_LABEL}) {one}"
+
+
 def _value(series: Series) -> float | None:
     if not series.values:
         return None
@@ -261,6 +278,8 @@ class AlertEvaluator:
         # Scraped targets: the newest up == 1 scrape seen (survives an up == 0 tick).
         self._last_up: dict[str, float] = {}
         self._task: asyncio.Task[None] | None = None
+        self._started_at: datetime | None = None
+        self._slots: asyncio.Semaphore | None = None
 
     # --- lifecycle ---------------------------------------------------------------------
 
@@ -332,6 +351,8 @@ class AlertEvaluator:
         self._errors = {k: v for k, v in self._errors.items() if k in active}
 
         now = self._clock()
+        if self._started_at is None:
+            self._started_at = now
         if not await self._probe():
             # Prometheus is unreachable: no state changes, pending timers pause.
             obs = sm.Observation(now=now, probe_ok=False)
@@ -343,10 +364,23 @@ class AlertEvaluator:
         fleet = await self._fleet()
         for rule in rules:
             self._check_revision(rule)
+
+        async def evaluate(rule: AlertRule) -> None:
             try:
                 await self._evaluate(rule, open_by_rule.get(rule.id, {}), fleet)
             except Exception as exc:
                 log.warning("alert rule %d failed (%s)", rule.id, type(exc).__name__)
+
+        # Rules run side by side; _query keeps at most MAX_CONCURRENT_QUERIES in flight.
+        await asyncio.gather(*(evaluate(rule) for rule in rules))
+
+    async def _query(self, query: str, max_series: int | None = None) -> QueryResult:
+        if self._slots is None:
+            self._slots = asyncio.Semaphore(MAX_CONCURRENT_QUERIES)
+        async with self._slots:
+            if max_series is None:
+                return await self._prometheus().query(QueryRequest(query=query))
+            return await self._prometheus().query(QueryRequest(query=query), max_series=max_series)
 
     async def _probe(self) -> bool:
         try:
@@ -359,8 +393,8 @@ class AlertEvaluator:
         """Every device's last observation; None when either query fails (sources are then
         "unknown" for this tick: nothing counts as clean, nothing goes stale)."""
         try:
-            polled = await self._prometheus().query(QueryRequest(query=POLLED_QUERY))
-            scraped = await self._prometheus().query(QueryRequest(query=SCRAPED_QUERY))
+            polled = await self._query(POLLED_QUERY, INTERNAL_MAX_SERIES)
+            scraped = await self._query(SCRAPED_QUERY, INTERNAL_MAX_SERIES)
         except QueryError:
             return None
         fleet = _Fleet()
@@ -383,6 +417,8 @@ class AlertEvaluator:
             if ts > 0:
                 up_now[instance_id] = True
                 self._last_up[instance_id] = max(self._last_up.get(instance_id, 0.0), ts)
+        # Forget targets that are gone (out of service discovery, deleted).
+        self._last_up = {k: v for k, v in self._last_up.items() if k in up_now}
         for instance_id, up in up_now.items():
             fleet.scraped[instance_id] = (self._last_up.get(instance_id), up)
         return fleet
@@ -469,7 +505,9 @@ class AlertEvaluator:
         verdicts: dict[str, tuple[str, dict[str, str]]] = {}
         for part in split.parts:
             try:
-                result = await self._prometheus().query(QueryRequest(query=part.value_query))
+                result = await self._query(
+                    scoped_query(part.value_query, rule.instance_id), INTERNAL_MAX_SERIES
+                )
             except QueryError as exc:
                 return {}, exc.message
             for s in result.series:
@@ -490,14 +528,14 @@ class AlertEvaluator:
         split = promql.split(rule.expr)
         now = self._clock()
         query_ok = True
+        error: str | None = None
         current: dict[str, Series] = {}
         try:
-            result = await self._prometheus().query(QueryRequest(query=rule.expr))
+            result = await self._query(rule.expr)
         except QueryError as exc:
             query_ok = False
-            self.set_rule_error(rule.id, exc.message)
+            error = exc.message
         else:
-            self.set_rule_error(rule.id, None)
             for s in result.series:
                 if in_scope(rule.instance_id, s.labels):
                     current.setdefault(alert_labels.fingerprint(s.labels), s)
@@ -505,9 +543,8 @@ class AlertEvaluator:
         witness_failed = False
         if query_ok and split.mode == "value":
             verdicts, error = await self._witness(rule, split)
-            if error is not None:
-                witness_failed = True
-                self.set_rule_error(rule.id, error)
+            witness_failed = error is not None
+        self.set_rule_error(rule.id, error)  # once per tick: no flicker
 
         def observe(fp: str, labels: dict[str, str]) -> sm.Observation:
             witness: sm.Witness = "none"
@@ -525,6 +562,7 @@ class AlertEvaluator:
                 witness=witness,
                 source=self._source(labels, fleet, now),
                 mode=split.mode,
+                started_at=self._started_at,
             )
 
         # Open alerts.
@@ -564,7 +602,7 @@ class AlertEvaluator:
                 state="firing",
                 state_since=row.state_since,
                 last_value_at=obs.now,
-                no_data_sent=self._no_data_sent(row.id),
+                no_data_sent=self._no_data_sent(row.id, row.state_since),
             )
         before = replace(
             memory,
@@ -590,15 +628,17 @@ class AlertEvaluator:
                 return
         self._open[key] = after
 
-    def _no_data_sent(self, event_id: int) -> bool:
-        """Whether this event's NO DATA message was already queued (after a restart)."""
+    def _no_data_sent(self, event_id: int, since: datetime) -> bool:
+        """Whether the NO DATA message of this event's current NO DATA episode (since
+        ``since``) was already queued, after a restart."""
         with self._sessions() as db:
             return (
                 db.scalar(
                     select(AlertNotification.id)
                     .where(
                         AlertNotification.event_id == event_id,
-                        AlertNotification.text.startswith(NO_DATA_PREFIX, autoescape=True),
+                        AlertNotification.kind == NotificationKind.NO_DATA,
+                        AlertNotification.created_at >= since,
                     )
                     .limit(1)
                 )

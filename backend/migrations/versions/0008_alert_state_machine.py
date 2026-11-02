@@ -12,6 +12,10 @@ entered its current state; existing open events get their ``started_at``) and
 message and its reminder). The partial unique index now allows one open event per
 (rule_id, fingerprint) across ``firing`` and ``no_data``.
 
+On SQLite both tables are rebuilt (batch mode); ``migrations/env.py`` turns foreign keys off
+for the run, so the rebuild doesn't fire ON DELETE SET NULL in ``alert_notifications``
+(``event_id``, ``folded_into``), and checks them afterwards.
+
 Older code doesn't know ``no_data``: it treats such rows as neither firing nor resolved,
 so after a downgrade they would never close. Downgrade therefore turns every ``no_data``
 row back into ``firing`` before it drops the columns.

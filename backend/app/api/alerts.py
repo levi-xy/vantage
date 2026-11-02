@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session
 
 from app.alerts.delivery import enqueue, stuck_count
 from app.alerts.evaluator import (
+    INTERNAL_MAX_SERIES,
     AlertEvaluator,
     clean,
     close_events,
@@ -58,7 +59,7 @@ from app.models import (
     NotificationKind,
     NotificationStatus,
 )
-from app.query.proxy import MAX_QUERY_LENGTH, QueryError, QueryRequest, Series
+from app.query.proxy import MAX_QUERY_LENGTH, MAX_SERIES, QueryError, QueryRequest, Series
 
 log = logging.getLogger(__name__)
 
@@ -257,11 +258,15 @@ async def _check_expr(
     result over budget, and a rule scoped to one instance whose results carry no
     ``vantage_instance_id`` (it could never match). Returns the error to show when
     Prometheus can't answer (the rule is then saved unchecked)."""
-    queries = [expr] + [p.value_query for p in split(expr).parts]
+    # The expression itself within the browser's budget; its value queries (the witness)
+    # with the evaluator's internal limit, which they also run with.
+    queries = [(expr, MAX_SERIES)]
+    queries += [(p.value_query, INTERNAL_MAX_SERIES) for p in split(expr).parts]
     series: list[Series] = []
-    for query in queries:
+    for query, max_series in queries:
         try:
-            series += (await prometheus.query(QueryRequest(query=query))).series
+            req = QueryRequest(query=query)
+            series += (await prometheus.query(req, max_series=max_series)).series
         except QueryError as exc:
             if exc.status_code in _REFUSED:
                 raise _unprocessable(f"expr refused: {exc.message}") from None

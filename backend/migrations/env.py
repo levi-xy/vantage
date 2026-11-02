@@ -56,9 +56,21 @@ def run_migrations_online() -> None:
     engine = make_engine(_url())
     try:
         with engine.connect() as conn:
+            sqlite = conn.dialect.name == "sqlite"
+            if sqlite:
+                # Batch mode rebuilds a table (copy, drop, rename). With foreign keys on,
+                # dropping the old table fires ON DELETE actions in the tables that point
+                # at it (SET NULL, CASCADE). The pragma only works outside a transaction.
+                conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+                conn.commit()
             _configure(conn)
             with context.begin_transaction():
                 context.run_migrations()
+            if sqlite:
+                broken = conn.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
+                conn.commit()
+                if broken:
+                    raise RuntimeError(f"migration left {len(broken)} broken foreign key(s)")
     finally:
         engine.dispose()
 

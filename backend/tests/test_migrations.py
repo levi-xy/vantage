@@ -255,3 +255,52 @@ def test_0008_no_data_state_and_one_open_event_per_series(db_url: str) -> None:
             assert kind == "firing"
     finally:
         eng.dispose()
+
+
+def test_0008_keeps_notification_links(db_url: str) -> None:
+    """Rebuilding alert_events / alert_notifications (SQLite batch mode) must not fire
+    ON DELETE SET NULL in the rows that point at them, either way."""
+    cfg = alembic_config(db_url)
+    command.upgrade(cfg, "0007")
+    eng = make_engine(db_url)
+
+    def links() -> list[tuple[int, int | None, int | None]]:
+        with eng.connect() as conn:
+            rows = conn.execute(
+                text("SELECT id, event_id, folded_into FROM alert_notifications ORDER BY id")
+            )
+            return [tuple(r) for r in rows]  # type: ignore[misc]
+
+    try:
+        with eng.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO alert_rules "
+                    "(id, name, expr, for_seconds, severity, channel_ids, enabled) "
+                    "VALUES (1, 'G', 'up == 0', 0, 'critical', '[]', true)"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO alert_events (id, rule_id, fingerprint, labels, rule_name, "
+                    "severity, state, started_at, summary) VALUES "
+                    "(5, 1, 'f1', '{}', 'G', 'critical', 'firing', :at, 'x')"
+                ),
+                {"at": STAMP},
+            )
+            for nid, folded in ((1, None), (2, 1)):
+                conn.execute(
+                    text(
+                        "INSERT INTO alert_notifications (id, event_id, kind, text, status, "
+                        "attempts, next_attempt_at, created_at, folded_into) VALUES "
+                        "(:id, 5, 'firing', 'x', 'pending', 0, :at, :at, :folded)"
+                    ),
+                    {"id": nid, "at": STAMP, "folded": folded},
+                )
+        expected = [(1, 5, None), (2, 5, 1)]
+        command.upgrade(cfg, "0008")
+        assert links() == expected
+        command.downgrade(cfg, "0007")
+        assert links() == expected
+    finally:
+        eng.dispose()
