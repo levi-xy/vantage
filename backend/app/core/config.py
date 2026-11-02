@@ -20,6 +20,9 @@ DEFAULT_PROMETHEUS_URL = "http://prometheus:9090"
 DEFAULT_PROMETHEUS_RETENTION = "30d"
 # An instance goes down after this many failed poll cycles in a row.
 DEFAULT_DOWN_AFTER_FAILED_CYCLES = 3
+# Level of the backend's own log lines (VANTAGE_LOG_LEVEL).
+DEFAULT_LOG_LEVEL = "INFO"
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 # A Prometheus duration, e.g. 30d, 720h or 1y2w.
 _DURATION = re.compile(r"(?:[0-9]+(?:ms|s|m|h|d|w|y))+")
 
@@ -53,6 +56,8 @@ class Settings:
     prometheus_retention: str = DEFAULT_PROMETHEUS_RETENTION
     # Failed poll cycles in a row before an instance is down (VANTAGE_DOWN_AFTER_FAILED_CYCLES).
     down_after_failed_cycles: int = DEFAULT_DOWN_AFTER_FAILED_CYCLES
+    # The backend's own log level (VANTAGE_LOG_LEVEL): DEBUG, INFO, WARNING or ERROR.
+    log_level: str = DEFAULT_LOG_LEVEL
 
 
 def _parse_bool(name: str, raw: str) -> bool:
@@ -121,6 +126,13 @@ def _validate_retention(raw: str) -> str:
     return value
 
 
+def _validate_log_level(raw: str) -> str:
+    value = raw.strip().upper() or DEFAULT_LOG_LEVEL
+    if value not in LOG_LEVELS:
+        raise ConfigError("VANTAGE_LOG_LEVEL must be one of " + ", ".join(LOG_LEVELS))
+    return value
+
+
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     env = os.environ if env is None else env
     database_url = _validate_database_url(
@@ -149,6 +161,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         1,
         10,
     )
+    log_level = _validate_log_level(env.get("VANTAGE_LOG_LEVEL", ""))
     return Settings(
         database_url=database_url,
         api_docs=api_docs,
@@ -159,6 +172,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         prometheus_url=prometheus_url,
         prometheus_retention=prometheus_retention,
         down_after_failed_cycles=down_after_failed_cycles,
+        log_level=log_level,
     )
 
 

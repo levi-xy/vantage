@@ -19,6 +19,8 @@ services:
       VANTAGE_SESSION_IDLE_MINUTES: ${VANTAGE_SESSION_IDLE_MINUTES:-120}
       # Failed poll cycles in a row before a device is down.
       VANTAGE_DOWN_AFTER_FAILED_CYCLES: ${VANTAGE_DOWN_AFTER_FAILED_CYCLES:-3}
+      # The backend's own log lines: DEBUG, INFO, WARNING or ERROR.
+      VANTAGE_LOG_LEVEL: ${VANTAGE_LOG_LEVEL:-INFO}
       # Same value as Prometheus' retention below: seeds last_success_at at startup.
       VANTAGE_PROMETHEUS_RETENTION: ${VANTAGE_PROMETHEUS_RETENTION:-30d}
       # Only the bundled nginx (frontend, fixed address below) may name the client.

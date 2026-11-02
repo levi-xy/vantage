@@ -123,6 +123,12 @@ Device down detection: a polled device is marked down after 3 failed poll cycles
 
 **Upgrade note (poll cycles):** the "instance down" alert templates for polled integrations now use `for` 0 s, because the collector already waits N cycles. Rules you created from the old templates keep `for` 180 s and are not changed automatically: edit them on the **Alerts** page and set `for` to 0, or they wait 3 more minutes on top.
 
+How alerts resolve: an alert resolves only after two clean checks on two different polls, where the device's value was seen and the condition was false. A missing value (device down, metric gone, query failing, removed from service discovery) never counts as recovery: the alert moves to **No data** and stays open until the value returns or an admin closes it. A "NO DATA" message goes out once an alert has been in No data for 5 minutes, and one reminder after 24 hours. Rules whose expression can't be split into a value and a threshold (for example `a and b`, or `absent(...)`) resolve when their result is empty and the device has polled again; the rule list warns about them.
+
+**Upgrade note (alert states, migration 0008):** events gain a `no_data` state, `no_data_reason`, `state_since` and `reminder_sent_at`; the migration is additive and runs on start. Older Vantage versions don't know `no_data`: to roll back, run `docker compose exec backend alembic downgrade 0007` before starting the older image, which turns every `no_data` event back into `firing`.
+
+Logs: the backend logs at INFO by default (for example each delivered alert message). Change it with `VANTAGE_LOG_LEVEL` (`DEBUG`, `INFO`, `WARNING` or `ERROR`) in `.env`.
+
 Backups: `docker compose exec -T backend python -m app.cli backup - > vantage-backup.json.gz` (restore with `app.cli restore`). The master key is not in the backup; keep its own copy. `app.cli rotate-master-key` re-encrypts every stored secret with a new key. See [docs/SECURITY.md](docs/SECURITY.md#backup-restore-and-master-key-rotation).
 
 ## Development

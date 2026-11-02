@@ -1,9 +1,13 @@
 """FastAPI application entry point."""
 
 import asyncio
+import logging
+import sys
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import timedelta
+from typing import TextIO
 
 from fastapi import FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
@@ -51,6 +55,7 @@ def create_app(
     or (``PrometheusTokenError``) when a Prometheus token is configured but unusable.
     """
     settings = settings or get_settings()
+    configure_logging(settings.log_level)
     secret_box = secret_box or SecretBox(load_master_key())
     # None when not configured: the Prometheus-only endpoints then answer 503.
     prometheus_token = prometheus_token or load_prometheus_token()
@@ -145,6 +150,8 @@ def create_app(
         session_factory=app.state.session_factory,
         prometheus=lambda: app.state.prometheus,
         hub=app.state.event_hub,
+        poll_interval=app.state.poller.interval_for_type,
+        instance_state=_instance_state(app.state.metrics_store),
     )
     app.state.delivery = DeliveryDispatcher(
         session_factory=app.state.session_factory,
@@ -164,6 +171,41 @@ def create_app(
         return {"status": "ok"}
 
     return app
+
+
+def _instance_state(store: MetricsStore) -> Callable[[uuid.UUID], str | None]:
+    def state(instance_id: uuid.UUID) -> str | None:
+        status = store.status(instance_id)
+        return status.state if status is not None else None
+
+    return state
+
+
+def configure_logging(level: str) -> None:
+    """Send the ``app`` loggers' records at ``level`` and above to stderr (once).
+
+    Uvicorn configures only its own loggers, so without this only warnings reached the
+    output (Python's last-resort handler). Log lines carry ids, counts and fixed codes;
+    no code logs a secret.
+    """
+    logger = logging.getLogger("app")
+    logger.setLevel(level)
+    if not any(isinstance(h, _StderrHandler) for h in logger.handlers):
+        handler = _StderrHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+        logger.addHandler(handler)
+
+
+class _StderrHandler(logging.StreamHandler):  # type: ignore[type-arg]
+    """Writes to whatever ``sys.stderr`` is at the time of the record."""
+
+    @property
+    def stream(self) -> TextIO:
+        return sys.stderr
+
+    @stream.setter
+    def stream(self, _value: TextIO) -> None:
+        pass
 
 
 async def _validation_error(_request: Request, exc: Exception) -> Response:

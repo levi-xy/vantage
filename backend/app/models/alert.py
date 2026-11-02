@@ -13,6 +13,12 @@ from app.models._types import str_enum
 class AlertState(StrEnum):
     FIRING = "firing"
     RESOLVED = "resolved"
+    # Open, but no fresh value to tell whether the condition still holds (P0-3b).
+    NO_DATA = "no_data"
+
+
+# States of an open event: at most one per (rule_id, fingerprint).
+OPEN_STATES = (AlertState.FIRING, AlertState.NO_DATA)
 
 
 class EndReason(StrEnum):
@@ -64,8 +70,8 @@ class AlertEvent(Base):
             "rule_id",
             "fingerprint",
             unique=True,
-            sqlite_where=text("state = 'firing'"),
-            postgresql_where=text("state = 'firing'"),
+            sqlite_where=text("state IN ('firing', 'no_data')"),
+            postgresql_where=text("state IN ('firing', 'no_data')"),
         ),
     )
 
@@ -87,3 +93,9 @@ class AlertEvent(Base):
         str_enum(EndReason, "alert_end_reason"), default=None
     )
     summary: Mapped[str] = mapped_column(Text, default="")
+    # P0-3b: why an open event has no data (``app.alerts.state.NoDataReason``; no CHECK, so
+    # new reasons need no migration), since when it is in its current state, and when the
+    # one 24-hour NO DATA reminder was queued.
+    no_data_reason: Mapped[str | None] = mapped_column(String(32), default=None)
+    state_since: Mapped[datetime | None] = mapped_column(default=None)
+    reminder_sent_at: Mapped[datetime | None] = mapped_column(default=None)

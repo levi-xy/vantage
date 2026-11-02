@@ -31,8 +31,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.alerts.delivery import enqueue, stuck_count
-from app.alerts.evaluator import clean, close_events, event_message, normalize_expr
-from app.alerts.labels import stored_labels
+from app.alerts.evaluator import (
+    AlertEvaluator,
+    clean,
+    close_events,
+    event_message,
+    normalize_expr,
+)
+from app.alerts.labels import INSTANCE_ID_LABEL, stored_labels
+from app.alerts.promql import RecoveryMode, split
 from app.alerts.templates import TEMPLATES, RuleTemplate
 from app.api.deps import AdminDep, AuthDep, DbDep
 from app.api.query import PrometheusDep
@@ -40,6 +47,7 @@ from app.collectors.hub import EventHub
 from app.core import audit
 from app.core.db import utcnow
 from app.models import (
+    OPEN_STATES,
     AlertEvent,
     AlertNotification,
     AlertRule,
@@ -50,7 +58,7 @@ from app.models import (
     NotificationKind,
     NotificationStatus,
 )
-from app.query.proxy import MAX_QUERY_LENGTH, QueryError, QueryRequest
+from app.query.proxy import MAX_QUERY_LENGTH, QueryError, QueryRequest, Series
 
 log = logging.getLogger(__name__)
 
@@ -95,6 +103,11 @@ class RuleOut(BaseModel):
     instance_id: uuid.UUID | None
     channel_ids: list[int]
     enabled: bool
+    # P0-3b (maintainer-approved 2026-11-02): how the rule's alerts resolve. "value": the
+    # rule's value is seen failing its condition; "empty_result": the result is empty.
+    recovery_mode: RecoveryMode = "value"
+    # The last query error the evaluator (or the save-time check) saw; short, no secrets.
+    error: str | None = None
 
 
 class DeliveryOut(BaseModel):
@@ -130,14 +143,19 @@ class EventOut(BaseModel):
     labels: dict[str, str]
     fingerprint: str
     state: AlertState
+    # Why an open event has no data (P0-3b): source_stale, source_down, metric_missing,
+    # query_failed; null otherwise.
+    no_data_reason: str | None = None
     started_at: datetime
+    # When the event entered its current state (null for events from before 0008).
+    state_since: datetime | None = None
     ended_at: datetime | None
     end_reason: EndReason | None
     summary: str
     deliveries: list[DeliveryOut] = []
 
 
-def _out(rule: AlertRule) -> RuleOut:
+def _out(rule: AlertRule, evaluator: AlertEvaluator | None = None) -> RuleOut:
     return RuleOut(
         id=rule.id,
         name=rule.name,
@@ -147,7 +165,14 @@ def _out(rule: AlertRule) -> RuleOut:
         instance_id=rule.instance_id,
         channel_ids=list(rule.channel_ids),
         enabled=rule.enabled,
+        recovery_mode=split(rule.expr).mode,
+        error=evaluator.rule_error(rule.id) if evaluator is not None else None,
     )
+
+
+def _evaluator(request: Request) -> AlertEvaluator:
+    evaluator: AlertEvaluator = request.app.state.alert_evaluator
+    return evaluator
 
 
 def _event_out(
@@ -163,7 +188,9 @@ def _event_out(
         labels=stored_labels({str(k): str(v) for k, v in (event.labels or {}).items()}),
         fingerprint=event.fingerprint,
         state=event.state,
+        no_data_reason=event.no_data_reason if event.state == AlertState.NO_DATA else None,
         started_at=event.started_at,
+        state_since=event.state_since,
         ended_at=event.ended_at,
         end_reason=event.end_reason,
         summary=event.summary,
@@ -200,7 +227,7 @@ def _deliveries(db: Session, event_ids: list[int]) -> dict[int, list[DeliveryOut
 
 
 def _snapshot(rule: AlertRule) -> dict[str, object]:
-    return _out(rule).model_dump(mode="json", exclude={"id"})
+    return _out(rule).model_dump(mode="json", exclude={"id", "recovery_mode", "error"})
 
 
 def _get(db: Session, rule_id: int) -> AlertRule:
@@ -223,19 +250,40 @@ def _check_refs(db: Session, instance_id: uuid.UUID | None, channel_ids: list[in
             raise _unprocessable("channel not found")
 
 
-async def _check_expr(prometheus: PrometheusDep, expr: str) -> None:
-    try:
-        await prometheus.query(QueryRequest(query=expr))
-    except QueryError as exc:
-        if exc.status_code in _REFUSED:
-            raise _unprocessable(f"expr refused: {exc.message}") from None
+async def _check_expr(
+    prometheus: PrometheusDep, expr: str, instance_id: uuid.UUID | None
+) -> str | None:
+    """Run the expression (and its witness queries) once. Refuses (422) invalid PromQL, a
+    result over budget, and a rule scoped to one instance whose results carry no
+    ``vantage_instance_id`` (it could never match). Returns the error to show when
+    Prometheus can't answer (the rule is then saved unchecked)."""
+    queries = [expr] + [p.value_query for p in split(expr).parts]
+    series: list[Series] = []
+    for query in queries:
+        try:
+            series += (await prometheus.query(QueryRequest(query=query))).series
+        except QueryError as exc:
+            if exc.status_code in _REFUSED:
+                raise _unprocessable(f"expr refused: {exc.message}") from None
+            return clean(exc.message, 120)
+    if (
+        instance_id is not None
+        and series
+        and not any(INSTANCE_ID_LABEL in s.labels for s in series)
+    ):
+        raise _unprocessable(
+            "expr refused: its results have no vantage_instance_id label, so a rule scoped "
+            "to one instance would never match"
+        )
+    return None
 
 
 def _firing(db: Session, rule_id: int) -> list[AlertEvent]:
+    """The rule's open events (firing or no data)."""
     return list(
         db.scalars(
             select(AlertEvent).where(
-                AlertEvent.rule_id == rule_id, AlertEvent.state == AlertState.FIRING
+                AlertEvent.rule_id == rule_id, AlertEvent.state.in_(OPEN_STATES)
             )
         )
     )
@@ -288,22 +336,23 @@ def _publish_closed(request: Request, closed: list[AlertEvent]) -> None:
 
 
 @router.get("/alerts/rules")
-def list_rules(_auth: AdminDep, db: DbDep) -> list[RuleOut]:
+def list_rules(_auth: AdminDep, db: DbDep, request: Request) -> list[RuleOut]:
     stmt = select(AlertRule).where(AlertRule.deleted_at.is_(None)).order_by(AlertRule.id)
-    return [_out(r) for r in db.scalars(stmt)]
+    evaluator = _evaluator(request)
+    return [_out(r, evaluator) for r in db.scalars(stmt)]
 
 
 @router.get("/alerts/rules/{rule_id}")
-def get_rule(rule_id: int, _auth: AdminDep, db: DbDep) -> RuleOut:
-    return _out(_get(db, rule_id))
+def get_rule(rule_id: int, _auth: AdminDep, db: DbDep, request: Request) -> RuleOut:
+    return _out(_get(db, rule_id), _evaluator(request))
 
 
 @router.post("/alerts/rules", status_code=status.HTTP_201_CREATED)
 async def create_rule(
-    body: RuleIn, auth: AdminDep, db: DbDep, prometheus: PrometheusDep
+    body: RuleIn, auth: AdminDep, db: DbDep, prometheus: PrometheusDep, request: Request
 ) -> RuleOut:
     _check_refs(db, body.instance_id, body.channel_ids)
-    await _check_expr(prometheus, body.expr)
+    error = await _check_expr(prometheus, body.expr, body.instance_id)
     rule = AlertRule(**body.model_dump())
     db.add(rule)
     db.flush()
@@ -317,7 +366,9 @@ async def create_rule(
         changes=_snapshot(rule),
     )
     db.commit()
-    return _out(rule)
+    evaluator = _evaluator(request)
+    evaluator.set_rule_error(rule.id, error)
+    return _out(rule, evaluator)
 
 
 @router.patch("/alerts/rules/{rule_id}")
@@ -337,8 +388,14 @@ async def update_rule(
     if "channel_ids" in sent and sent["channel_ids"] is None:
         raise _unprocessable("this field cannot be null")
     _check_refs(db, sent.get("instance_id"), sent.get("channel_ids") or [])
-    if "expr" in sent and sent["expr"] != rule.expr:
-        await _check_expr(prometheus, sent["expr"])
+    error: str | None = None
+    new_expr = "expr" in sent and sent["expr"] != rule.expr
+    new_scope = sent.get("instance_id") is not None and sent["instance_id"] != rule.instance_id
+    checked = new_expr or new_scope
+    if checked:
+        error = await _check_expr(
+            prometheus, sent.get("expr", rule.expr), sent.get("instance_id", rule.instance_id)
+        )
     for key, value in sent.items():
         setattr(rule, key, value)
     db.flush()
@@ -361,7 +418,10 @@ async def update_rule(
         )
     db.commit()
     _publish_closed(request, closed)
-    return _out(rule)
+    evaluator = _evaluator(request)
+    if checked:  # the save-time result describes the rule as saved
+        evaluator.set_rule_error(rule.id, error)
+    return _out(rule, evaluator)
 
 
 @router.delete("/alerts/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)

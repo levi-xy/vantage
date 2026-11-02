@@ -209,3 +209,39 @@ def test_0006_keeps_legacy_events_readable(db_url: str) -> None:
             assert conn.execute(text("SELECT count(*) FROM alert_events")).scalar() == 3
     finally:
         eng.dispose()
+
+
+def test_0008_no_data_state_and_one_open_event_per_series(db_url: str) -> None:
+    """``no_data`` is allowed, counts as open for the unique index, open events get a
+    ``state_since``, and a downgrade turns ``no_data`` back into ``firing``."""
+    cfg = alembic_config(db_url)
+    command.upgrade(cfg, "0007")
+    eng = make_engine(db_url)
+    insert = text(
+        "INSERT INTO alert_events (id, rule_id, fingerprint, labels, rule_name, severity, "
+        "state, started_at, summary) VALUES (:id, 1, 'f1', '{}', 'G', 'critical', :state, "
+        ":at, 'x')"
+    )
+    try:
+        with eng.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO alert_rules "
+                    "(id, name, expr, for_seconds, severity, channel_ids, enabled) "
+                    "VALUES (1, 'G', 'up == 0', 0, 'critical', '[]', true)"
+                )
+            )
+            conn.execute(insert, {"id": 1, "state": "firing", "at": STAMP})
+        command.upgrade(cfg, "0008")
+        with eng.begin() as conn:
+            assert conn.execute(text("SELECT state_since FROM alert_events")).scalar()
+            conn.execute(text("UPDATE alert_events SET state = 'no_data' WHERE id = 1"))
+        with pytest.raises(IntegrityError), eng.begin() as conn:
+            conn.execute(insert, {"id": 2, "state": "firing", "at": STAMP})
+        with pytest.raises(IntegrityError), eng.begin() as conn:
+            conn.execute(insert, {"id": 3, "state": "bogus", "at": STAMP})
+        command.downgrade(cfg, "0007")
+        with eng.connect() as conn:
+            assert conn.execute(text("SELECT state FROM alert_events")).scalar() == "firing"
+    finally:
+        eng.dispose()

@@ -279,6 +279,18 @@ class PollScheduler:
             raw = self._min_interval
         return min(max(raw, self._min_interval), MAX_POLL_INTERVAL_SECONDS)
 
+    def interval_for_type(self, type_id: str) -> float | None:
+        """The poll interval of an integration type, None if it isn't polled (the alert
+        evaluator's freshness window, P0-3b)."""
+        cls = self._registry.get(type_id)
+        if cls is None or not polls(cls):
+            return None
+        try:
+            integration = cls()
+        except Exception:
+            return None
+        return self.interval_for(integration)
+
     async def _run(self, spec: PollSpec) -> None:
         cls = self._registry.get(spec.type_id)
         if cls is None:  # removed from the registry since loading; nothing to do

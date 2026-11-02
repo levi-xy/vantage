@@ -61,7 +61,12 @@ export interface AuditEntry {
   changes: Record<string, unknown>;
 }
 
-export type AlertState = "firing" | "resolved";
+/** `no_data`: still open, but no fresh value to tell whether the condition holds. */
+export type AlertState = "firing" | "no_data" | "resolved";
+
+/** Why an open event has no data. Later versions may add reasons. */
+export type AlertNoDataReason =
+  "source_stale" | "source_down" | "metric_missing" | "query_failed" | (string & {});
 
 export type AlertEndReason =
   "recovered" | "rule_disabled" | "rule_deleted" | "rule_changed" | "closed_by_user";
@@ -80,7 +85,11 @@ export interface AlertEvent {
   labels: Record<string, string>;
   fingerprint: string;
   state: AlertState;
+  /** Set while `state` is `no_data`. */
+  no_data_reason?: AlertNoDataReason | null;
   started_at: string;
+  /** When the event entered its current state (null for old events). */
+  state_since?: string | null;
   ended_at: string | null;
   end_reason: AlertEndReason | null;
   summary: string;
@@ -132,10 +141,15 @@ export interface AlertRule {
   instance_id: string | null;
   channel_ids: number[];
   enabled: boolean;
+  /** How the rule's alerts resolve: the value seen failing the condition, or an empty
+   * result (when the expression can't be split into a value and a condition). */
+  recovery_mode?: "value" | "empty_result";
+  /** The last query error the backend saw for the rule; short, no secrets. */
+  error?: string | null;
 }
 
 /** Body of `POST /alerts/rules`; `PATCH` takes any subset. */
-export type AlertRuleInput = Omit<AlertRule, "id">;
+export type AlertRuleInput = Omit<AlertRule, "id" | "recovery_mode" | "error">;
 
 /** `GET /alerts/templates` (admin only): a suggested rule. */
 export interface AlertTemplate {
