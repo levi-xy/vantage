@@ -14,7 +14,11 @@ Reads go through each instance's guarded clients (``InstanceContext``), like a p
   interval, so between updates the last rate is kept (for at most
   :data:`SCRAPED_STALE_SECONDS`). The rate is measured from when Vantage saw the new
   value, not when the exporter collected it, so it can be off by up to about one tick:
-  fine for a live hint, and the history in Prometheus is exact.
+  fine for a live hint, and the history in Prometheus is exact. The first value read
+  may already be old, so a rate is only measured between two *changes* seen: measured
+  from the first read, the counters' growth over a whole exporter interval would be
+  divided by the few seconds since that read, and the rate would read several times too
+  high.
 
 SNMP counters are read live, so unchanged counters there mean no traffic (rate 0).
 
@@ -116,6 +120,8 @@ class _Last:
     at: float
     in_bps: float | None = None
     out_bps: float | None = None
+    # ``at`` is when these counters were first seen changed (not just first read).
+    changed: bool = False
 
 
 class LiveRates:
@@ -217,12 +223,16 @@ class LiveRates:
             if now - last.at > SCRAPED_STALE_SECONDS:
                 return None
             return last.in_bps, last.out_bps
+        if not live and not last.changed:
+            # The first read's value may be from long ago: start measuring at this change.
+            self._last[port] = _Last(in_octets, out_octets, now, changed=True)
+            return None
         elapsed = now - last.at
         if elapsed <= 0:
             return None
         in_bps = (in_octets - last.in_octets) * 8 / elapsed
         out_bps = (out_octets - last.out_octets) * 8 / elapsed
-        self._last[port] = _Last(in_octets, out_octets, now, in_bps, out_bps)
+        self._last[port] = _Last(in_octets, out_octets, now, in_bps, out_bps, changed=True)
         return in_bps, out_bps
 
     def _load(self) -> tuple[list[Port], dict[uuid.UUID, PollSpec]]:

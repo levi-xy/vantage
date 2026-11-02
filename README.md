@@ -57,7 +57,7 @@ Don't see your device? The generic integrations (Linux host, SNMP, HTTP/ping) co
             Browser
                │  HTTPS, login
         ┌──────▼───────┐
-        │  Frontend    │  React + Tailwind + ECharts
+        │  Frontend    │  React + Tailwind
         └──────┬───────┘
                │  REST + WebSocket (the only thing the browser talks to)
         ┌──────▼──────────────────────────────────────────┐

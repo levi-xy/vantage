@@ -7,8 +7,6 @@ import { formatAsOf } from "./freshness";
 
 const client = new ApiClient({ fetch: vi.fn() });
 vi.mock("../../app/session", () => ({ useApiClient: () => client }));
-// ECharts needs a real canvas; the chart itself is not rendered under jsdom.
-vi.mock("./TimeSeriesChart", () => ({ TimeSeriesChart: () => null }));
 
 describe("a card with a stale value", () => {
   it("shows the past value greyed, with neutral colours and 'no data since' in the header", async () => {

@@ -124,7 +124,15 @@ async def test_reads_the_chosen_port_and_publishes_its_rate(
     rates, hub, clock, _db = setup
     sub = hub.subscribe()
     assert sub is not None
-    pages = iter([telegraf(1000, 500), telegraf(1000, 500), telegraf(3500, 1500)])
+    pages = iter(
+        [
+            telegraf(1000, 500),
+            telegraf(1000, 500),
+            telegraf(3500, 1500),
+            telegraf(3500, 1500),
+            telegraf(6000, 2500),
+        ]
+    )
     fake_net.serve("10.0.0.1", 9273, lambda _request: http_response(body=next(pages)))
 
     await rates.tick_once()  # first read: nothing to compare with yet
@@ -134,11 +142,21 @@ async def test_reads_the_chosen_port_and_publishes_its_rate(
     await rates.tick_once()  # Telegraf hasn't updated: no rate known yet
     assert sub.queue.empty()
 
-    clock.now += 2  # 4 s after the first read
+    # Telegraf updated: but the first value may have been old when it was read, so this
+    # growth isn't measured over the 4 s since (it would read as 5000 / 2000 bit/s).
+    clock.now += 2
+    await rates.tick_once()
+    assert sub.queue.empty()
+
+    clock.now += 2
+    await rates.tick_once()  # unchanged again
+    assert sub.queue.empty()
+
+    clock.now += 8  # the next update, 10 s after the last one: 2500 / 1000 bytes in 10 s
     await rates.tick_once()
     message = sub.queue.get_nowait()
     assert message["type"] == "live_rate"
-    assert (message["in_bps"], message["out_bps"], message["ports"]) == (5000.0, 2000.0, 1)
+    assert (message["in_bps"], message["out_bps"], message["ports"]) == (2000.0, 800.0, 1)
     assert set(message) == {"type", "in_bps", "out_bps", "ports", "at"}  # numbers only
 
     # Read only: GET of the scrape target, nothing else.
@@ -302,11 +320,13 @@ async def test_node_exporter_counters_with_total_suffix(
             'node_cpu_seconds_total{cpu="0",mode="idle"} 1\n'
         ).encode()
 
-    pages = iter([page(0, 0), page(250, 500)])
+    pages = iter([page(0, 0), page(250, 500), page(500, 1000)])
     fake_net.serve("10.0.0.20", 9100, lambda _request: http_response(body=next(pages)))
     sub = hub.subscribe()
     assert sub is not None
     await rates.tick_once()
+    clock.now += 2
+    await rates.tick_once()  # first change: starts the measurement
     clock.now += 2
     await rates.tick_once()
     message = sub.queue.get_nowait()
@@ -319,7 +339,9 @@ def test_an_exporter_rate_goes_stale(
     rates, _hub, _clock, _db = setup
     port = Port("pfsense", PF_ID, "igc0")
     assert rates._rate(port, 0, 0, 0.0, live=False) is None
-    assert rates._rate(port, 1000, 1000, 10.0, live=False) == (800.0, 800.0)
-    assert rates._rate(port, 1000, 1000, 20.0, live=False) == (800.0, 800.0)  # kept
-    assert rates._rate(port, 1000, 1000, 41.0, live=False) is None  # stale after 30 s
+    # The first change only starts the measurement: the first read's value may be old.
+    assert rates._rate(port, 1000, 1000, 10.0, live=False) is None
+    assert rates._rate(port, 2000, 2000, 20.0, live=False) == (800.0, 800.0)
+    assert rates._rate(port, 2000, 2000, 30.0, live=False) == (800.0, 800.0)  # kept
+    assert rates._rate(port, 2000, 2000, 51.0, live=False) is None  # stale after 30 s
     assert rates._rate(port, 10, 10, 43.0, live=False) is None  # counter reset

@@ -53,10 +53,10 @@ export const WIDGETS: readonly Widget[] = [
   {
     card_type: "throughput",
     title: "Throughput",
-    default_size: [3, 2],
+    // Room for the 6-hour chart; a full row at phone width.
+    default_size: [6, 5],
     component: ThroughputCard,
     settingsEditor: ThroughputSettings,
-    tile: true,
   },
   {
     card_type: "network-map",
@@ -64,6 +64,7 @@ export const WIDGETS: readonly Widget[] = [
     default_size: [6, 4],
     component: NetworkMapCard,
     settingsEditor: NetworkMapSettings,
+    notOnOldLayouts: true,
   },
 ];
 

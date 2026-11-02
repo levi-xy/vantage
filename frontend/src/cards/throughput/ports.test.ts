@@ -1,7 +1,13 @@
 import type { Instance } from "../../api";
 import { formatBytesPerSecond } from "../metrics/format";
 import { testInstance, vector } from "../testRender";
-import { portOptions, portsFromSettings, rateQuery, settingsWithPorts } from "./ports";
+import {
+  historyQuery,
+  portOptions,
+  portsFromSettings,
+  rateQuery,
+  settingsWithPorts,
+} from "./ports";
 
 const pf: Instance = {
   ...testInstance,
@@ -34,6 +40,20 @@ describe("throughput ports", () => {
       '8 * ((sum(rate(node_network_receive_bytes_total{vantage_instance_id="h",device="en\\"0\\\\"}[2m])) or vector(0)))',
     );
     expect(rateQuery([], "out")).toBe("vector(0)");
+  });
+
+  it("leaves a time with no report empty in the history query, never 0", () => {
+    const q = historyQuery(
+      [
+        { source: "pfsense", instanceId: "pf", iface: "igc0" },
+        { source: "node", instanceId: "h", iface: "eth0" },
+      ],
+      "out",
+    );
+    expect(q).toBe(
+      '8 * sum(rate(net_bytes_sent{vantage_instance_id="pf",interface="igc0"}[2m]) or rate(node_network_transmit_bytes_total{vantage_instance_id="h",device="eth0"}[2m]))',
+    );
+    expect(q).not.toContain("vector(0)");
   });
 
   it("names ports as the cards do and leaves hidden pfSense interfaces out", () => {

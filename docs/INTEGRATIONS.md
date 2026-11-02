@@ -419,8 +419,8 @@ Cards live in `frontend/src/cards/<card_type>/`, one folder per `card_type`, and
 - `useInstantQuery(instanceId, (sel) => ...)` for current values and `useRangeQuery(...)` for sparklines and charts (last hour by default). The `sel` helper builds the selector and always includes `vantage_instance_id`, so a card can only read its own instance: write `` `${METRIC}${sel('mode="idle"')}` ``. Polled metrics are `vantage_<type_id>_*`; scraped exporter metrics keep their native names and carry the same label.
 - Read results with `firstValue`, `byLabel` and `firstSeries` (`cards/metrics/promql.ts`) and show them with the formatters in `cards/metrics/format.ts` (bytes, bit/s, %, ms, durations). Values are strings in the API; the helpers turn `NaN` into "no value", which formatters show as "–".
 - Wrap the body in `CardFrame`: it draws the title, instance name and status badge, and the shared loading, error and no-data states. Pass `empty` only when the card's main metric is absent. Sections for optional metrics (RAID, ZFS, sensors) render only when their query returns series.
-- Use `StatTile` (value, label, optional sparkline), `UsageBar` and `TimeSeriesChart` (ECharts line/area; follows light/dark mode and resizes with its grid cell) instead of drawing your own. The card must work in a single column at phone width.
-- Tests: mock `../../app/session` (`useApiClient`) and `../metrics/TimeSeriesChart` (ECharts needs a canvas), then check one card with data and one without. See `ping-check/PingCheckCard.test.tsx`.
+- Use `StatTile` (value, label, optional sparkline), `UsageBar` and the inline-SVG `Sparkline` / `AreaChart` (`metrics/Charts.tsx`: palette colours, so they follow light/dark mode, and they stretch to their box) instead of drawing your own. The card must work in a single column at phone width.
+- Tests: mock `../../app/session` (`useApiClient`), then check one card with data and one without. See `ping-check/PingCheckCard.test.tsx`.
 
 ---
 
