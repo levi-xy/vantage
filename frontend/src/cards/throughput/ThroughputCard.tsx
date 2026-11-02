@@ -93,7 +93,7 @@ function Current({ label, value, tone }: { label: string; value: string; tone: "
         <span className={`h-[3px] w-2.5 rounded-sm ${tone === "in" ? "bg-in" : "bg-out"}`} />
         {label}
       </span>
-      <span className="font-mono text-xl font-medium tabular-nums">{value}</span>
+      <span className="text-xl font-medium tabular-nums">{value}</span>
     </div>
   );
 }

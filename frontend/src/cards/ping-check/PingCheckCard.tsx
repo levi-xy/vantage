@@ -19,7 +19,7 @@ function Loss({ ratio }: { ratio: number | undefined }) {
   const tone =
     stale || ratio === undefined || ratio <= 0 ? "" : ratio >= 1 ? "text-crit-text" : "text-warn";
   return (
-    <span className="flex items-baseline gap-1 font-mono text-sm tabular-nums">
+    <span className="flex items-baseline gap-1 text-sm tabular-nums">
       <span className={tone}>{formatRatio(ratio)}</span>
       <span className="text-xs text-muted">loss</span>
     </span>
@@ -52,7 +52,7 @@ export function PingCheckCard({ instanceId, title, instance }: CardProps) {
       empty={rttValue === undefined && lossValue === undefined}
     >
       <div className="flex items-baseline gap-4" role="group" aria-label="Round trip">
-        <span className="font-mono text-[28px] leading-tight font-medium tracking-tight tabular-nums">
+        <span className="text-[28px] leading-tight font-medium tracking-tight tabular-nums">
           {formatMs(rttValue)}
         </span>
         <Loss ratio={lossValue} />
@@ -63,7 +63,7 @@ export function PingCheckCard({ instanceId, title, instance }: CardProps) {
           <div className="flex justify-between gap-2 text-xs text-muted">
             <span>last hour</span>
             {hour && (
-              <span className="font-mono tabular-nums">
+              <span className="tabular-nums">
                 min {formatMs(hour.min)} · avg {formatMs(hour.avg)} · max {formatMs(hour.max)}
               </span>
             )}

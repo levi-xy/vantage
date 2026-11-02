@@ -105,7 +105,7 @@ export function AreaChart({ series, format, tickScale = 1, label }: AreaChartPro
     });
   return (
     <div className="grid min-h-0 flex-1 grid-cols-[auto_minmax(0,1fr)] grid-rows-[minmax(0,1fr)_auto] gap-x-2">
-      <div className="relative min-w-10 text-right font-mono text-[11px] whitespace-nowrap text-muted">
+      <div className="relative min-w-10 text-right text-[11px] whitespace-nowrap text-muted">
         {/* Sizes the column; the labels sit at their gridlines. */}
         <span className="invisible">{format(top)}</span>
         {ticks.map((t) => (
@@ -154,7 +154,7 @@ export function AreaChart({ series, format, tickScale = 1, label }: AreaChartPro
         ))}
       </svg>
       <span />
-      <div className="relative h-5 pt-1.5 font-mono text-[11px] text-muted" aria-hidden="true">
+      <div className="relative h-5 pt-1.5 text-[11px] text-muted" aria-hidden="true">
         {hours.map((t) => (
           <span
             key={t}
