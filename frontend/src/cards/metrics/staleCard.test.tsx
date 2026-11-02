@@ -36,11 +36,19 @@ describe("a card with a stale value", () => {
       { cached: true },
     );
 
-    expect(await screen.findByText(`as of ${formatAsOf(last)}`)).toBeInTheDocument();
+    expect(
+      await screen.findByText(`Values as of ${formatAsOf(last)}, greyed.`),
+    ).toBeInTheDocument();
+    // The header: a short state with the full error as its tooltip, never the error text.
+    const state = screen.getByText("DOWN 10m");
+    expect(state.className).toContain("text-crit-text");
+    expect(state).toHaveAttribute("title", "timed out");
+    expect(screen.queryByText("timed out")).not.toBeInTheDocument();
+    expect(screen.getByText(`Device · no data since ${formatAsOf(last)}`)).toBeInTheDocument();
     const loss = screen.getByText("0.0%");
     expect(loss.closest('[data-stale="true"]')).not.toBeNull();
     // Zero loss would be green if it were current; a past value stays neutral.
-    expect(loss.className).not.toMatch(/emerald|red/);
+    expect(loss.className).not.toMatch(/emerald|crit/);
     expect(screen.getByText("12.3 ms")).toBeInTheDocument();
   });
 });

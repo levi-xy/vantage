@@ -18,13 +18,20 @@ export function PingCheckCard({ instanceId, title, instance }: CardProps) {
 
   const rttValue = firstValue(rtt.data);
   const lossValue = firstValue(loss.data);
+  const freshness = cardFreshness(rtt, loss);
   return (
     <CardFrame
       title={title}
+      showTitle={false}
       instance={instance}
       loading={rtt.isPending || loss.isPending}
       error={rtt.error ?? loss.error}
-      freshness={cardFreshness(rtt, loss)}
+      freshness={freshness}
+      problem={
+        freshness.kind === "fresh" && lossValue !== undefined && lossValue >= 1
+          ? "100% LOSS"
+          : undefined
+      }
       empty={rttValue === undefined && lossValue === undefined}
     >
       <div className="grid grid-cols-2 gap-3">
@@ -36,7 +43,7 @@ export function PingCheckCard({ instanceId, title, instance }: CardProps) {
         <StatTile
           label="Packet loss"
           value={formatRatio(lossValue)}
-          tone={lossValue === undefined ? undefined : lossValue > 0 ? "bad" : "ok"}
+          tone={lossValue !== undefined && lossValue > 0 ? "bad" : undefined}
           spark={firstSeries(lossSpark.data)}
         />
       </div>

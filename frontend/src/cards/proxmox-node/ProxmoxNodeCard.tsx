@@ -43,6 +43,7 @@ export function ProxmoxNodeCard({ instanceId, title, instance }: CardProps) {
   return (
     <CardFrame
       title={title}
+      showTitle={false}
       instance={instance}
       loading={up.isPending}
       error={up.error}
@@ -55,9 +56,7 @@ export function ProxmoxNodeCard({ instanceId, title, instance }: CardProps) {
           <section key={n.key} aria-label={`Node ${n.key}`} className="flex flex-col gap-1.5">
             <div className="flex items-baseline justify-between gap-2">
               <span className="font-semibold">{n.key}</span>
-              <span
-                className={`text-xs font-medium ${online ? "text-emerald-700 dark:text-emerald-400" : "text-red-700 dark:text-red-400"}`}
-              >
+              <span className={`text-xs font-medium ${online ? "" : "text-crit-text"}`}>
                 {online ? `online · up ${formatDuration(uptimeBy.get(n.key))}` : "offline"}
               </span>
             </div>

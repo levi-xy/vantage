@@ -8,9 +8,9 @@ import { useInstantQuery } from "../metrics/useMetricQuery";
 const P = "vantage_cloudflare_tunnel_";
 
 const STATUS_STYLE: Record<string, string> = {
-  healthy: "text-emerald-700 dark:text-emerald-400",
+  healthy: "",
   degraded: "text-amber-700 dark:text-amber-400",
-  down: "text-red-700 dark:text-red-400",
+  down: "text-crit-text",
   inactive: "text-slate-500 dark:text-slate-400",
 };
 

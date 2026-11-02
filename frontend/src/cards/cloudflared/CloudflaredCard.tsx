@@ -32,6 +32,7 @@ export function CloudflaredCard({ instanceId, title, instance }: CardProps) {
   return (
     <CardFrame
       title={title}
+      showTitle={false}
       instance={instance}
       loading={connections.isPending}
       error={connections.error ?? requests.error}

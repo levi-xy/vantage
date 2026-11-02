@@ -142,9 +142,7 @@ export function NetworkMapCard({ instances }: WidgetProps) {
           );
         })}
       </svg>
-      {links.isError && (
-        <p className="text-xs text-red-700 dark:text-red-400">Could not load the links.</p>
-      )}
+      {links.isError && <p className="text-xs text-crit-text">Could not load the links.</p>}
     </div>
   );
 }
@@ -291,7 +289,7 @@ export function NetworkMapSettings({ instances }: WidgetSettingsProps) {
         </div>
       </form>
       {error && (
-        <p role="alert" className="text-sm text-red-700 dark:text-red-400">
+        <p role="alert" className="text-sm text-crit-text">
           {error}
         </p>
       )}

@@ -1,7 +1,6 @@
 import type { CardProps } from "../registry";
 import { cardFreshness } from "../metrics/freshness";
 import { CardFrame } from "../metrics/CardFrame";
-import { formatDuration } from "../metrics/format";
 import { byLabel, firstValue } from "../metrics/promql";
 import { StatTile } from "../metrics/StatTile";
 import { useInstantQuery } from "../metrics/useMetricQuery";
@@ -25,11 +24,13 @@ export function SnmpOverviewCard({ instanceId, title, instance }: CardProps) {
   return (
     <CardFrame
       title={title}
+      showTitle={false}
       instance={instance}
       loading={info.isPending && uptime.isPending}
       error={info.error ?? uptime.error}
       freshness={cardFreshness(info, uptime, oper)}
       empty={!labels && uptimeValue === undefined}
+      uptimeSeconds={uptimeValue}
     >
       <div>
         <div className="truncate text-base font-semibold">
@@ -41,8 +42,7 @@ export function SnmpOverviewCard({ instanceId, title, instance }: CardProps) {
           </div>
         )}
       </div>
-      <div className="grid grid-cols-3 gap-3">
-        <StatTile label="Uptime" value={formatDuration(uptimeValue)} />
+      <div className="grid grid-cols-2 gap-3">
         <StatTile label="Interfaces up" value={ports.length ? String(up) : "–"} />
         <StatTile
           label="Interfaces down"

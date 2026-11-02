@@ -1,7 +1,7 @@
 import type { CardProps } from "../registry";
 import { cardFreshness } from "../metrics/freshness";
 import { CardFrame } from "../metrics/CardFrame";
-import { formatCelsius, formatDuration, formatPercent } from "../metrics/format";
+import { formatCelsius, formatPercent } from "../metrics/format";
 import { firstSeries, firstValue } from "../metrics/promql";
 import { StatTile } from "../metrics/StatTile";
 import { useInstantQuery, useRangeQuery } from "../metrics/useMetricQuery";
@@ -36,11 +36,13 @@ export function PfsenseOverviewCard({ instanceId, title, instance }: CardProps) 
   return (
     <CardFrame
       title={title}
+      showTitle={false}
       instance={instance}
       loading={cpu.isPending && mem.isPending}
       error={cpu.error ?? mem.error}
       freshness={cardFreshness(cpu, mem, disk, states, temp, uptime)}
       empty={cpuValue === undefined && memValue === undefined && statesValue === undefined}
+      uptimeSeconds={firstValue(uptime.data)}
     >
       <div className="grid grid-cols-3 gap-3">
         <StatTile label="CPU" value={formatPercent(cpuValue)} spark={firstSeries(cpuSpark.data)} />
@@ -54,7 +56,6 @@ export function PfsenseOverviewCard({ instanceId, title, instance }: CardProps) 
           label="States"
           value={statesValue === undefined ? "–" : String(Math.round(statesValue))}
         />
-        <StatTile label="Uptime" value={formatDuration(firstValue(uptime.data))} />
         {tempValue !== undefined && (
           <StatTile label="Temperature" value={formatCelsius(tempValue)} />
         )}

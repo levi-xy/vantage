@@ -50,22 +50,19 @@ export function ProxmoxGuestsCard({ instanceId, title, instance }: CardProps) {
       <ul className="flex flex-col divide-y divide-slate-200 dark:divide-slate-800">
         {guests.map((g) => (
           <li key={g.vmid} className="flex items-center gap-2 py-1.5 text-sm">
-            <span
-              role="img"
-              aria-label={g.running ? "running" : "stopped"}
-              className={`h-2.5 w-2.5 shrink-0 rounded-full ${g.running ? "bg-emerald-500" : "bg-slate-400 dark:bg-slate-600"}`}
-            />
             <span className="min-w-0 flex-1">
               <span className="block truncate font-medium">{g.name}</span>
               <span className="block text-xs text-slate-500 dark:text-slate-400">
                 {g.vmid} · {g.type} · {g.node}
               </span>
             </span>
-            {g.running && (
+            {g.running ? (
               <span className="shrink-0 text-right text-xs tabular-nums">
                 <span className="block">CPU {formatPercent(cpuBy.get(g.vmid))}</span>
                 <span className="block">Mem {formatPercent(memBy.get(g.vmid))}</span>
               </span>
+            ) : (
+              <span className="shrink-0 text-xs text-muted">stopped</span>
             )}
           </li>
         ))}
