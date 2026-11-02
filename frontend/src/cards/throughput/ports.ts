@@ -98,6 +98,24 @@ export function rateQuery(ports: PortRef[], dir: "in" | "out"): string {
 }
 
 /**
+ * Like `rateQuery`, for the history: without `or vector(0)`, so a time when no chosen port
+ * reported has no value (a gap in the chart), never a fake 0. The ports' series differ in
+ * their instance or interface label, so `or` keeps every one and `sum` adds them up.
+ */
+export function historyQuery(ports: PortRef[], dir: "in" | "out"): string {
+  if (ports.length === 0) return "vector(0)";
+  const parts = ports.map((p) => {
+    const m = SOURCE_METRICS[p.source];
+    const sel = selector(m[dir], [
+      `vantage_instance_id=${promqlString(p.instanceId)}`,
+      `${m.label}=${promqlString(p.iface)}`,
+    ]);
+    return `rate(${sel}[2m])`;
+  });
+  return `8 * sum(${parts.join(" or ")})`;
+}
+
+/**
  * A WAN port: named, or mapped in the device settings to, "WAN" (as the pfSense Interfaces
  * card pins it). Its in/out is the network's download/upload; on other ports, just in/out.
  */

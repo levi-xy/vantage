@@ -29,6 +29,22 @@ describe("chart paths", () => {
     ).toBe("M0.0 0.0 L1000.0 0.0 L1000.0 100.0 L0.0 100.0 Z");
   });
 
+  it("breaks the line and the area at a gap instead of bridging it", () => {
+    // Step 10; nothing from 20 to 70 (the device was down).
+    const points: [number, number][] = [
+      [0, 1],
+      [10, 1],
+      [20, 1],
+      [70, 1],
+      [80, 1],
+      [90, 1],
+    ];
+    expect(linePath(points, box)).toBe(
+      "M0.0 90.0 L100.0 90.0 L200.0 90.0 M700.0 90.0 L800.0 90.0 L900.0 90.0",
+    );
+    expect(areaPath(points, box).match(/Z/g)).toHaveLength(2);
+  });
+
   it("picks round gridlines at or above the max", () => {
     expect(niceTicks(84e6)).toEqual([0, 25e6, 50e6, 75e6, 100e6]);
     expect(niceTicks(12)).toEqual([0, 5, 10, 15]);

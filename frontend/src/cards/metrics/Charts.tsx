@@ -83,16 +83,20 @@ export interface AreaChartProps {
    * rounding (8 for a bit rate shown in bytes).
    */
   tickScale?: number;
+  /** The x range (Unix seconds); by default the points' own. A gap at either end stays one. */
+  window?: { start: number; end: number };
   label: string;
 }
 
 /** Lines over time from 0 up, with gridlines, y-axis labels and hour labels. Fills its box. */
-export function AreaChart({ series, format, tickScale = 1, label }: AreaChartProps) {
+export function AreaChart({ series, format, tickScale = 1, window, label }: AreaChartProps) {
   const drawn = series.filter((s) => s.points.length > 1);
   if (drawn.length === 0) {
     return <p className="text-xs text-muted">No history yet.</p>;
   }
-  const { start, end, max } = domain(drawn.map((s) => s.points));
+  const own = domain(drawn.map((s) => s.points));
+  const { start, end } = window ?? own;
+  const { max } = own;
   const ticks = niceTicks(max / tickScale).map((t) => t * tickScale);
   const top = ticks[ticks.length - 1] ?? 1;
   const box: Box = { start, end, min: 0, max: top, width: VIEW_W, height: VIEW_H };

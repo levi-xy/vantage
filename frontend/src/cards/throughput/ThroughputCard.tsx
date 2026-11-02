@@ -15,6 +15,7 @@ import {
   portKey,
   portOptions,
   portsFromSettings,
+  historyQuery,
   isWanPort,
   rateQuery,
   settingsWithPorts,
@@ -111,8 +112,9 @@ export function ThroughputCard({ instances, settings }: WidgetProps) {
   const outExpr = rateQuery(ports, "out");
   const rx = useFleetQuery(inExpr);
   const tx = useFleetQuery(outExpr);
-  const rxHistory = useFleetRangeQuery(inExpr, CHART_WINDOW_SECONDS, chosen);
-  const txHistory = useFleetRangeQuery(outExpr, CHART_WINDOW_SECONDS, chosen);
+  // No `or vector(0)` here: a time the device didn't report is a gap, not 0 traffic.
+  const rxHistory = useFleetRangeQuery(historyQuery(ports, "in"), CHART_WINDOW_SECONDS, chosen);
+  const txHistory = useFleetRangeQuery(historyQuery(ports, "out"), CHART_WINDOW_SECONDS, chosen);
   const { groups } = usePortOptions(instances);
   const now = useNow();
   // Live only when every chosen port was read; a partial sum would look like the total.
@@ -149,8 +151,14 @@ export function ThroughputCard({ instances, settings }: WidgetProps) {
         ? "—"
         : formatRate(firstValue(q.data));
   const historyError = rxHistory.error ?? txHistory.error;
+  // The whole 6 hours up to the last fetch, so a device that stopped reporting shows a gap
+  // up to "now" instead of a chart that ends early.
+  const historyEnd = rxHistory.dataUpdatedAt / 1000;
   const chart = (
     <AreaChart
+      window={
+        historyEnd > 0 ? { start: historyEnd - CHART_WINDOW_SECONDS, end: historyEnd } : undefined
+      }
       label={`${inName} and ${outName.toLowerCase()} over the last 6 hours`}
       format={formatRate}
       tickScale={unit === "bytes" ? 8 : 1}

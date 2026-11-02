@@ -2,6 +2,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import { ApiClient } from "../../api";
 import type { Instance, QueryRequest, QueryResult } from "../../api";
+import { LIVE_RATE_KEY } from "../../app/live";
+import type { LiveRate } from "../../app/live";
 import { json } from "../../test-utils";
 import { ThroughputCard } from "./ThroughputCard";
 
@@ -33,7 +35,11 @@ const result = (type: "vector" | "matrix", values: [number, string][]): QueryRes
   warnings: [],
 });
 
-function renderCard(instance: Instance, cardSettings: Record<string, string> = settings) {
+function renderCard(
+  instance: Instance,
+  cardSettings: Record<string, string> = settings,
+  live?: LiveRate,
+) {
   const queries: QueryRequest[] = [];
   const fetchMock = vi.fn<typeof fetch>(async (_url, init) => {
     const req = JSON.parse(String(init?.body)) as QueryRequest;
@@ -65,6 +71,7 @@ function renderCard(instance: Instance, cardSettings: Record<string, string> = s
     new ApiClient({ fetch: fetchMock }).query(req),
   );
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  if (live) queryClient.setQueryData(LIVE_RATE_KEY, live);
   render(
     <QueryClientProvider client={queryClient}>
       <ThroughputCard instances={[instance]} settings={cardSettings} />
@@ -105,6 +112,25 @@ describe("ThroughputCard", () => {
     expect(
       within(await screen.findByRole("group", { name: "Download" })).getByText("—"),
     ).toBeTruthy();
+  });
+
+  it("shows a pushed live rate in the same unit as the chart (bits per second, as sent)", async () => {
+    // The chart's last point is 84.2 Mbit/s (8 * rate of the byte counter, in Prometheus);
+    // /ws pushes bits per second already, so 84 000 000 must read 84.0 Mbit/s, not x8.
+    renderCard(firewall(10), settings, {
+      inBps: 84_000_000,
+      outBps: 12_000_000,
+      ports: 1,
+      receivedAt: Date.now(),
+    });
+    const download = await screen.findByRole("group", { name: "Download" });
+    expect(within(download).getByText("84.0 Mbit/s")).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("group", { name: "Upload" })).getByText("12.0 Mbit/s"),
+    ).toBeInTheDocument();
+    expect(await screen.findByText(/· live/)).toBeInTheDocument();
+    // The chart's top gridline is the round step above its 84.2 Mbit/s last point.
+    expect(await screen.findAllByText("100 Mbit/s")).not.toHaveLength(0);
   });
 
   it("says in and out for a port that isn't the WAN", async () => {

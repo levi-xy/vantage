@@ -23,20 +23,50 @@ function xy([t, v]: Point, b: Box): string {
   return `${x.toFixed(1)} ${y.toFixed(1)}`;
 }
 
-/** "M x y L x y ...", or "" for fewer than two points. */
-export function linePath(points: Point[], box: Box): string {
-  if (points.length < 2) return "";
-  return points.map((p, i) => `${i ? "L" : "M"}${xy(p, box)}`).join(" ");
+/**
+ * The points as runs without a gap. A range query leaves out the steps with no value, so a
+ * jump of more than 1.5 x the series' step (its smallest spacing) is a gap: never bridged.
+ */
+export function segments(points: Point[]): Point[][] {
+  let step = Infinity;
+  for (let i = 1; i < points.length; i++) {
+    const d = (points[i] as Point)[0] - (points[i - 1] as Point)[0];
+    if (d > 0) step = Math.min(step, d);
+  }
+  const runs: Point[][] = [];
+  let run: Point[] = [];
+  for (const p of points) {
+    const prev = run[run.length - 1];
+    if (prev && p[0] - prev[0] > step * 1.5) {
+      runs.push(run);
+      run = [];
+    }
+    run.push(p);
+  }
+  if (run.length) runs.push(run);
+  return runs;
 }
 
-/** The line closed down to the bottom edge, for a filled area. */
+/** "M x y L x y ..." per run of two or more points; "" when there is none. */
+export function linePath(points: Point[], box: Box): string {
+  return segments(points)
+    .filter((run) => run.length > 1)
+    .map((run) => run.map((p, i) => `${i ? "L" : "M"}${xy(p, box)}`).join(" "))
+    .join(" ");
+}
+
+/** Each run closed down to the bottom edge, for a filled area. */
 export function areaPath(points: Point[], box: Box): string {
-  const line = linePath(points, box);
-  if (!line) return "";
-  const first = points[0] as Point;
-  const last = points[points.length - 1] as Point;
   const bottom = (t: number) => xy([t, box.min], box);
-  return `${line} L${bottom(last[0])} L${bottom(first[0])} Z`;
+  return segments(points)
+    .filter((run) => run.length > 1)
+    .map((run) => {
+      const line = run.map((p, i) => `${i ? "L" : "M"}${xy(p, box)}`).join(" ");
+      const first = run[0] as Point;
+      const last = run[run.length - 1] as Point;
+      return `${line} L${bottom(last[0])} L${bottom(first[0])} Z`;
+    })
+    .join(" ");
 }
 
 /**
