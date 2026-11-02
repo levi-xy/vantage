@@ -78,9 +78,9 @@ const MIN_SIZES: Readonly<Record<string, [number, number]>> = {
   "proxmox-guests": [4, 4],
   "proxmox-node": [4, 4],
   "smart-disks": [4, 3],
-  "snmp-overview": [3, 3],
+  "snmp-overview": [3, 4],
   "snmp-ports": [4, 4],
-  "switch-panel": [6, 3],
+  "switch-panel": [6, 5],
 };
 const DEFAULT_MIN_SIZE: [number, number] = [3, 2];
 

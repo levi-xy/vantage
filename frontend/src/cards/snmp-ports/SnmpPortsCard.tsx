@@ -2,14 +2,19 @@ import { useState } from "react";
 import type { CardProps } from "../registry";
 import { CardFrame } from "../metrics/CardFrame";
 import { useUnits } from "../../app/units";
-import { describe, speedText, TILE, useSnmpPorts } from "./ports";
+import { describe, isInternal, speedText, STATE_TEXT, TILE, useSnmpPorts } from "./ports";
+import { InternalToggle, PortLegend } from "./PortParts";
 
 export function SnmpPortsCard({ instanceId, title, instance }: CardProps) {
   const { formatRate } = useUnits();
-  const { ports, loading, error, freshness } = useSnmpPorts(instanceId);
+  const { ports: all, loading, error, freshness } = useSnmpPorts(instanceId);
   const [selected, setSelected] = useState<string | null>(null);
+  const [showInternal, setShowInternal] = useState(false);
 
-  const talkers = ports
+  const physical = all.filter((p) => !isInternal(p));
+  const ports = showInternal ? all : physical;
+  // Top talkers are physical ports only: a loopback's traffic never left the device.
+  const talkers = physical
     .map((p) => ({ port: p, total: (p.inBps ?? 0) + (p.outBps ?? 0) }))
     .filter((t) => t.total > 0)
     .sort((a, b) => b.total - a.total)
@@ -19,12 +24,17 @@ export function SnmpPortsCard({ instanceId, title, instance }: CardProps) {
   return (
     <CardFrame
       title={title}
+      showTitle={false}
       instance={instance}
       loading={loading}
       error={error}
       freshness={freshness}
-      empty={ports.length === 0}
+      empty={all.length === 0}
     >
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+        <h3 className="text-xs font-medium text-muted">{title}</h3>
+        <PortLegend />
+      </div>
       <div
         role="group"
         aria-label="Ports"
@@ -38,23 +48,28 @@ export function SnmpPortsCard({ instanceId, title, instance }: CardProps) {
             aria-label={`${p.name}: ${p.state}`}
             title={describe(p, formatRate)}
             onClick={() => setSelected(selected === p.index ? null : p.index)}
-            className={`flex flex-col items-center rounded border px-1 py-1 text-xs leading-tight ${TILE[p.state]} ${selected === p.index ? "ring-2 ring-blue-500" : ""}`}
+            className={`flex flex-col items-center rounded border-[1.5px] px-1 py-1 text-xs leading-tight ${TILE[p.state]} ${selected === p.index ? "outline-2 outline-offset-2 outline-in" : ""}`}
           >
             <span className="w-full truncate text-center font-medium">{p.name}</span>
-            <span className="tabular-nums opacity-80">
-              {p.state === "up" ? speedText(p.speed) : p.state}
+            <span className="tabular-nums text-muted">
+              {p.state === "up" ? speedText(p.speed) : STATE_TEXT[p.state]}
             </span>
           </button>
         ))}
       </div>
+      <InternalToggle
+        count={all.length - physical.length}
+        shown={showInternal}
+        onToggle={() => setShowInternal(!showInternal)}
+      />
 
-      <p className="min-h-5 text-xs text-slate-600 dark:text-slate-300" aria-live="polite">
+      <p className="min-h-5 text-xs text-muted" aria-live="polite">
         {chosen ? describe(chosen, formatRate) : "Tap a port for details."}
       </p>
 
       {talkers.length > 0 && (
         <section aria-label="Top talkers" className="flex flex-col gap-0.5 text-xs">
-          <span className="text-slate-500 dark:text-slate-400">Top talkers</span>
+          <span className="text-muted">Top talkers</span>
           {talkers.map(({ port, total }) => (
             <div key={port.index} className="flex justify-between gap-2">
               <span className="truncate">{port.name}</span>

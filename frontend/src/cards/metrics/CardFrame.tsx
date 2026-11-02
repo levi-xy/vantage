@@ -2,7 +2,7 @@ import { useContext } from "react";
 import type { ReactNode } from "react";
 import type { Instance } from "../../api";
 import { CardHeader } from "./CardHeader";
-import { FRESH, formatAsOf, StaleContext } from "./freshness";
+import { FRESH, StaleContext } from "./freshness";
 import type { Freshness } from "./freshness";
 
 export interface CardFrameProps {
@@ -46,7 +46,8 @@ export function CardFrame({
 }: CardFrameProps) {
   const stale = freshness.kind === "stale";
   let body: ReactNode = stale ? (
-    // A past value: greyed, and never green or red as if it were current.
+    // A past value: greyed, and never green or red as if it were current. The header's
+    // subtitle says how old ("no data since 14:02"); no footer, which small cards would clip.
     <div data-stale="true" className="flex flex-col gap-3 opacity-60 grayscale">
       <StaleContext.Provider value>{children}</StaleContext.Provider>
     </div>
@@ -75,9 +76,6 @@ export function CardFrame({
       />
       {showTitle && <h3 className="text-xs font-medium text-muted">{title}</h3>}
       {body}
-      {stale && !error && (
-        <p className="text-xs text-muted">Values as of {formatAsOf(freshness.asOf)}, greyed.</p>
-      )}
     </div>
   );
 }

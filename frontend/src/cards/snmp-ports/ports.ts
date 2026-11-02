@@ -21,12 +21,72 @@ export interface Port {
   outBps?: number;
 }
 
+/**
+ * A port tile by state, as on the switch faceplate: link up = tinted fill with the ok
+ * border, no link = a neutral outline, disabled = a dashed neutral outline. No link is not
+ * an alarm (most switches have unused ports), so it is never red.
+ */
 export const TILE: Record<PortState, string> = {
-  up: "border-emerald-600 bg-emerald-100 text-emerald-900 dark:border-emerald-500 dark:bg-emerald-950 dark:text-emerald-200",
-  down: "border-red-600 bg-red-100 text-red-900 dark:border-red-500 dark:bg-red-950 dark:text-red-200",
-  disabled:
-    "border-slate-400 bg-slate-100 text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-400",
+  up: "border-ok bg-ok/12 text-ink",
+  down: "border-port-off text-muted",
+  disabled: "border-dashed border-port-off text-muted",
 };
+
+/** A port's state in words where a tile shows it (an up port shows its speed). */
+export const STATE_TEXT: Record<PortState, string> = {
+  up: "",
+  down: "no link",
+  disabled: "disabled",
+};
+
+/** The faceplate notch of a port tile, coloured like its border. */
+export const NOTCH: Record<PortState, string> = {
+  up: "bg-ok",
+  down: "bg-port-off",
+  disabled: "bg-port-off",
+};
+
+/** What each tile style means, for a legend. */
+export const LEGEND: { state: PortState; label: string }[] = [
+  { state: "up", label: "Link up" },
+  { state: "down", label: "No link" },
+  { state: "disabled", label: "Disabled" },
+];
+
+// Interfaces that are not a physical port: loopback, multicast registers, tunnels and other
+// virtual devices. IF-MIB's ifType would say so directly, but the integrations don't
+// collect it yet, so this goes by the interface name (Linux, VyOS, Cisco-style names).
+const INTERNAL_NAMES = [
+  /^lo(opback)?[\d_.:-]*$/i, // lo, lo0, Loopback0
+  /^software loopback/i, // Windows ifDescr
+  /^null\d*$/i, // Null0
+  /^pim6?reg/i, // pimreg, pim6reg
+  /^tun/i, // tun0, tunl0, tunnel1
+  /^(ip6)?gre(tap)?\d*$/i, // gre0, gretap0, ip6gre0
+  /^erspan/i,
+  /^ip6?tnl/i, // ip6tnl0
+  /^ip6?_vti/i,
+  /^sit\d/i,
+  /^dummy/i,
+  /^ifb\d/i,
+  /^teql\d/i,
+];
+
+/** A loopback, tunnel or other virtual interface rather than a physical port. */
+export function isInternal(port: Pick<Port, "id" | "name">): boolean {
+  const name = port.id || port.name;
+  return INTERNAL_NAMES.some((re) => re.test(name));
+}
+
+/** The port with the most traffic (in + out), if any carries traffic. */
+export function busiest(ports: Port[]): { port: Port; total: number } | undefined {
+  let best: { port: Port; total: number } | undefined;
+  for (const port of ports) {
+    const total = (port.inBps ?? 0) + (port.outBps ?? 0);
+    if (total > 0 && (!best || total > best.total)) best = { port, total };
+  }
+  return best;
+}
 
 /** Value per `if_index`. */
 function byIndex(result: QueryResult | undefined): Map<string, number | undefined> {

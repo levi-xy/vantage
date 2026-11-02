@@ -30,6 +30,23 @@ export function panelBlocks<T>(ports: T[]): Placed<T>[][] {
   return blocks;
 }
 
+/**
+ * The faceplate: copper ports in blocks of 8, then every SFP cage in one separate block,
+ * laid out the same way (odd on the bottom, even on top).
+ */
+export function faceplate<T extends Pick<Port, "id" | "speed">>(
+  ports: T[],
+): { copper: Placed<T>[][]; sfp: Placed<T>[] } {
+  return {
+    copper: panelBlocks(ports.filter((p) => !isSfp(p))),
+    sfp: ports.filter(isSfp).map((port, j) => ({
+      port,
+      column: Math.floor(j / 2) + 1,
+      row: j % 2 === 0 ? 2 : 1,
+    })),
+  };
+}
+
 /** An SFP/SFP+ cage rather than a copper jack: by its stable name or a 10G+ speed. */
 export function isSfp(port: Pick<Port, "id" | "speed">): boolean {
   return /sfp/i.test(port.id) || (port.speed ?? 0) >= 10e9;
