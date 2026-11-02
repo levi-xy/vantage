@@ -7,6 +7,8 @@ import { useInstantQuery } from "../metrics/useMetricQuery";
 import { interfaceSettings, REAL_IF } from "./interfaceSettings";
 import { interfaceRows } from "./interfaceRows";
 import { useUnits } from "../../app/units";
+import { KeyFigure } from "../metrics/KeyFigure";
+import { useCardTier, useFittingRows } from "../metrics/tier";
 
 /** Rows shown before "Show all". */
 export const COLLAPSED_ROWS = 6;
@@ -29,7 +31,13 @@ export function PfsenseInterfacesCard({ instanceId, title, instance }: CardProps
       .map((r) => ({ id: r.key, name: settings.label(r.key), rx: r.value, tx: txBy.get(r.key) })),
   );
   const busiest = Math.max(0, ...rows.map((r) => r.total));
-  const shown = expanded ? rows : rows.slice(0, COLLAPSED_ROWS);
+  const tier = useCardTier();
+  // Medium: the top 3 (WAN first), as many as fit; no bars, no "Show all".
+  const fitting = useFittingRows(28, 3);
+  const shown =
+    tier !== "full" ? rows.slice(0, fitting) : expanded ? rows : rows.slice(0, COLLAPSED_ROWS);
+  // Small: the WAN interface (pinned), else the busiest.
+  const first = rows[0];
 
   return (
     <CardFrame
@@ -40,38 +48,48 @@ export function PfsenseInterfacesCard({ instanceId, title, instance }: CardProps
       freshness={cardFreshness(rx, tx)}
       empty={rows.length === 0}
     >
-      <ul aria-label="Interfaces" className="flex flex-col gap-2 text-sm">
-        {shown.map((r) => (
-          <li
-            key={r.id}
-            data-child={r.child || undefined}
-            className={`grid grid-cols-[minmax(0,1fr)_3rem_auto] items-center gap-2.5 ${r.child ? "pl-3.5" : ""}`}
-          >
-            <span className="flex min-w-0 items-baseline gap-1.5 overflow-hidden whitespace-nowrap">
-              {r.child && (
-                <span aria-hidden="true" className="text-xs text-muted">
-                  └
+      {tier === "small" && first ? (
+        <KeyFigure label={`${first.name}: in and out`}>
+          <span className="text-in">↓</span>
+          {formatRate(first.rx)} <span className="text-out">↑</span>
+          {formatRate(first.tx)}
+        </KeyFigure>
+      ) : (
+        <ul aria-label="Interfaces" className="flex flex-col gap-2 text-sm">
+          {shown.map((r) => (
+            <li
+              key={r.id}
+              data-child={r.child || undefined}
+              className={`grid items-center gap-2.5 ${tier === "full" ? "grid-cols-[minmax(0,1fr)_3rem_auto]" : "grid-cols-[minmax(0,1fr)_auto]"} ${r.child ? "pl-3.5" : ""}`}
+            >
+              <span className="flex min-w-0 items-baseline gap-1.5 overflow-hidden whitespace-nowrap">
+                {r.child && (
+                  <span aria-hidden="true" className="text-xs text-muted">
+                    └
+                  </span>
+                )}
+                <span className={`truncate ${r.child ? "" : "font-medium"}`}>{r.name}</span>
+                {r.name !== r.id && <span className="truncate text-[11px] text-muted">{r.id}</span>}
+                {r.pinned && <span className="sr-only">(pinned)</span>}
+              </span>
+              {tier === "full" && (
+                <span aria-hidden="true" className="h-[5px] overflow-hidden rounded-full bg-track">
+                  <span
+                    className="block h-full rounded-full bg-in"
+                    style={{ width: `${busiest > 0 ? (r.total / busiest) * 100 : 0}%` }}
+                  />
                 </span>
               )}
-              <span className={`truncate ${r.child ? "" : "font-medium"}`}>{r.name}</span>
-              {r.name !== r.id && <span className="truncate text-[11px] text-muted">{r.id}</span>}
-              {r.pinned && <span className="sr-only">(pinned)</span>}
-            </span>
-            <span aria-hidden="true" className="h-[5px] overflow-hidden rounded-full bg-track">
-              <span
-                className="block h-full rounded-full bg-in"
-                style={{ width: `${busiest > 0 ? (r.total / busiest) * 100 : 0}%` }}
-              />
-            </span>
-            <span className="text-xs whitespace-nowrap tabular-nums">
-              <span className="text-in">↓</span>
-              {formatRate(r.rx)} <span className="text-out">↑</span>
-              {formatRate(r.tx)}
-            </span>
-          </li>
-        ))}
-      </ul>
-      {rows.length > COLLAPSED_ROWS && (
+              <span className="text-xs whitespace-nowrap tabular-nums">
+                <span className="text-in">↓</span>
+                {formatRate(r.rx)} <span className="text-out">↑</span>
+                {formatRate(r.tx)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {tier === "full" && rows.length > COLLAPSED_ROWS && (
         <button
           type="button"
           aria-expanded={expanded}

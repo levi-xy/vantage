@@ -4,6 +4,7 @@ import type { Instance } from "../../api";
 import { CardHeader } from "./CardHeader";
 import { FRESH, StaleContext } from "./freshness";
 import type { Freshness } from "./freshness";
+import { useCardTier } from "./tier";
 
 export interface CardFrameProps {
   title: string;
@@ -44,16 +45,56 @@ export function CardFrame({
   problem,
   children,
 }: CardFrameProps) {
+  const tier = useCardTier();
   const stale = freshness.kind === "stale";
   let body: ReactNode = stale ? (
     // A past value: greyed, and never green or red as if it were current. The header's
     // subtitle says how old ("no data since 14:02"); no footer, which small cards would clip.
-    <div data-stale="true" className="flex flex-col gap-3 opacity-60 grayscale">
+    <div
+      data-stale="true"
+      className={`flex min-w-0 flex-col opacity-60 grayscale ${tier === "full" ? "gap-3" : "gap-2"}`}
+    >
       <StaleContext.Provider value>{children}</StaleContext.Provider>
     </div>
   ) : (
     children
   );
+  const header = (
+    <CardHeader
+      instance={instance}
+      freshness={error ? FRESH : freshness}
+      uptimeSeconds={uptimeSeconds}
+      problem={problem}
+      small={tier === "small"}
+    />
+  );
+
+  if (tier === "small") {
+    // The name, the state and one line: the key figure, or why there is none.
+    if (error) {
+      body = (
+        <p role="alert" className="truncate text-xs text-crit-text" title={error.message}>
+          Could not load metrics
+        </p>
+      );
+    } else if (loading) {
+      body = <p className="truncate text-xs text-muted">Loading…</p>;
+    } else if (empty) {
+      const hint = freshness.kind === "missing" ? freshness.note : emptyHint;
+      body = (
+        <p className="truncate text-xs text-muted" title={hint}>
+          No data
+        </p>
+      );
+    }
+    return (
+      <div className="flex h-full min-w-0 flex-col justify-center gap-0.5 overflow-hidden px-3 py-2">
+        {header}
+        {body}
+      </div>
+    );
+  }
+
   if (error) {
     body = (
       <p role="alert" className="line-clamp-3 text-sm text-crit-text" title={error.message}>
@@ -66,14 +107,18 @@ export function CardFrame({
     const hint = freshness.kind === "missing" ? freshness.note : emptyHint;
     body = <p className="text-sm text-muted">{hint}</p>;
   }
+  if (tier === "medium") {
+    // The header and the key figures; no section title, so the figures fit.
+    return (
+      <div className="flex h-full min-w-0 flex-col gap-2 overflow-hidden p-3">
+        {header}
+        {body}
+      </div>
+    );
+  }
   return (
     <div className="flex h-full min-w-0 flex-col gap-3 overflow-auto p-4">
-      <CardHeader
-        instance={instance}
-        freshness={error ? FRESH : freshness}
-        uptimeSeconds={uptimeSeconds}
-        problem={problem}
-      />
+      {header}
       {showTitle && <h3 className="text-xs font-medium text-muted">{title}</h3>}
       {body}
     </div>

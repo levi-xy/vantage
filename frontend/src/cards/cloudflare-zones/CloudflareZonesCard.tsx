@@ -4,6 +4,9 @@ import { CardFrame } from "../metrics/CardFrame";
 import { formatBytes, formatRatio } from "../metrics/format";
 import { byLabel, firstValue } from "../metrics/promql";
 import { useInstantQuery } from "../metrics/useMetricQuery";
+import { StatTile } from "../metrics/StatTile";
+import { Figures, KeyFigure } from "../metrics/KeyFigure";
+import { useCardTier } from "../metrics/tier";
 
 // Polled by Vantage (integrations/builtin/cloudflare): vantage_cloudflare_*. Traffic values are
 // totals for the last complete UTC hour, so they are read directly, not with rate().
@@ -29,6 +32,13 @@ export function CloudflareZonesCard({ instanceId, title, instance }: CardProps) 
     .map((z) => ({ id: z.key, name: z.labels.zone_name || z.key }))
     .sort((a, b) => a.name.localeCompare(b.name));
   const incomplete = firstValue(analyticsUp.data) === 0;
+  const tier = useCardTier();
+  // Totals over all zones, for the smaller tiers: undefined when no zone has the figure.
+  const sum = (metric: string) =>
+    zones.reduce<number | undefined>((total, z) => {
+      const v = get(metric, z.id);
+      return v === undefined ? total : (total ?? 0) + v;
+    }, undefined);
 
   return (
     <CardFrame
@@ -40,40 +50,56 @@ export function CloudflareZonesCard({ instanceId, title, instance }: CardProps) 
       empty={zones.length === 0}
       emptyHint="No zones reported yet. Check the instance status and the API token."
     >
-      {incomplete && (
-        <p className="text-xs text-amber-700 dark:text-amber-400">
-          Analytics incomplete: some zones may be missing figures.
-        </p>
+      {tier === "small" ? (
+        <KeyFigure label="Requests, last complete UTC hour">
+          {count(sum("requests"))} req/h
+        </KeyFigure>
+      ) : tier === "medium" ? (
+        <Figures>
+          <StatTile label="Requests/h" value={count(sum("requests"))} />
+          <StatTile label="Threats/h" value={count(sum("threats"))} />
+          <StatTile label="Zones" value={String(zones.length)} />
+        </Figures>
+      ) : (
+        <>
+          {incomplete && (
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              Analytics incomplete: some zones may be missing figures.
+            </p>
+          )}
+          <ul className="flex flex-col gap-3">
+            {zones.map((z) => {
+              const requests = get("requests", z.id);
+              const cached = get("cached_requests", z.id);
+              return (
+                <li key={z.id} className="flex flex-col gap-0.5 text-sm">
+                  <span className="truncate font-medium">{z.name}</span>
+                  {requests === undefined ? (
+                    <span className="text-xs text-slate-500 dark:text-slate-400">
+                      Analytics unavailable
+                    </span>
+                  ) : (
+                    <dl className="grid grid-cols-2 gap-x-3 text-xs sm:grid-cols-4">
+                      <Item label="Requests" value={count(requests)} />
+                      <Item label="Bandwidth" value={formatBytes(get("bytes", z.id))} />
+                      <Item
+                        label="Cached"
+                        value={
+                          requests > 0 && cached !== undefined
+                            ? formatRatio(cached / requests)
+                            : "–"
+                        }
+                      />
+                      <Item label="Threats" value={count(get("threats", z.id))} />
+                    </dl>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          <p className="text-xs text-slate-500 dark:text-slate-400">Last complete UTC hour</p>
+        </>
       )}
-      <ul className="flex flex-col gap-3">
-        {zones.map((z) => {
-          const requests = get("requests", z.id);
-          const cached = get("cached_requests", z.id);
-          return (
-            <li key={z.id} className="flex flex-col gap-0.5 text-sm">
-              <span className="truncate font-medium">{z.name}</span>
-              {requests === undefined ? (
-                <span className="text-xs text-slate-500 dark:text-slate-400">
-                  Analytics unavailable
-                </span>
-              ) : (
-                <dl className="grid grid-cols-2 gap-x-3 text-xs sm:grid-cols-4">
-                  <Item label="Requests" value={count(requests)} />
-                  <Item label="Bandwidth" value={formatBytes(get("bytes", z.id))} />
-                  <Item
-                    label="Cached"
-                    value={
-                      requests > 0 && cached !== undefined ? formatRatio(cached / requests) : "–"
-                    }
-                  />
-                  <Item label="Threats" value={count(get("threats", z.id))} />
-                </dl>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-      <p className="text-xs text-slate-500 dark:text-slate-400">Last complete UTC hour</p>
     </CardFrame>
   );
 }

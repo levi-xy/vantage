@@ -3,6 +3,8 @@ import { cardFreshness } from "../metrics/freshness";
 import { CardFrame } from "../metrics/CardFrame";
 import { byLabel, firstSeries } from "../metrics/promql";
 import { StatTile } from "../metrics/StatTile";
+import { Figures, KeyFigure } from "../metrics/KeyFigure";
+import { useCardTier } from "../metrics/tier";
 import { useInstantQuery, useRangeQuery } from "../metrics/useMetricQuery";
 
 // Polled by Vantage (integrations/builtin/emby): vantage_emby_*. Counts only: no user names or
@@ -30,6 +32,8 @@ export function EmbyOverviewCard({ instanceId, title, instance }: CardProps) {
   const up = value.get("vantage_instance_up");
   const serverInfo = info.data?.series[0]?.labels;
   const method = new Map(byLabel(streams.data, "play_method").map((r) => [r.key, r.value]));
+  const tier = useCardTier();
+  const playing = num(value.get("vantage_emby_now_playing"));
 
   return (
     <CardFrame
@@ -42,35 +46,54 @@ export function EmbyOverviewCard({ instanceId, title, instance }: CardProps) {
       empty={value.size === 0}
       emptyHint="No Emby metrics yet. Check the instance status and the API key."
     >
-      <div className="flex flex-wrap items-baseline gap-x-3 text-sm">
-        <span className={up === 1 ? "" : "text-crit-text"}>
-          {up === 1 ? "Server up" : "Server down"}
-        </span>
-        {serverInfo?.server_name && (
-          <span className="truncate font-medium">{serverInfo.server_name}</span>
-        )}
-        {serverInfo?.version && (
-          <span className="text-xs text-slate-500 dark:text-slate-400">v{serverInfo.version}</span>
-        )}
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <StatTile
-          label="Now playing"
-          value={num(value.get("vantage_emby_now_playing"))}
-          spark={firstSeries(playingSpark.data)}
-        />
-        <StatTile label="Active sessions" value={num(value.get("vantage_emby_sessions"))} />
-      </div>
-      <div className="grid grid-cols-3 gap-3">
-        {METHODS.map(([key, label]) => (
-          <StatTile key={key} label={label} value={num(method.get(key))} />
-        ))}
-      </div>
-      {value.get("vantage_emby_update_available") === 1 && (
-        <p className="text-xs text-amber-700 dark:text-amber-400">Update available</p>
-      )}
-      {value.get("vantage_emby_restart_pending") === 1 && (
-        <p className="text-xs text-amber-700 dark:text-amber-400">Restart pending</p>
+      {tier === "small" ? (
+        up === 1 ? (
+          <KeyFigure label="Now playing">{playing} playing</KeyFigure>
+        ) : (
+          <KeyFigure label="Server" tone="bad">
+            Server down
+          </KeyFigure>
+        )
+      ) : tier === "medium" ? (
+        <>
+          {up !== 1 && <p className="text-sm text-crit-text">Server down</p>}
+          <Figures>
+            <StatTile label="Now playing" value={playing} />
+            <StatTile label="Sessions" value={num(value.get("vantage_emby_sessions"))} />
+            <StatTile label="Transcode" value={num(method.get("transcode"))} />
+          </Figures>
+        </>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-baseline gap-x-3 text-sm">
+            <span className={up === 1 ? "" : "text-crit-text"}>
+              {up === 1 ? "Server up" : "Server down"}
+            </span>
+            {serverInfo?.server_name && (
+              <span className="truncate font-medium">{serverInfo.server_name}</span>
+            )}
+            {serverInfo?.version && (
+              <span className="text-xs text-slate-500 dark:text-slate-400">
+                v{serverInfo.version}
+              </span>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <StatTile label="Now playing" value={playing} spark={firstSeries(playingSpark.data)} />
+            <StatTile label="Active sessions" value={num(value.get("vantage_emby_sessions"))} />
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            {METHODS.map(([key, label]) => (
+              <StatTile key={key} label={label} value={num(method.get(key))} />
+            ))}
+          </div>
+          {value.get("vantage_emby_update_available") === 1 && (
+            <p className="text-xs text-amber-700 dark:text-amber-400">Update available</p>
+          )}
+          {value.get("vantage_emby_restart_pending") === 1 && (
+            <p className="text-xs text-amber-700 dark:text-amber-400">Restart pending</p>
+          )}
+        </>
       )}
     </CardFrame>
   );

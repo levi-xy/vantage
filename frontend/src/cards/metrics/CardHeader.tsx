@@ -106,9 +106,17 @@ export interface CardHeaderProps {
   uptimeSeconds?: number;
   /** A card-specific problem shown as the state ("100% LOSS"), in the critical colour. */
   problem?: string;
+  /** A small card's one line: the name and the state, no icon or subtitle. */
+  small?: boolean;
 }
 
-export function CardHeader({ instance, freshness, uptimeSeconds, problem }: CardHeaderProps) {
+export function CardHeader({
+  instance,
+  freshness,
+  uptimeSeconds,
+  problem,
+  small = false,
+}: CardHeaderProps) {
   const state = shownState(instance, useScrapeStates([instance]));
   const type = deviceType(instance?.type_id);
   const now = useMinuteClock();
@@ -134,7 +142,27 @@ export function CardHeader({ instance, freshness, uptimeSeconds, problem }: Card
         ? `up ${formatDuration(uptimeSeconds)}`
         : undefined;
   const error = instance?.status.error ?? undefined;
+  const stateText = (
+    <span
+      data-state={state}
+      title={error}
+      className={`shrink-0 text-xs tracking-wide whitespace-nowrap ${bad ? "font-semibold text-crit-text" : "text-muted"}`}
+    >
+      <span className="sr-only">Status: </span>
+      {text}
+    </span>
+  );
 
+  if (small) {
+    return (
+      <div className="flex min-w-0 items-baseline gap-2 leading-[18px]">
+        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold">
+          {instance?.name ?? "Unknown device"}
+        </span>
+        {stateText}
+      </div>
+    );
+  }
   return (
     <div className="flex min-w-0 items-center gap-3">
       <TypeIcon icon={type.icon} />
@@ -147,14 +175,7 @@ export function CardHeader({ instance, freshness, uptimeSeconds, problem }: Card
           {sub && ` · ${sub}`}
         </div>
       </div>
-      <span
-        data-state={state}
-        title={error}
-        className={`shrink-0 text-xs tracking-wide whitespace-nowrap ${bad ? "font-semibold text-crit-text" : "text-muted"}`}
-      >
-        <span className="sr-only">Status: </span>
-        {text}
-      </span>
+      {stateText}
     </div>
   );
 }

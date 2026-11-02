@@ -3,6 +3,9 @@ import { cardFreshness } from "../metrics/freshness";
 import { CardFrame } from "../metrics/CardFrame";
 import { byLabel } from "../metrics/promql";
 import { useInstantQuery } from "../metrics/useMetricQuery";
+import { StatTile } from "../metrics/StatTile";
+import { Figures, KeyFigure } from "../metrics/KeyFigure";
+import { useCardTier } from "../metrics/tier";
 
 // Polled by Vantage (integrations/builtin/cloudflare): vantage_cloudflare_tunnel_*.
 const P = "vantage_cloudflare_tunnel_";
@@ -25,6 +28,10 @@ export function CloudflareTunnelsCard({ instanceId, title, instance }: CardProps
   const tunnels = byLabel(info.data, "tunnel_id")
     .map((t) => ({ id: t.key, name: t.labels.tunnel_name || t.key }))
     .sort((a, b) => a.name.localeCompare(b.name));
+  const tier = useCardTier();
+  const healthy = tunnels.filter((t) => state.get(t.id) === "healthy").length;
+  // Down or degraded is a problem; inactive (no connector configured to run) is not.
+  const troubled = tunnels.filter((t) => ["down", "degraded"].includes(state.get(t.id) ?? ""));
 
   return (
     <CardFrame
@@ -36,23 +43,47 @@ export function CloudflareTunnelsCard({ instanceId, title, instance }: CardProps
       empty={tunnels.length === 0}
       emptyHint="No tunnels reported. Check that Tunnel status is on and the token can read tunnels."
     >
-      <ul className="flex flex-col gap-1.5">
-        {tunnels.map((t) => {
-          const s = state.get(t.id);
-          const n = conns.get(t.id);
-          return (
-            <li key={t.id} className="flex items-baseline justify-between gap-3 text-sm">
-              <span className="truncate font-medium">{t.name}</span>
-              <span className="flex shrink-0 gap-3 tabular-nums">
-                <span className="text-xs text-slate-500 dark:text-slate-400">
-                  {n === undefined ? "–" : n} {n === 1 ? "connection" : "connections"}
+      {tier === "small" ? (
+        <KeyFigure label="Tunnels" tone={troubled.length ? "bad" : undefined}>
+          {troubled.length
+            ? `${troubled.length} of ${tunnels.length} not healthy`
+            : `${healthy}/${tunnels.length} healthy`}
+        </KeyFigure>
+      ) : tier === "medium" ? (
+        <>
+          <Figures>
+            <StatTile label="Healthy" value={`${healthy}/${tunnels.length}`} />
+            <StatTile
+              label="Down or degraded"
+              value={String(troubled.length)}
+              tone={troubled.length ? "bad" : undefined}
+            />
+          </Figures>
+          {troubled.length > 0 && (
+            <p className="truncate text-sm text-crit-text">
+              {troubled.map((t) => t.name).join(", ")}
+            </p>
+          )}
+        </>
+      ) : (
+        <ul className="flex flex-col gap-1.5">
+          {tunnels.map((t) => {
+            const s = state.get(t.id);
+            const n = conns.get(t.id);
+            return (
+              <li key={t.id} className="flex items-baseline justify-between gap-3 text-sm">
+                <span className="truncate font-medium">{t.name}</span>
+                <span className="flex shrink-0 gap-3 tabular-nums">
+                  <span className="text-xs text-slate-500 dark:text-slate-400">
+                    {n === undefined ? "–" : n} {n === 1 ? "connection" : "connections"}
+                  </span>
+                  <span className={STATUS_STYLE[s ?? ""] ?? ""}>{s ?? "unknown"}</span>
                 </span>
-                <span className={STATUS_STYLE[s ?? ""] ?? ""}>{s ?? "unknown"}</span>
-              </span>
-            </li>
-          );
-        })}
-      </ul>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </CardFrame>
   );
 }

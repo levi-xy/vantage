@@ -10,7 +10,7 @@ import {
   LAYOUT_VERSION,
   prepareLayout,
 } from "../cards/layout";
-import { cardMinSize, widget, WIDGETS } from "../cards/widgets";
+import { cardFullSize, widget, WIDGETS } from "../cards/widgets";
 import type { AvailableCard } from "../cards/layout";
 import { EmptyState } from "../components/PageHeader";
 import { alertError, buttonPrimary, buttonSecondary } from "../components/styles";
@@ -46,8 +46,9 @@ function addableGroups(
 ): { name: string; cards: Addable[] }[] {
   const placed = new Set(shown.map(cardKey));
   const sized = (card: Addable["card"], defaultSize: [number, number]): [number, number] => {
-    const [minW, minH] = cardMinSize(card.card_type, card.instance_id);
-    return [Math.max(defaultSize[0], minW), Math.max(defaultSize[1], minH)];
+    // A card is added showing everything; the admin can make it smaller.
+    const [fullW, fullH] = cardFullSize(card.card_type, card.instance_id);
+    return [Math.max(defaultSize[0], fullW), Math.max(defaultSize[1], fullH)];
   };
   const groups = [
     {

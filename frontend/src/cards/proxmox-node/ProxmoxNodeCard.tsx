@@ -4,6 +4,9 @@ import { CardFrame, UsageBar } from "../metrics/CardFrame";
 import { formatDuration, formatPercent } from "../metrics/format";
 import { byLabel } from "../metrics/promql";
 import { useInstantQuery } from "../metrics/useMetricQuery";
+import { StatTile } from "../metrics/StatTile";
+import { Figures, KeyFigure } from "../metrics/KeyFigure";
+import { useCardTier } from "../metrics/tier";
 
 // Polled by Vantage (integrations/builtin/proxmox): vantage_proxmox_*, label `node`.
 const P = "vantage_proxmox_";
@@ -39,6 +42,15 @@ export function ProxmoxNodeCard({ instanceId, title, instance }: CardProps) {
     .filter((s) => s.value !== undefined)
     .sort((a, b) => `${a.node}/${a.name}`.localeCompare(`${b.node}/${b.name}`));
   const multiNode = nodes.length > 1;
+  const tier = useCardTier();
+  const onlineNodes = nodes.filter((n) => n.value === 1);
+  const offline = nodes.length - onlineNodes.length;
+  // Below full size: the busiest online node's CPU and memory (the only node, usually).
+  const most = (by: Map<string, number | undefined>) =>
+    onlineNodes.reduce<number | undefined>((max, n) => {
+      const v = by.get(n.key);
+      return v !== undefined && (max === undefined || v > max) ? v : max;
+    }, undefined);
 
   return (
     <CardFrame
@@ -50,50 +62,74 @@ export function ProxmoxNodeCard({ instanceId, title, instance }: CardProps) {
       freshness={cardFreshness(up, cpu, mem, root, uptime, storage)}
       empty={nodes.length === 0}
     >
-      {nodes.map((n) => {
-        const online = n.value === 1;
-        return (
-          <section key={n.key} aria-label={`Node ${n.key}`} className="flex flex-col gap-1.5">
-            <div className="flex items-baseline justify-between gap-2">
-              <span className="font-semibold">{n.key}</span>
-              <span className={`text-xs font-medium ${online ? "" : "text-crit-text"}`}>
-                {online ? `online · up ${formatDuration(uptimeBy.get(n.key))}` : "offline"}
-              </span>
-            </div>
-            {online && (
-              <>
+      {tier === "small" ? (
+        offline > 0 ? (
+          <KeyFigure label="Nodes" tone="bad">
+            {offline} of {nodes.length} offline
+          </KeyFigure>
+        ) : (
+          <KeyFigure label="CPU and memory">
+            CPU {formatPercent(most(cpuBy))} · Mem {formatPercent(most(memBy))}
+          </KeyFigure>
+        )
+      ) : tier === "medium" ? (
+        <Figures>
+          <StatTile
+            label="Online"
+            value={`${onlineNodes.length}/${nodes.length}`}
+            tone={offline > 0 ? "bad" : undefined}
+          />
+          <StatTile label="CPU" value={formatPercent(most(cpuBy))} />
+          <StatTile label="Memory" value={formatPercent(most(memBy))} />
+        </Figures>
+      ) : (
+        <>
+          {nodes.map((n) => {
+            const online = n.value === 1;
+            return (
+              <section key={n.key} aria-label={`Node ${n.key}`} className="flex flex-col gap-1.5">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="font-semibold">{n.key}</span>
+                  <span className={`text-xs font-medium ${online ? "" : "text-crit-text"}`}>
+                    {online ? `online · up ${formatDuration(uptimeBy.get(n.key))}` : "offline"}
+                  </span>
+                </div>
+                {online && (
+                  <>
+                    <UsageBar
+                      label="CPU"
+                      percent={cpuBy.get(n.key) ?? 0}
+                      text={formatPercent(cpuBy.get(n.key))}
+                    />
+                    <UsageBar
+                      label="Memory"
+                      percent={memBy.get(n.key) ?? 0}
+                      text={formatPercent(memBy.get(n.key))}
+                    />
+                    <UsageBar
+                      label="Root disk"
+                      percent={rootBy.get(n.key) ?? 0}
+                      text={formatPercent(rootBy.get(n.key))}
+                    />
+                  </>
+                )}
+              </section>
+            );
+          })}
+          {storages.length > 0 && (
+            <section aria-label="Storage" className="flex flex-col gap-1.5">
+              <span className="text-xs text-slate-500 dark:text-slate-400">Storage</span>
+              {storages.map((s) => (
                 <UsageBar
-                  label="CPU"
-                  percent={cpuBy.get(n.key) ?? 0}
-                  text={formatPercent(cpuBy.get(n.key))}
+                  key={`${s.node}/${s.name}`}
+                  label={multiNode ? `${s.name} (${s.node})` : s.name}
+                  percent={s.value ?? 0}
+                  text={formatPercent(s.value)}
                 />
-                <UsageBar
-                  label="Memory"
-                  percent={memBy.get(n.key) ?? 0}
-                  text={formatPercent(memBy.get(n.key))}
-                />
-                <UsageBar
-                  label="Root disk"
-                  percent={rootBy.get(n.key) ?? 0}
-                  text={formatPercent(rootBy.get(n.key))}
-                />
-              </>
-            )}
-          </section>
-        );
-      })}
-      {storages.length > 0 && (
-        <section aria-label="Storage" className="flex flex-col gap-1.5">
-          <span className="text-xs text-slate-500 dark:text-slate-400">Storage</span>
-          {storages.map((s) => (
-            <UsageBar
-              key={`${s.node}/${s.name}`}
-              label={multiNode ? `${s.name} (${s.node})` : s.name}
-              percent={s.value ?? 0}
-              text={formatPercent(s.value)}
-            />
-          ))}
-        </section>
+              ))}
+            </section>
+          )}
+        </>
       )}
     </CardFrame>
   );

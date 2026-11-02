@@ -3,7 +3,9 @@ import { cardFreshness } from "../metrics/freshness";
 import { CardFrame } from "../metrics/CardFrame";
 import { formatMs } from "../metrics/format";
 import { firstSeries, firstValue } from "../metrics/promql";
+import { Figures, KeyFigure } from "../metrics/KeyFigure";
 import { StatTile } from "../metrics/StatTile";
+import { useCardTier } from "../metrics/tier";
 import { useInstantQuery, useRangeQuery } from "../metrics/useMetricQuery";
 
 // Polled by Vantage (integrations/builtin/http_check): vantage_http_check_*.
@@ -20,6 +22,8 @@ export function HttpCheckCard({ instanceId, title, instance }: CardProps) {
 
   const up = firstValue(success.data);
   const code = firstValue(status.data);
+  const tier = useCardTier();
+  const ms = formatMs(firstValue(duration.data));
   return (
     <CardFrame
       title={title}
@@ -30,16 +34,32 @@ export function HttpCheckCard({ instanceId, title, instance }: CardProps) {
       freshness={cardFreshness(success, status, duration)}
       empty={up === undefined}
     >
-      <div className="grid grid-cols-3 gap-3">
-        <StatTile label="Result" value={up === 1 ? "Up" : "Down"} tone={up === 1 ? "ok" : "bad"} />
-        {/* 0 = no HTTP response (connection failed): there is no status code to show. */}
-        <StatTile label="Status code" value={code ? String(code) : "–"} />
-        <StatTile
-          label="Response time"
-          value={formatMs(firstValue(duration.data))}
-          spark={firstSeries(spark.data)}
-        />
-      </div>
+      {tier === "small" ? (
+        // A failed check is the problem here, so it leads the line.
+        <KeyFigure
+          label="Result, status code and response time"
+          tone={up === 1 ? undefined : "bad"}
+        >
+          {[up === 1 ? "Up" : "Down", code ? String(code) : "", up === 1 ? ms : ""]
+            .filter(Boolean)
+            .join(" · ")}
+        </KeyFigure>
+      ) : (
+        <Figures>
+          <StatTile
+            label="Result"
+            value={up === 1 ? "Up" : "Down"}
+            tone={up === 1 ? "ok" : "bad"}
+          />
+          {/* 0 = no HTTP response (connection failed): there is no status code to show. */}
+          <StatTile label="Status code" value={code ? String(code) : "–"} />
+          <StatTile
+            label="Response time"
+            value={ms}
+            spark={tier === "full" ? firstSeries(spark.data) : undefined}
+          />
+        </Figures>
+      )}
     </CardFrame>
   );
 }

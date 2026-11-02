@@ -1,6 +1,12 @@
 import type { CardPlacement, CardSpec, DashboardLayout } from "../api";
 
 export const GRID_COLUMNS = 12;
+/** One grid row, and the gap between cards, in px. A 1-row card fits a name, state and figure. */
+export const ROW_HEIGHT = 56;
+export const GRID_MARGIN = 16;
+
+/** The height in px of a card `rows` grid rows tall. */
+export const gridHeightPx = (rows: number) => rows * ROW_HEIGHT + (rows - 1) * GRID_MARGIN;
 
 // Below this width the grid is one fixed column, and the dashboard isn't editable.
 export const DESKTOP_MIN_WIDTH = 768;

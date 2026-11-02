@@ -4,6 +4,8 @@ import { CardFrame } from "../metrics/CardFrame";
 import { formatMs, formatPercent } from "../metrics/format";
 import { byLabel } from "../metrics/promql";
 import { useInstantQuery } from "../metrics/useMetricQuery";
+import { KeyFigure } from "../metrics/KeyFigure";
+import { useCardTier, useFittingRows } from "../metrics/tier";
 import { gatewayLabel } from "../pfsense-interfaces/interfaceSettings";
 
 // Telegraf's `ping` input, one target per gateway (label `url`). A gateway with 100% loss
@@ -29,6 +31,19 @@ export function PfsenseGatewaysCard({ instanceId, title, instance }: CardProps) 
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name));
+  const tier = useCardTier();
+  // Below full size the worst gateway comes first (most loss, then slowest): a problem is
+  // never the row that doesn't fit.
+  const worstFirst = [...gateways].sort(
+    (a, b) => b.lossPct - a.lossPct || (b.rttSeconds ?? Infinity) - (a.rttSeconds ?? Infinity),
+  );
+  const fitting = useFittingRows(28, gateways.length);
+  const worst = worstFirst[0];
+  // When not all fit, the last row says how many more there are.
+  const shown =
+    tier === "full"
+      ? gateways
+      : worstFirst.slice(0, fitting < gateways.length ? Math.max(1, fitting - 1) : fitting);
 
   return (
     <CardFrame
@@ -40,21 +55,33 @@ export function PfsenseGatewaysCard({ instanceId, title, instance }: CardProps) 
       empty={gateways.length === 0}
       emptyHint="No gateway ping data yet. Add a Telegraf ping target per gateway."
     >
-      <ul aria-label="Gateways" className="flex flex-col gap-2">
-        {gateways.map((g) => (
-          <li key={g.url} className="flex min-w-0 items-baseline gap-2">
-            <span className="truncate">{g.name}</span>
-            {g.name !== g.url && <span className="truncate text-[11px] text-muted">{g.url}</span>}
-            <span
-              className={`ml-auto shrink-0 text-[13px] tabular-nums ${
-                g.lossPct > 0 ? "font-semibold text-crit-text" : "text-muted"
-              }`}
-            >
-              {g.down ? "no reply" : formatMs(g.rttSeconds)} · {formatPercent(g.lossPct)} loss
-            </span>
-          </li>
-        ))}
-      </ul>
+      {tier === "small" && worst ? (
+        <KeyFigure
+          label={`Worst gateway: ${worst.name}`}
+          tone={worst.lossPct > 0 ? "bad" : undefined}
+        >
+          {worst.down ? "no reply" : formatMs(worst.rttSeconds)} · {formatPercent(worst.lossPct)}
+        </KeyFigure>
+      ) : (
+        <ul aria-label="Gateways" className="flex flex-col gap-2">
+          {shown.map((g) => (
+            <li key={g.url} className="flex min-w-0 items-baseline gap-2">
+              <span className="truncate">{g.name}</span>
+              {g.name !== g.url && <span className="truncate text-[11px] text-muted">{g.url}</span>}
+              <span
+                className={`ml-auto shrink-0 text-[13px] tabular-nums ${
+                  g.lossPct > 0 ? "font-semibold text-crit-text" : "text-muted"
+                }`}
+              >
+                {g.down ? "no reply" : formatMs(g.rttSeconds)} · {formatPercent(g.lossPct)} loss
+              </span>
+            </li>
+          ))}
+          {shown.length < gateways.length && (
+            <li className="text-xs text-muted">{gateways.length - shown.length} more</li>
+          )}
+        </ul>
+      )}
     </CardFrame>
   );
 }

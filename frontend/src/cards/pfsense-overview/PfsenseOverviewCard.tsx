@@ -3,7 +3,9 @@ import { cardFreshness } from "../metrics/freshness";
 import { CardFrame } from "../metrics/CardFrame";
 import { formatCelsius, formatPercent } from "../metrics/format";
 import { firstSeries, firstValue } from "../metrics/promql";
+import { Figures, KeyFigure } from "../metrics/KeyFigure";
 import { StatTile } from "../metrics/StatTile";
+import { useCardTier } from "../metrics/tier";
 import { useInstantQuery, useRangeQuery } from "../metrics/useMetricQuery";
 
 // Scraped from Telegraf on pfSense (native names). The card type stays "pfsense-overview"
@@ -32,6 +34,7 @@ export function PfsenseOverviewCard({ instanceId, title, instance }: CardProps) 
   const memValue = firstValue(mem.data);
   const statesValue = firstValue(states.data);
   const tempValue = firstValue(temp.data);
+  const tier = useCardTier();
 
   return (
     <CardFrame
@@ -44,22 +47,35 @@ export function PfsenseOverviewCard({ instanceId, title, instance }: CardProps) 
       empty={cpuValue === undefined && memValue === undefined && statesValue === undefined}
       uptimeSeconds={firstValue(uptime.data)}
     >
-      <div className="grid grid-cols-3 gap-3">
-        <StatTile label="CPU" value={formatPercent(cpuValue)} spark={firstSeries(cpuSpark.data)} />
-        <StatTile
-          label="Memory"
-          value={formatPercent(memValue)}
-          spark={firstSeries(memSpark.data)}
-        />
-        <StatTile label="Storage" value={formatPercent(firstValue(disk.data))} />
-        <StatTile
-          label="States"
-          value={statesValue === undefined ? "–" : String(Math.round(statesValue))}
-        />
-        {tempValue !== undefined && (
-          <StatTile label="Temperature" value={formatCelsius(tempValue)} />
-        )}
-      </div>
+      {tier === "small" ? (
+        <KeyFigure label="CPU">CPU {formatPercent(cpuValue)}</KeyFigure>
+      ) : tier === "medium" ? (
+        <Figures>
+          <StatTile label="CPU" value={formatPercent(cpuValue)} />
+          <StatTile label="Memory" value={formatPercent(memValue)} />
+        </Figures>
+      ) : (
+        <div className="grid grid-cols-3 gap-3">
+          <StatTile
+            label="CPU"
+            value={formatPercent(cpuValue)}
+            spark={firstSeries(cpuSpark.data)}
+          />
+          <StatTile
+            label="Memory"
+            value={formatPercent(memValue)}
+            spark={firstSeries(memSpark.data)}
+          />
+          <StatTile label="Storage" value={formatPercent(firstValue(disk.data))} />
+          <StatTile
+            label="States"
+            value={statesValue === undefined ? "–" : String(Math.round(statesValue))}
+          />
+          {tempValue !== undefined && (
+            <StatTile label="Temperature" value={formatCelsius(tempValue)} />
+          )}
+        </div>
+      )}
     </CardFrame>
   );
 }

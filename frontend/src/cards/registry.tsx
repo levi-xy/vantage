@@ -59,11 +59,11 @@ const CARD_COMPONENTS: Readonly<Record<string, ComponentType<CardProps>>> = {
 };
 
 /**
- * The smallest size (grid width, height) at which each card shows everything without
- * scrolling. Cards can be made bigger, never smaller. Types not listed use DEFAULT_MIN_SIZE.
- * Dashboard-wide cards (`DashboardWidgets.tsx`) use their default size as the minimum.
+ * The smallest size (grid width, height) at which each card shows everything (its full tier)
+ * without scrolling. Smaller, down to 2 x 1, it shows less (`metrics/tier.ts`). Types not
+ * listed use DEFAULT_FULL_SIZE. Dashboard-wide cards: `widgets.ts`.
  */
-const MIN_SIZES: Readonly<Record<string, [number, number]>> = {
+const FULL_SIZES: Readonly<Record<string, [number, number]>> = {
   cloudflared: [4, 3],
   "cloudflare-tunnels": [4, 3],
   "cloudflare-zones": [4, 3],
@@ -82,12 +82,12 @@ const MIN_SIZES: Readonly<Record<string, [number, number]>> = {
   "snmp-ports": [4, 4],
   "switch-panel": [6, 5],
 };
-const DEFAULT_MIN_SIZE: [number, number] = [3, 2];
+const DEFAULT_FULL_SIZE: [number, number] = [3, 2];
 
-export function minSize(cardType: string): [number, number] {
-  return Object.hasOwn(MIN_SIZES, cardType)
-    ? (MIN_SIZES[cardType] as [number, number])
-    : DEFAULT_MIN_SIZE;
+export function fullSize(cardType: string): [number, number] {
+  return Object.hasOwn(FULL_SIZES, cardType)
+    ? (FULL_SIZES[cardType] as [number, number])
+    : DEFAULT_FULL_SIZE;
 }
 
 export function cardComponent(cardType: string): ComponentType<CardProps> {
