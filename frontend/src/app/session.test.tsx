@@ -268,7 +268,8 @@ describe("logout", () => {
     const routes = backend
       .requests()
       .map((r) => r.route)
-      .filter((r) => r !== "POST /query" && !r.startsWith("GET /alerts/events"));
+      .filter((r) => r !== "POST /query" && !r.startsWith("GET /alerts/events"))
+      .filter((r) => !r.startsWith("GET /dashboards"));
     expect(routes.at(-1)).toBe("GET /me");
   });
 

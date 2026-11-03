@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { LIVE_RATE_KEY } from "../../app/live";
 import type { LiveRate } from "../../app/live";
 import { useUnits } from "../../app/units";
+import { MainDashboardContext } from "../mainDashboard";
 import { AreaChart } from "../metrics/Charts";
 import { freshFor, POLL_INTERVAL_SECONDS, sourceOf, StaleContext } from "../metrics/freshness";
 import { firstSeries, firstValue } from "../metrics/promql";
@@ -131,9 +132,11 @@ export function ThroughputCard({ instances, settings }: WidgetProps) {
   );
   const { groups } = usePortOptions(instances);
   const now = useNow();
-  // Live only when every chosen port was read; a partial sum would look like the total.
+  // Live only on the main dashboard (the backend reads that card's ports), and only when
+  // every chosen port was read; a partial sum would look like the total.
+  const onMain = useContext(MainDashboardContext);
   const pushed = useLiveRate(now);
-  const live = pushed && pushed.ports === ports.length ? pushed : undefined;
+  const live = onMain && pushed && pushed.ports === ports.length ? pushed : undefined;
   const staleDevices = useStaleDevices(ports, instances, now);
 
   if (!chosen) {

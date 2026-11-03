@@ -5,6 +5,7 @@ import type { Instance, QueryRequest, QueryResult } from "../../api";
 import { LIVE_RATE_KEY } from "../../app/live";
 import type { LiveRate } from "../../app/live";
 import { json } from "../../test-utils";
+import { MainDashboardContext } from "../mainDashboard";
 import { CardTierContext } from "../metrics/tier";
 import type { CardTier } from "../metrics/tier";
 import { ThroughputCard } from "./ThroughputCard";
@@ -42,6 +43,7 @@ function renderCard(
   cardSettings: Record<string, string> = settings,
   live?: LiveRate,
   tier: CardTier = "full",
+  onMain = true,
 ) {
   const queries: QueryRequest[] = [];
   const fetchMock = vi.fn<typeof fetch>(async (_url, init) => {
@@ -77,15 +79,25 @@ function renderCard(
   if (live) queryClient.setQueryData(LIVE_RATE_KEY, live);
   render(
     <QueryClientProvider client={queryClient}>
-      <CardTierContext.Provider value={{ tier }}>
-        <ThroughputCard instances={[instance]} settings={cardSettings} />
-      </CardTierContext.Provider>
+      <MainDashboardContext.Provider value={onMain}>
+        <CardTierContext.Provider value={{ tier }}>
+          <ThroughputCard instances={[instance]} settings={cardSettings} />
+        </CardTierContext.Provider>
+      </MainDashboardContext.Provider>
     </QueryClientProvider>,
   );
   return queries;
 }
 
 describe("ThroughputCard", () => {
+  it("ignores the pushed live rate on any dashboard but the main one", async () => {
+    const live = { inBps: 1_000_000, outBps: 1_000_000, ports: 1, receivedAt: Date.now() };
+    renderCard(firewall(10), settings, live, "full", false);
+    const download = await screen.findByRole("group", { name: "Download" });
+    expect(await within(download).findByText("84.2 Mbit/s")).toBeInTheDocument();
+    expect(screen.queryByText(/· live/)).not.toBeInTheDocument();
+  });
+
   it("asks to choose a port first", () => {
     renderCard(firewall(10), {});
     expect(screen.getByText("No port chosen.")).toBeInTheDocument();

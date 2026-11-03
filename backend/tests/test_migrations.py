@@ -376,3 +376,29 @@ def test_0009_system_events_and_channel_setting(db_url: str) -> None:
         assert states == {5: "no_data", 6: "resolved"}
     finally:
         eng.dispose()
+
+
+def test_0010_keeps_dashboards_and_orders_them_by_id(db_url: str) -> None:
+    cfg = alembic_config(db_url)
+    command.upgrade(cfg, "0009")
+    eng = make_engine(db_url)
+    layout = {"version": 2, "cards": [{"card_type": "ping-check"}]}
+    try:
+        with eng.begin() as conn:
+            for dashboard_id in (3, 1):
+                conn.execute(
+                    text("INSERT INTO dashboards (id, name, layout) VALUES (:id, 'D', :layout)"),
+                    {"id": dashboard_id, "layout": json.dumps(layout)},
+                )
+        command.upgrade(cfg, "0010")
+        with eng.connect() as conn:
+            rows = conn.execute(text("SELECT id, position, layout FROM dashboards ORDER BY id"))
+            got = [(r[0], r[1], r[2] if isinstance(r[2], dict) else json.loads(r[2])) for r in rows]
+        assert got == [(1, 0, layout), (3, 1, layout)]
+        # A deleted dashboard's id is never handed out again.
+        with eng.begin() as conn:
+            conn.execute(text("DELETE FROM dashboards WHERE id = 3"))
+            conn.execute(text("INSERT INTO dashboards (name, layout) VALUES ('N', '{}')"))
+            assert conn.execute(text("SELECT MAX(id) FROM dashboards")).scalar() == 4
+    finally:
+        eng.dispose()

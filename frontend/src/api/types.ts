@@ -310,6 +310,25 @@ export interface Dashboard {
   layout: DashboardLayout;
 }
 
+/** `GET /dashboards`: every dashboard, in tab order. The first one is the main one. */
+export interface DashboardSummary {
+  id: number;
+  name: string;
+  position: number;
+}
+
+/** `POST /dashboards`: an empty layout, or a copy of `copy_from`'s. */
+export interface DashboardCreate {
+  name: string;
+  copy_from?: number;
+}
+
+/** `PATCH /dashboards/{id}`: rename or move. */
+export interface DashboardUpdate {
+  name?: string;
+  position?: number;
+}
+
 /** `GET/POST /links`: a connection between two instances, drawn on the network map. */
 export interface DeviceLink {
   id: number;

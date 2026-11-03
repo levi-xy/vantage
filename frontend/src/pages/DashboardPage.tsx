@@ -1,8 +1,11 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, useSyncExternalStore } from "react";
+import { Link, useParams } from "react-router";
+import { ApiError } from "../api";
 import type { CardPlacement, Dashboard, Instance } from "../api";
-import { useApiClient, useUser } from "../app/session";
+import { useApiClient } from "../app/session";
 import { DashboardGrid } from "../cards/DashboardGrid";
+import { MainDashboardContext } from "../cards/mainDashboard";
 import {
   addCard,
   cardKey,
@@ -14,11 +17,9 @@ import { cardFullSize, widget, WIDGETS } from "../cards/widgets";
 import type { AvailableCard } from "../cards/layout";
 import { EmptyState, PageHeader } from "../components/PageHeader";
 import { alertError, buttonPrimary, buttonSecondary } from "../components/styles";
+import { dashboardKey, DEFAULT_DASHBOARD_ID, useDashboards } from "./dashboards";
+import { DashboardTabs } from "./DashboardTabs";
 import { errorText, useInstances } from "./devices/queries";
-
-/** The one dashboard there is (the backend creates it on first read). */
-const DASHBOARD_ID = 1;
-const DASHBOARD_KEY = ["dashboards", DASHBOARD_ID] as const;
 
 function subscribeResize(onChange: () => void) {
   window.addEventListener("resize", onChange);
@@ -149,16 +150,51 @@ function CardSettingsPanel({
   );
 }
 
+/**
+ * `/` shows the main dashboard (the first one), `/d/<id>` any dashboard. Each dashboard gets
+ * its own view (keyed by id), so switching tabs never carries an edit over.
+ */
 export function DashboardPage() {
+  const { id } = useParams();
+  const dashboards = useDashboards();
+  let dashboardId: number | null | undefined;
+  if (id !== undefined) {
+    dashboardId = /^[1-9]\d{0,9}$/.test(id) ? Number(id) : null;
+  } else if (dashboards.data) {
+    dashboardId = dashboards.data[0]?.id ?? DEFAULT_DASHBOARD_ID;
+  } else if (dashboards.isError) {
+    dashboardId = DEFAULT_DASHBOARD_ID;
+  }
+  return (
+    <DashboardView key={String(dashboardId)} dashboardId={dashboardId} atMain={id === undefined} />
+  );
+}
+
+/** One dashboard: `undefined` while the main one is being looked up, null for a bad address. */
+function DashboardView({
+  dashboardId,
+  atMain,
+}: {
+  dashboardId: number | null | undefined;
+  atMain: boolean;
+}) {
   const api = useApiClient();
   const queryClient = useQueryClient();
-  const isAdmin = useUser().role === "admin";
   const isDesktop = useIsDesktop();
   const instances = useInstances();
+  const queryKey = dashboardKey(dashboardId ?? 0);
   const dashboard = useQuery({
-    queryKey: DASHBOARD_KEY,
-    queryFn: () => api.dashboard(DASHBOARD_ID),
+    queryKey,
+    queryFn: () => api.dashboard(dashboardId ?? 0),
+    enabled: typeof dashboardId === "number",
   });
+  const notFound =
+    dashboardId === null || (dashboard.error instanceof ApiError && dashboard.error.status === 404);
+  // The backend pushes live rates for the main dashboard's throughput card only.
+  const list = useDashboards().data;
+  const main = list ? (list[0]?.id ?? DEFAULT_DASHBOARD_ID) : undefined;
+  const isMain =
+    typeof dashboardId === "number" && (main === undefined ? atMain : main === dashboardId);
   // While editing: the layout being edited, saved only on Done.
   const [draft, setDraft] = useState<CardPlacement[] | null>(null);
   const [adding, setAdding] = useState(false);
@@ -177,14 +213,14 @@ export function DashboardPage() {
 
   const save = useMutation({
     mutationFn: (cards: CardPlacement[]) =>
-      api.saveDashboard(DASHBOARD_ID, { version: LAYOUT_VERSION, cards }),
+      api.saveDashboard(dashboardId ?? 0, { version: LAYOUT_VERSION, cards }),
     // Show the new layout at once so the grid doesn't snap back while the request runs.
     onMutate: (cards) => {
-      queryClient.setQueryData<Dashboard>(DASHBOARD_KEY, (old) =>
+      queryClient.setQueryData<Dashboard>(queryKey, (old) =>
         old ? { ...old, layout: { version: LAYOUT_VERSION, cards } } : old,
       );
     },
-    onError: () => queryClient.invalidateQueries({ queryKey: DASHBOARD_KEY }),
+    onError: () => queryClient.invalidateQueries({ queryKey }),
   });
 
   const available: AvailableCard[] = [];
@@ -205,7 +241,7 @@ export function DashboardPage() {
       ? prepareLayout(dashboard.data.layout, WIDGETS, available, known, loaded)
       : null;
 
-  const editing = draft !== null && isAdmin && isDesktop;
+  const editing = draft !== null && isDesktop;
   const shown = editing ? draft : saved;
 
   const startEditing = (openAdd: boolean) => {
@@ -223,7 +259,7 @@ export function DashboardPage() {
   };
 
   let actions = null;
-  if (isAdmin && isDesktop && saved) {
+  if (isDesktop && saved) {
     actions = editing ? (
       <div className="flex gap-2">
         <button type="button" className={buttonSecondary} onClick={() => setAdding(!adding)}>
@@ -244,7 +280,16 @@ export function DashboardPage() {
   }
 
   let body;
-  if (instances.isPending || dashboard.isPending) {
+  if (notFound) {
+    body = (
+      <EmptyState>
+        <p>Dashboard not found.</p>
+        <Link to="/" className="mt-2 inline-block text-in underline">
+          Open the main dashboard
+        </Link>
+      </EmptyState>
+    );
+  } else if (instances.isPending || dashboard.isPending) {
     body = (
       <p role="status" className="text-sm text-slate-600 dark:text-slate-400">
         Loading…
@@ -260,7 +305,7 @@ export function DashboardPage() {
     body = (
       <EmptyState>
         <p>The dashboard is empty.</p>
-        {isAdmin && isDesktop && (
+        {isDesktop && (
           <button
             type="button"
             className={`mt-3 ${buttonPrimary}`}
@@ -290,8 +335,14 @@ export function DashboardPage() {
   }
 
   return (
-    <>
+    <MainDashboardContext.Provider value={isMain}>
       <PageHeader title="Dashboard">{actions}</PageHeader>
+      <DashboardTabs
+        current={dashboardId ?? null}
+        currentName={dashboard.data?.name}
+        editing={editing}
+        atMain={atMain}
+      />
       {save.isError && (
         <p role="alert" className={`mb-4 ${alertError}`}>
           {errorText(save.error)}
@@ -314,6 +365,6 @@ export function DashboardPage() {
         />
       )}
       {body}
-    </>
+    </MainDashboardContext.Provider>
   );
 }
