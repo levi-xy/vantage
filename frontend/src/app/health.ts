@@ -74,7 +74,7 @@ const UNREACHABLE_CAUSE: Record<string, string> = {
   address_refused:
     "The network guard refuses its address (loopback and similar addresses are never allowed). Set VANTAGE_PROMETHEUS_URL to a private address, such as the default http://prometheus:9090.",
   connection_refused:
-    "Nothing answers at its address. Check that Prometheus is running: docker compose ps.",
+    "Vantage can't connect to its address. Check that Prometheus is running (docker compose ps) and that VANTAGE_PROMETHEUS_URL is right.",
   timeout: "It doesn't answer in time; it may be starting up or overloaded.",
   server_error: "It answers with an error. Check its log: docker compose logs prometheus.",
   connection_failed:
