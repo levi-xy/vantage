@@ -443,11 +443,13 @@ def restore(ctx: Context, source: str, overwrite: bool) -> bool:
         "logs in again."
     )
     ctx.console.out(RESTART_HINT)
-    if result.secrets_undecryptable:
+    if result.secrets_undecryptable or not result.key_matches:
         ctx.console.err(
             f"warning: {result.secrets_undecryptable} of {result.secrets_total} stored "
             "secret(s) can't be decrypted with this server's master key: the backup was "
-            "made with a different key. The data is restored; put the matching key in "
+            "made with a different key, and the backend runs in key_mismatch mode (no "
+            "polls, no secret writes) until it has that key. The data is restored; put "
+            "the matching key in "
             "deploy/secrets/master.key and recreate the backend "
             "(docker compose up -d --force-recreate backend)."
         )

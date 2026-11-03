@@ -578,6 +578,9 @@ def test_healthz_reasons(engine: Engine, db_url: str) -> None:
     check("prometheus_unreachable")
     monitor.evaluator_started(now - timedelta(minutes=5))
     check("evaluator_stalled")
+    monitor.key_mismatch = True  # P0-6: first in the order
+    check("key_mismatch")
+    monitor.key_mismatch = False
     monitor.tick_finished(utcnow())
     monitor.record_probe(True, now - timedelta(minutes=5))
     monitor.record_metrics(5.0, now)

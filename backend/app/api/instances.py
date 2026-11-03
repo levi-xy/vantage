@@ -26,7 +26,7 @@ from app.api.deps import AdminDep, AuthDep, DbDep
 from app.api.integrations import RegistryDep
 from app.collectors.scheduler import polls
 from app.collectors.store import InstanceStatus, MetricsStore
-from app.core import audit
+from app.core import audit, key_check
 from app.core.crypto import DecryptionError, SecretBox
 from app.core.net_guard import NetGuardError
 from app.integrations import instance_config as ic
@@ -364,6 +364,8 @@ async def create_instance(
     await _check_hosts(factory, cls, config)
     if db.scalar(select(Instance.id).where(Instance.name == body.name)) is not None:
         raise _name_taken()
+    if secrets:  # P0-6: never write a secret under a key that doesn't match
+        key_check.require(db, box)
 
     instance_id = uuid.uuid4()
     row = Instance(
@@ -454,6 +456,8 @@ async def update_instance(
     changes = audit.diff(before, after)
 
     if body.config is not None:
+        if ic.secret_field_keys(cls.config_schema):  # P0-6, before reading the stored ones
+            key_check.require(db, box)
         stored_secrets = _stored_secrets(box, row)
         merged = {**row.config, **stored_secrets, **body.config}
         model = _validate(cls.config_schema, merged)

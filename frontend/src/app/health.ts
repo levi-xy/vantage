@@ -55,7 +55,12 @@ const SYSTEM_ALERT_TEXT: Record<string, string> = {
   metrics_not_collected:
     "Prometheus isn't collecting Vantage's metrics: polled devices can't be checked.",
   evaluator_stalled: "Alert evaluation has stopped.",
+  key_mismatch:
+    "The master key doesn't match the stored secrets: polling and notifications are stopped.",
 };
+
+/** System alerts that stop monitoring altogether. */
+const CRITICAL_SYSTEM_ALERTS = new Set(["key_mismatch"]);
 
 export function systemAlertText(kind: string): string {
   return SYSTEM_ALERT_TEXT[kind] ?? `System alert: ${kind.replace(/_/g, " ")}.`;
@@ -114,7 +119,7 @@ export function computeHealth(input: HealthInput): Health {
   for (const s of input.delivery?.system_alerts ?? []) {
     issues.push({
       key: `system:${s.system_kind}`,
-      level: "warning",
+      level: CRITICAL_SYSTEM_ALERTS.has(s.system_kind) ? "critical" : "warning",
       tag: "SYSTEM",
       title: systemAlertText(s.system_kind),
       detail: "",
