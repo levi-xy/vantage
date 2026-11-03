@@ -268,24 +268,28 @@ describe("ApiClient errors", () => {
 });
 
 describe("ApiClient queries", () => {
-  it("runs at most two /query calls at once and queues the rest in order", async () => {
+  it("runs at most four /query calls at once and queues the rest in order", async () => {
     const pending: ((r: Response) => void)[] = [];
     const fetchMock = vi.fn<typeof fetch>(
       () => new Promise<Response>((resolve) => pending.push(resolve)),
     );
     const client = new ApiClient({ fetch: fetchMock });
     const result = { result_type: "vector", series: [], warnings: [] };
-    const calls = [1, 2, 3, 4].map((n) => client.query({ query: `q${n}` }));
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(MAX_QUERIES_IN_FLIGHT));
+    const max = MAX_QUERIES_IN_FLIGHT;
+    expect(max).toBe(4);
+    const calls = Array.from({ length: max + 2 }, (_, n) => client.query({ query: `q${n + 1}` }));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(max));
     pending.shift()?.(json({ detail: "too many queries in progress; try again" }, 429));
     await expect(calls[0]).rejects.toMatchObject({ status: 429 });
-    // A failed query frees its slot too: the third goes out, the fourth still waits.
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
-    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual({ query: "q3" });
+    // A failed query frees its slot too: the next goes out, the last one still waits.
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(max + 1));
+    expect(JSON.parse(String(fetchMock.mock.calls[max]?.[1]?.body))).toEqual({
+      query: `q${max + 1}`,
+    });
     pending.shift()?.(json(result));
     await expect(calls[1]).resolves.toEqual(result);
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(max + 2));
     pending.splice(0).forEach((resolve) => resolve(json(result)));
-    await expect(Promise.all(calls.slice(2))).resolves.toHaveLength(2);
+    await expect(Promise.all(calls.slice(2))).resolves.toHaveLength(max);
   });
 });

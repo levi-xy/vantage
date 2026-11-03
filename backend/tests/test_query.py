@@ -177,9 +177,13 @@ def test_concurrency_caps_answer_429(
 ) -> None:
     gate: QueryGate = admin.app.state.query_gate  # type: ignore[attr-defined]
     mine = session.scalars(select(UserSession.id)).one()
-    # This session already has its two queries running: refused at once, nothing sent.
-    for _ in range(MAX_QUERIES_PER_SESSION):
+    assert (MAX_QUERIES_PER_SESSION, MAX_CONCURRENT_QUERIES) == (4, 6)
+    # This session already has its four queries running: refused at once, nothing sent.
+    for _ in range(MAX_QUERIES_PER_SESSION - 1):
         assert gate.acquire(mine)
+    assert admin.post(QUERY, json={"query": "up"}).status_code == 200  # the fourth fits
+    assert gate.acquire(mine)
+    prom.requests.clear()
     r = admin.post(QUERY, json={"query": "up"})
     assert r.status_code == 429
     assert r.headers["retry-after"] == "1"

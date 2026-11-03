@@ -67,10 +67,10 @@ export interface ApiClientOptions {
 
 /**
  * `POST /query` calls this client runs at once; the rest wait in order. The backend
- * answers 429 past two per session (backend/app/query/proxy.py), and a dashboard asks
+ * answers 429 past four per session (backend/app/query/proxy.py), and a dashboard asks
  * for many cards at the same moment.
  */
-export const MAX_QUERIES_IN_FLIGHT = 2;
+export const MAX_QUERIES_IN_FLIGHT = 4;
 
 // A 401 from these paths is a failed credential check, not an ended session, so it
 // doesn't notify the unauthorized listeners (which send the user to the login page).

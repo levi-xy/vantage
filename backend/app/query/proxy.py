@@ -41,7 +41,7 @@ MAX_WARNING_LENGTH = 300
 # slot answers 429 at once; nothing waits. The alert evaluator has its own client and
 # never counts against these.
 MAX_CONCURRENT_QUERIES = 6
-MAX_QUERIES_PER_SESSION = 2
+MAX_QUERIES_PER_SESSION = 4
 
 ResultType = Literal["vector", "matrix", "scalar", "string"]
 

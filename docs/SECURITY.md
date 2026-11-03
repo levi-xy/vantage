@@ -596,9 +596,9 @@ The series limit is also sent to Prometheus as its `limit` parameter, which Prom
 honours from 3.2 on (the compose file pins 3.2.1); the backend counts the series again
 either way.
 
-**Concurrency.** At most 6 queries run at once over all users, and at most 2 per login
+**Concurrency.** At most 6 queries run at once over all users, and at most 4 per login
 session. A query over either cap gets 429 (`Retry-After: 1`) at once, without waiting.
-The frontend runs at most 2 queries at a time per tab and retries a 429 after a short
+The frontend runs at most 4 queries at a time per tab and retries a 429 after a short
 random wait. The alert evaluator has its own Prometheus client (its own connection pool)
 and doesn't count against these caps, so browser queries can't starve alert evaluation.
 A rule whose query fails keeps its current state; the failure is logged once (the rule
