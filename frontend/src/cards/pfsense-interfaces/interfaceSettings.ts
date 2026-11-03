@@ -63,11 +63,3 @@ export function interfaceSettings(
     hidden: (name) => hidden.has(name),
   };
 }
-
-/**
- * Gateway display names from the pfSense instance config (`192.0.2.1=WAN_DHCP`), keyed by
- * the ping target (`url` label). Display only; the label keeps the address.
- */
-export function gatewayLabel(instance: Instance | undefined): (url: string) => string {
-  return displayNames(instance, "gateway_names");
-}

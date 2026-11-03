@@ -8,7 +8,10 @@ import { EmbyOverviewCard } from "./emby-overview/EmbyOverviewCard";
 import { HttpCheckCard } from "./http-check/HttpCheckCard";
 import { LinuxHostCard } from "./linux-host/LinuxHostCard";
 import { PingCheckCard } from "./ping-check/PingCheckCard";
-import { PfsenseGatewaysCard } from "./pfsense-gateways/PfsenseGatewaysCard";
+import {
+  PfsenseGatewaysCard,
+  PfsenseGatewaysSettings,
+} from "./pfsense-gateways/PfsenseGatewaysCard";
 import { PfsenseInterfacesCard } from "./pfsense-interfaces/PfsenseInterfacesCard";
 import { PfsenseOverviewCard } from "./pfsense-overview/PfsenseOverviewCard";
 import { PlaceholderCard } from "./PlaceholderCard";
@@ -34,6 +37,14 @@ export interface CardProps {
   compact?: boolean;
 }
 
+/** A device card's settings editor, shown in edit mode (the ⚙ button on the card). */
+export interface CardSettingsProps {
+  instanceId: string;
+  instance: Instance | undefined;
+  settings: CardProps["settings"];
+  onChange: (settings: CardProps["settings"]) => void;
+}
+
 /**
  * Card components by `card_type` (the name the integration declares in its `CardSpec`).
  * Card types without an entry render `PlaceholderCard`. Register a card by adding it here.
@@ -57,6 +68,18 @@ const CARD_COMPONENTS: Readonly<Record<string, ComponentType<CardProps>>> = {
   "snmp-ports": SnmpPortsCard,
   "switch-panel": SwitchPanelCard,
 };
+
+/** Settings editors of the device cards that have settings, by `card_type`. */
+const CARD_SETTINGS_EDITORS: Readonly<Record<string, ComponentType<CardSettingsProps>>> = {
+  "pfsense-gateways": PfsenseGatewaysSettings,
+};
+
+/** The settings editor of a device card type, if it has settings. */
+export function cardSettingsEditor(cardType: string): ComponentType<CardSettingsProps> | undefined {
+  return Object.hasOwn(CARD_SETTINGS_EDITORS, cardType)
+    ? CARD_SETTINGS_EDITORS[cardType]
+    : undefined;
+}
 
 /**
  * The smallest size (grid width, height) at which each card shows everything (its full tier)

@@ -99,6 +99,41 @@ describe("dashboard page", () => {
     expect(screen.queryByRole("button", { name: "Done" })).not.toBeInTheDocument();
   });
 
+  it("saves the pfSense Gateways card's picked interfaces in its settings", async () => {
+    const gateways: CardPlacement = { ...PING, card_type: "pfsense-gateways" };
+    const backend = fakeBackend({
+      session: exampleMe("admin"),
+      routes: {
+        "GET /instances": () => json([exampleInstance({ type_id: "pfsense", config: {} })]),
+        [`GET /instances/${INSTANCE_ID}/cards`]: () =>
+          json([{ card_type: "pfsense-gateways", title: "Gateways", default_size: [4, 2] }]),
+        "GET /dashboards/1": () =>
+          json({ id: 1, name: "Default", layout: { version: 2, cards: [gateways] } }),
+        "PUT /dashboards/1": (body) =>
+          json({ id: 1, name: "Default", layout: (body as { layout: unknown }).layout }),
+        "POST /query": (body) =>
+          json(
+            (body as { query: string }).query.startsWith("net_bytes_recv")
+              ? {
+                  result_type: "vector",
+                  series: [{ labels: { interface: "igc0" }, values: [[1, "5"]] }],
+                  warnings: [],
+                }
+              : { result_type: "vector", series: [], warnings: [] },
+          ),
+      },
+    });
+    renderApp("/", backend);
+    expect(await screen.findByText("No interfaces chosen.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit dashboard" }));
+    fireEvent.click(screen.getByRole("button", { name: "Settings of Gateways" }));
+    const panel = screen.getByRole("region", { name: "Gateways settings" });
+    fireEvent.click(await within(panel).findByRole("checkbox", { name: "igc0" }));
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(puts(backend)).toHaveLength(1));
+    expect(savedLayout(backend).cards[0]?.settings).toEqual({ interface1: "igc0" });
+  });
+
   it("Cancel throws the edits away", async () => {
     const backend = backendWith({ version: 2, cards: [PING] });
     renderApp("/", backend);

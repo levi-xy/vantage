@@ -6,7 +6,7 @@ import "react-resizable/css/styles.css";
 import type { CardPlacement, Instance } from "../api";
 import { cardMinSize, cardTier, widget } from "./widgets";
 import { cardKey, GRID_COLUMNS, GRID_MARGIN, gridHeightPx, ROW_HEIGHT } from "./layout";
-import { cardComponent } from "./registry";
+import { cardComponent, cardSettingsEditor } from "./registry";
 import { CardTierContext } from "./metrics/tier";
 // Used only until the container has been measured (and in test DOMs, which have no layout).
 const FALLBACK_WIDTH = 1200;
@@ -153,7 +153,9 @@ export function DashboardGrid({
             <span className="rounded bg-white px-2 py-1 text-sm font-medium text-slate-700 shadow-sm dark:bg-slate-800 dark:text-slate-200">
               ⠿ {title ?? c.card_type}
             </span>
-            {c.instance_id === null && widget(c.card_type)?.settingsEditor && (
+            {(c.instance_id === null
+              ? widget(c.card_type)?.settingsEditor
+              : cardSettingsEditor(c.card_type)) && (
               <button
                 type="button"
                 aria-label={`Settings of ${title ?? c.card_type}`}
