@@ -158,6 +158,9 @@ class SelfMonitor:
         self.clock = clock
         self._interval = interval
         self.unreachable_since: datetime | None = None
+        # Why the latest probe failed (a fixed code, `query.proxy.UnreachableReason`); None
+        # while Prometheus answers. In memory, like the rest of the probe state.
+        self.unreachable_reason: str | None = None
         # Since when the probe answers: scraping can't be judged sooner than 2 minutes
         # after Prometheus (or Vantage) came up.
         self._reachable_since: datetime | None = None
@@ -201,7 +204,9 @@ class SelfMonitor:
         latest = max(self._started_at, self.last_progress or self._started_at)
         return now - latest >= self.stall_after
 
-    def record_probe(self, ok: bool, now: datetime) -> None:
+    def record_probe(self, ok: bool, now: datetime, reason: str | None = None) -> None:
+        """``reason``: why a failed probe failed (ignored when ``ok``)."""
+        self.unreachable_reason = None if ok else reason
         if ok:
             self.unreachable_since = None
             if self._reachable_since is None:

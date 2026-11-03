@@ -45,6 +45,7 @@ from app.alerts.evaluator import (
 )
 from app.alerts.labels import INSTANCE_ID_LABEL, stored_labels
 from app.alerts.promql import RecoveryMode, split
+from app.alerts.selfcheck import SelfMonitor
 from app.alerts.templates import TEMPLATES, RuleTemplate
 from app.api.deps import AdminDep, AuthDep, DbDep
 from app.api.query import PrometheusDep
@@ -63,6 +64,7 @@ from app.models import (
     Instance,
     NotificationKind,
     NotificationStatus,
+    SystemKind,
 )
 from app.query.proxy import MAX_QUERY_LENGTH, MAX_SERIES, QueryError, QueryRequest, Series
 
@@ -136,6 +138,10 @@ class SystemAlertOut(BaseModel):
     system_kind: str
     # When the problem started.
     since: datetime
+    # For prometheus_unreachable: why the latest probe failed, a fixed code
+    # (`query.proxy.UnreachableReason`; maintainer-approved 2026-11-03). Null otherwise, or
+    # when not known (just after a restart).
+    reason: str | None = None
 
 
 class DeliveryStatusOut(BaseModel):
@@ -499,9 +505,10 @@ def list_events(
 
 
 @router.get("/alerts/delivery-status")
-def delivery_status(_auth: AuthDep, db: DbDep) -> DeliveryStatusOut:
+def delivery_status(_auth: AuthDep, db: DbDep, request: Request) -> DeliveryStatusOut:
     """For the banner: how many alert messages are stuck (a count only), and the firing
     system alerts."""
+    monitor: SelfMonitor = request.app.state.self_monitor
     system = db.scalars(
         select(AlertEvent)
         .where(AlertEvent.source == EventSource.SYSTEM, AlertEvent.state.in_(OPEN_STATES))
@@ -510,7 +517,14 @@ def delivery_status(_auth: AuthDep, db: DbDep) -> DeliveryStatusOut:
     return DeliveryStatusOut(
         stuck=stuck_count(db),
         system_alerts=[
-            SystemAlertOut(system_kind=e.system_kind or "", since=e.started_at) for e in system
+            SystemAlertOut(
+                system_kind=e.system_kind or "",
+                since=e.started_at,
+                reason=monitor.unreachable_reason
+                if e.system_kind == SystemKind.PROMETHEUS_UNREACHABLE
+                else None,
+            )
+            for e in system
         ],
     )
 

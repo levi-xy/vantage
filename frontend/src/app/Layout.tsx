@@ -5,7 +5,7 @@ import { Link, NavLink, Outlet, useLocation } from "react-router";
 import type { Role } from "../api";
 import { OPEN_ALERTS_LIMIT, useOpenAlerts } from "../cards/openAlerts";
 import { ThemeToggle } from "../components/ThemeToggle";
-import { systemAlertText } from "./health";
+import { systemAlertCause, systemAlertText } from "./health";
 import { useDeliveryStatus } from "./deliveryStatus";
 import { HealthStatus } from "./HealthStatus";
 import { useLastDataUpdate, useLiveUpdates } from "./live";
@@ -26,6 +26,9 @@ function DeliveryBanner() {
           className="border-b border-red-300 bg-red-50 px-4 py-2 text-sm text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-100"
         >
           {systemAlertText(alert.system_kind)}{" "}
+          {systemAlertCause(alert.system_kind, alert.reason) && (
+            <>{systemAlertCause(alert.system_kind, alert.reason)} </>
+          )}
           <Link to="/alerts" className="font-medium underline">
             See Alerts
           </Link>

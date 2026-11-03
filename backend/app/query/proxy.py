@@ -21,7 +21,7 @@ import httpcore
 import httpx
 from pydantic import BaseModel, Field
 
-from app.core.net_guard import NetGuard, NetGuardError, guarded_http_client
+from app.core.net_guard import NetGuard, NetGuardError, NetGuardResolveError, guarded_http_client
 
 log = logging.getLogger(__name__)
 
@@ -78,13 +78,29 @@ class QueryResult(BaseModel):
     warnings: list[str] = []
 
 
+# Why Prometheus couldn't be reached at all (``QueryError.unreachable``), a fixed code the
+# UI turns into a cause and a fix (maintainer-approved 2026-11-03). None: Prometheus
+# answered, or the query itself was refused (budget, bad PromQL).
+UnreachableReason = Literal[
+    "name_not_found",  # the host in VANTAGE_PROMETHEUS_URL doesn't resolve
+    "address_refused",  # the network guard refuses its address (loopback, for example)
+    "connection_refused",  # nothing listens there
+    "timeout",  # no answer in time
+    "server_error",  # it answered, but not as a working Prometheus API (5xx, not JSON)
+    "connection_failed",  # any other transport failure (TLS, reset)
+]
+
+
 class QueryError(Exception):
     """Refused or failed query. ``message`` is short and safe to return to the client."""
 
-    def __init__(self, status_code: int, message: str) -> None:
+    def __init__(
+        self, status_code: int, message: str, unreachable: UnreachableReason | None = None
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.message = message
+        self.unreachable = unreachable
 
 
 class QueryGate:
@@ -183,16 +199,28 @@ class PrometheusClient:
             async with asyncio.timeout(TOTAL_TIMEOUT_SECONDS):
                 status_code, body = await self._post(path, form)
         except TimeoutError:
-            raise QueryError(504, "query timed out") from None
+            raise QueryError(504, "query timed out", "timeout") from None
+        except NetGuardResolveError as exc:
+            log.warning("VANTAGE_PROMETHEUS_URL doesn't resolve: %s", exc)
+            raise QueryError(503, "metrics backend unavailable", "name_not_found") from None
         except NetGuardError as exc:
             # The guard's message names the configured host and the reason; log it, but
             # keep internal addresses out of the response.
             log.warning("network guard refused VANTAGE_PROMETHEUS_URL: %s", exc)
-            raise QueryError(503, "metrics backend refused by the network guard") from None
+            raise QueryError(
+                503, "metrics backend refused by the network guard", "address_refused"
+            ) from None
         except httpx.HTTPError as exc:
             # Class name only: the exception text names Prometheus' address.
             log.warning("Prometheus unreachable: %s", type(exc).__name__)
-            raise QueryError(503, "metrics backend unavailable") from None
+            reason: UnreachableReason = (
+                "timeout"
+                if isinstance(exc, httpx.TimeoutException)
+                else "connection_refused"
+                if isinstance(exc, httpx.ConnectError)
+                else "connection_failed"
+            )
+            raise QueryError(503, "metrics backend unavailable", reason) from None
         return _parse(status_code, body, max_series)
 
     async def _post(self, path: str, form: dict[str, str]) -> tuple[int, bytes]:

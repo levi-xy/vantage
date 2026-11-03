@@ -1,5 +1,6 @@
 """PromQL query proxy (M5.1): main path, budget refusals, Prometheus failures, security."""
 
+import asyncio
 import logging
 from collections.abc import Callable, Iterator, Sequence
 from typing import Any
@@ -24,7 +25,9 @@ from app.query.proxy import (
     MAX_QUERIES_PER_SESSION,
     MAX_SERIES,
     PrometheusClient,
+    QueryError,
     QueryGate,
+    QueryRequest,
 )
 from tests.test_auth import add_user, do_setup, login, make_client
 
@@ -271,6 +274,8 @@ GUARD_DNS = {"prometheus": ["192.168.255.243"], "loopback.example": ["127.0.0.1"
 
 
 async def fake_resolver(host: str, _port: int) -> Sequence[str]:
+    if host not in GUARD_DNS:
+        raise OSError("name not found")  # like socket.gaierror
     return GUARD_DNS[host]
 
 
@@ -328,3 +333,60 @@ def test_alert_prometheus_client_can_be_injected(db_url: str) -> None:
     )
     assert app.state.prometheus is browser
     assert app.state.alert_prometheus is alerts
+
+
+# --- why Prometheus is unreachable (the probe's reason, maintainer-approved 2026-11-03) ---
+
+
+def _unreachable(client: PrometheusClient) -> str | None:
+    async def run() -> str | None:
+        try:
+            await client.query(QueryRequest(query="vector(1)"))
+        except QueryError as exc:
+            return exc.unreachable
+        return "answered"
+
+    return asyncio.run(run())
+
+
+def _mocked(handler: Handler) -> PrometheusClient:
+    return PrometheusClient(
+        httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url=PROM_URL)
+    )
+
+
+def _raise_timeout(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectTimeout("timed out", request=request)
+
+
+def _raise_reset(request: httpx.Request) -> httpx.Response:
+    raise httpx.ReadError("reset", request=request)
+
+
+@pytest.mark.parametrize(
+    ("url", "reason"),
+    [
+        # Outside compose the name "prometheus" doesn't resolve: not a guard refusal.
+        ("http://no-such-host.example:9090", "name_not_found"),
+        ("http://loopback.example:9090", "address_refused"),
+        ("http://127.0.0.1:9090", "address_refused"),
+    ],
+)
+def test_unreachable_reason_through_the_guard(url: str, reason: str) -> None:
+    assert _unreachable(guarded(url, httpcore.AsyncMockBackend([]))) == reason
+
+
+@pytest.mark.parametrize(
+    ("handler", "reason"),
+    [
+        (_raise_connect, "connection_refused"),
+        (_raise_timeout, "timeout"),
+        (_raise_reset, "connection_failed"),
+        # Prometheus answered: a broken answer isn't a transport cause (the probe calls it
+        # a server error), and a refused query never is one.
+        (lambda _r: httpx.Response(502, text="<html>bad gateway</html>"), None),
+        (lambda _r: httpx.Response(400, json={"status": "error", "errorType": "bad_data"}), None),
+    ],
+)
+def test_unreachable_reason_of_transport_failures(handler: Handler, reason: str | None) -> None:
+    assert _unreachable(_mocked(handler)) == reason

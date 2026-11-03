@@ -98,6 +98,12 @@ class NetGuardError(Exception):
     """
 
 
+class NetGuardResolveError(NetGuardError):
+    """The host name didn't resolve (no answer, or the resolver failed). A subclass, so
+    every ``except NetGuardError`` still catches it; callers that report a cause (the
+    Prometheus probe) can tell "name not found" from "address refused"."""
+
+
 # --- address policy ---------------------------------------------------------------
 
 DEFAULT_ALLOWED: tuple[IPNetwork, ...] = (
@@ -342,9 +348,9 @@ class NetGuard:
         try:
             answers = await self._resolver(target, port)
         except OSError:
-            raise NetGuardError(f"could not resolve {target}") from None
+            raise NetGuardResolveError(f"could not resolve {target}") from None
         if not answers:
-            raise NetGuardError(f"could not resolve {target}")
+            raise NetGuardResolveError(f"could not resolve {target}")
         checked: list[IPAddress] = []
         for answer in answers:
             try:

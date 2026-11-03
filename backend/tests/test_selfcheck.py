@@ -594,7 +594,7 @@ def test_healthz_reasons(engine: Engine, db_url: str) -> None:
 
 
 def test_api_system_alerts_and_channel_setting(
-    engine: Engine, db_url: str, caplog: pytest.LogCaptureFixture
+    engine: Engine, db_url: str, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     caplog.set_level(logging.DEBUG)
     with make_client(db_url) as c:
@@ -617,6 +617,16 @@ def test_api_system_alerts_and_channel_setting(
         assert not monitor.open_alert(SystemKind.PROMETHEUS_UNREACHABLE, "again", since=utcnow())
         status = c.get(f"{API}/alerts/delivery-status").json()
         assert [a["system_kind"] for a in status["system_alerts"]] == ["prometheus_unreachable"]
+        # The app's own evaluator probes too (and fails here: no Prometheus); keep its
+        # ticks from changing the reason while this test reads it.
+        record = monitor.record_probe
+        monkeypatch.setattr(monitor, "record_probe", lambda *_a, **_k: None)
+        record(False, utcnow(), "timeout")
+        status = c.get(f"{API}/alerts/delivery-status").json()
+        assert status["system_alerts"][0]["reason"] == "timeout"
+        record(True, utcnow())
+        status = c.get(f"{API}/alerts/delivery-status").json()
+        assert status["system_alerts"][0]["reason"] is None  # answering again
         (event,) = c.get(f"{API}/alerts/events").json()
         assert (event["source"], event["system_kind"], event["rule_id"]) == (
             "system",
