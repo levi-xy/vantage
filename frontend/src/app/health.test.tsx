@@ -119,6 +119,27 @@ describe("health level", () => {
     expect(level({ delivery: undefined, deliveryFailed: true })).toBe("warning");
   });
 
+  it("counts a system alert once, as a warning, not as a critical firing alert", () => {
+    const h = health({
+      alerts: [
+        event({
+          source: "system",
+          system_kind: "prometheus_unreachable",
+          rule_id: null,
+          rule_name: "Prometheus unreachable",
+          severity: "critical",
+          state: "firing",
+        }),
+      ],
+      delivery: {
+        stuck: 0,
+        system_alerts: [{ system_kind: "prometheus_unreachable", since: "2026-11-02T13:00:00Z" }],
+      },
+    });
+    expect(h.level).toBe("warning");
+    expect(h.issues.map((i) => i.tag)).toEqual(["SYSTEM"]);
+  });
+
   it("gives the cause of an unreachable Prometheus as the issue's detail", () => {
     const since = "2026-11-02T13:00:00Z";
     const issue = (reason: string | null) =>
