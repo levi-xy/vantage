@@ -49,6 +49,7 @@ function health(overrides: Partial<HealthInput> = {}) {
     alertsFailed: false,
     scrape: scrapeOk,
     delivery: { stuck: 0, system_alerts: [] },
+    deliveryFailed: false,
     ...overrides,
   });
 }
@@ -102,10 +103,12 @@ describe("health level", () => {
       }),
     ).toBe("warning");
     expect(level({ alerts: undefined, alertsFailed: true })).toBe("warning");
+    expect(level({ delivery: undefined, deliveryFailed: true })).toBe("warning");
   });
 
-  it("claims nothing until devices and alerts have answered", () => {
+  it("claims nothing until devices, alerts and delivery status have answered", () => {
     expect(health({ alerts: undefined }).known).toBe(false);
+    expect(health({ delivery: undefined })).toMatchObject({ level: "healthy", known: false });
   });
 });
 

@@ -104,6 +104,7 @@ export function HealthStatus({
     alertsFailed: alerts.isError,
     scrape,
     delivery: delivery.data,
+    deliveryFailed: delivery.isError,
   });
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -131,7 +132,7 @@ export function HealthStatus({
     };
   }, [open]);
 
-  // Until devices and alerts have answered, nothing is claimed (unless a problem is known).
+  // Until devices, alerts and delivery status have answered, nothing is claimed (unless a problem is known).
   const checking = !health.known && health.issues.length === 0;
   const label = checking ? "Checking" : LABEL[health.level];
   const time = lastUpdate === null ? null : clockTime(lastUpdate);

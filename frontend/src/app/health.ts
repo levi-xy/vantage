@@ -28,7 +28,7 @@ export interface Health {
   level: HealthLevel;
   /** Critical ones first, then warnings. */
   issues: HealthIssue[];
-  /** False until devices and alerts have answered once (or failed): "healthy" isn't claimed. */
+  /** False until devices, alerts and delivery status have answered once (or failed). */
   known: boolean;
   /** How far the refresh ring is filled, 0 to 1. */
   progress: number;
@@ -46,6 +46,7 @@ export interface HealthInput {
   alertsFailed: boolean;
   scrape: ScrapeStatus;
   delivery: DeliveryStatusSummary | undefined;
+  deliveryFailed: boolean;
   intervalMs?: number;
 }
 
@@ -105,6 +106,9 @@ export function computeHealth(input: HealthInput): Health {
   }
   if (input.alertsFailed) {
     issues.push(unavailable("alerts", "Alert list unavailable", "/alerts"));
+  }
+  if (input.deliveryFailed) {
+    issues.push(unavailable("delivery-status", "Notification status unavailable", "/alerts"));
   }
 
   for (const s of input.delivery?.system_alerts ?? []) {
@@ -166,6 +170,7 @@ export function computeHealth(input: HealthInput): Health {
   const known =
     (input.instances !== undefined || input.instancesFailed) &&
     (input.alerts !== undefined || input.alertsFailed) &&
+    (input.delivery !== undefined || input.deliveryFailed) &&
     !scrape.pending;
   const progress = lastUpdate === null ? 0 : stale ? 1 : Math.min(1, age / intervalMs);
   return { level, issues, known, progress };
