@@ -60,7 +60,7 @@ data_may_exist() {
     if command -v docker >/dev/null 2>&1 && docker volume inspect "$VOLUME" >/dev/null 2>&1; then
         return 0
     fi
-    case "$(env_value VANTAGE_DATABASE_URL)" in
+    case "$(setting VANTAGE_DATABASE_URL)" in
         ""|sqlite*) return 1 ;;
         *) return 0 ;;  # external database (Postgres): can't tell, assume it has data
     esac
@@ -138,7 +138,7 @@ new_self_signed_cert() {
         *) bind=${bind#[}; sans="$sans,$(san_entry "${bind%]}")" ;;
     esac
     old_ifs=$IFS; IFS=', '; set -f  # split on commas/spaces, no globbing of "*.x"
-    for name in $(env_value VANTAGE_TLS_NAMES); do
+    for name in $(setting VANTAGE_TLS_NAMES); do
         sans="$sans,$(san_entry "$name")"
     done
     IFS=$old_ifs; set +f
@@ -201,12 +201,12 @@ fi
 chmod 644 certs/tls.crt  # public anyway
 
 # An .env from before HTTPS may still say COOKIE_SECURE=false for plain-HTTP LAN use.
-if [ "$(env_value VANTAGE_HTTPS)" != false ] && [ "$(env_value VANTAGE_COOKIE_SECURE)" = false ]; then
+if [ "$(setting VANTAGE_HTTPS)" != false ] && [ "$(setting VANTAGE_COOKIE_SECURE)" = false ]; then
     echo "Warning: HTTPS is on but VANTAGE_COOKIE_SECURE=false in .env, so the session cookie"
     echo "can still be sent over plain HTTP. Remove that line (or set it to true)."
 fi
 # Plain HTTP without a Host allowlist: a web page could reach the API by DNS rebinding.
-if [ "$(setting VANTAGE_HTTPS)" = false ] && [ -z "$(env_value VANTAGE_PUBLIC_HOSTS)" ]; then
+if [ "$(setting VANTAGE_HTTPS)" = false ] && [ -z "$(setting VANTAGE_PUBLIC_HOSTS)" ]; then
     echo "Warning: HTTPS is off and VANTAGE_PUBLIC_HOSTS is empty. Set it in .env to the"
     echo "names you open the dashboard by (see .env.example)."
 fi
