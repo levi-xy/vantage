@@ -44,11 +44,16 @@ def deploy(tmp_path: Path) -> Path:
 
 
 def run(
-    deploy: Path, *args: str, volume_exists: bool = False, docker_down: bool = False
+    deploy: Path,
+    *args: str,
+    volume_exists: bool = False,
+    docker_down: bool = False,
+    extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = {
         "PATH": f"{deploy.parent / 'bin'}:/usr/bin:/bin",
         "STUB_LOG": str(deploy.parent / "stub.log"),
+        **(extra_env or {}),
     }
     if volume_exists:
         env["STUB_VOLUME_EXISTS"] = "1"
@@ -129,6 +134,13 @@ def test_old_env_port_name_still_used(deploy: Path) -> None:
     result = run(deploy)
     assert result.returncode == 0, result.stderr
     assert "Vantage is running: https://127.0.0.1:8080" in result.stdout
+
+
+def test_environment_wins_over_env_file_like_compose(deploy: Path) -> None:
+    (deploy / ".env").write_text("VANTAGE_HTTPS_PORT=8443\n")
+    result = run(deploy, extra_env={"VANTAGE_HTTPS_PORT": "18543"})
+    assert result.returncode == 0, result.stderr
+    assert "Vantage is running: https://127.0.0.1:18543" in result.stdout
 
 
 def test_plain_http_opt_out_prints_http_url(deploy: Path) -> None:

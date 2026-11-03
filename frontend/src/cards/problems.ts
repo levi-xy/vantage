@@ -102,6 +102,10 @@ export function findProblems(
 
   for (const e of events) {
     if (e.instance_id && folded.has(e.instance_id)) continue;
+    // Vantage's own alerts come from the delivery status (one SYSTEM issue each, at its own
+    // level); counted here too they showed twice and raised Prometheus being away to
+    // Critical through the event's severity.
+    if (e.source === "system") continue;
     const device = e.instance_id ? names.get(e.instance_id) : undefined;
     if (e.state === "no_data") {
       const since = parseTime(e.state_since) ?? parseTime(e.started_at);

@@ -49,6 +49,11 @@ env_value() {
     sed -n "s/^$1=//p" .env | tail -n 1 | sed 's/^["'\'']//; s/["'\'']$//'
 }
 
+# A compose setting as Compose sees it: the environment wins over .env.
+setting() {
+    if printenv "$1" >/dev/null 2>&1; then printenv "$1"; else env_value "$1"; fi
+}
+
 # Signs that an install already stored data encrypted with an earlier key.
 data_may_exist() {
     [ -f secrets/prometheus_token ] && return 0
@@ -127,7 +132,7 @@ new_self_signed_cert() {
         ""|*[!A-Za-z0-9.-]*) ;;
         *) cn=$host; sans="$sans,DNS:$host" ;;
     esac
-    bind=$(env_value VANTAGE_BIND_ADDRESS)
+    bind=$(setting VANTAGE_BIND_ADDRESS)
     case "$bind" in
         ""|0.0.0.0|::|"[::]"|127.0.0.1) ;;
         *) bind=${bind#[}; sans="$sans,$(san_entry "${bind%]}")" ;;
@@ -201,7 +206,7 @@ if [ "$(env_value VANTAGE_HTTPS)" != false ] && [ "$(env_value VANTAGE_COOKIE_SE
     echo "can still be sent over plain HTTP. Remove that line (or set it to true)."
 fi
 # Plain HTTP without a Host allowlist: a web page could reach the API by DNS rebinding.
-if [ "$(env_value VANTAGE_HTTPS)" = false ] && [ -z "$(env_value VANTAGE_PUBLIC_HOSTS)" ]; then
+if [ "$(setting VANTAGE_HTTPS)" = false ] && [ -z "$(env_value VANTAGE_PUBLIC_HOSTS)" ]; then
     echo "Warning: HTTPS is off and VANTAGE_PUBLIC_HOSTS is empty. Set it in .env to the"
     echo "names you open the dashboard by (see .env.example)."
 fi
@@ -218,9 +223,9 @@ docker info >/dev/null 2>&1 || die "can't reach the Docker daemon (is it running
 echo "Starting Vantage (the first run builds the images and takes a few minutes)..."
 docker compose up -d
 
-bind=$(env_value VANTAGE_BIND_ADDRESS); bind=${bind:-127.0.0.1}
-port=$(env_value VANTAGE_HTTPS_PORT)
-[ -n "$port" ] || port=$(env_value VANTAGE_HTTP_PORT)  # the name before HTTPS
+bind=$(setting VANTAGE_BIND_ADDRESS); bind=${bind:-127.0.0.1}
+port=$(setting VANTAGE_HTTPS_PORT)
+[ -n "$port" ] || port=$(setting VANTAGE_HTTP_PORT)  # the name before HTTPS
 port=${port:-8443}
 case "$bind" in
     0.0.0.0|::|"[::]") shown_host="<this-server's-address>" ;;
@@ -249,7 +254,7 @@ done
 echo
 
 scheme=https
-[ "$(env_value VANTAGE_HTTPS)" = false ] && scheme=http
+[ "$(setting VANTAGE_HTTPS)" = false ] && scheme=http
 url="$scheme://$shown_host:$port"
 if [ "$healthy" -eq 1 ]; then
     echo "Vantage is running: $url"
