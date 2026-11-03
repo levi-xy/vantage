@@ -84,6 +84,16 @@ describe("throughput ports", () => {
     ]);
   });
 
+  it("names pfSense ports by the description set on pfSense", () => {
+    const groups = portOptions(
+      { pfsense: vector([[{ vantage_instance_id: "pf", interface: "igc1" }, "1"]]) },
+      undefined,
+      [pf],
+      vector([[{ vantage_instance_id: "pf", interface: "igc1", descr: "LAN" }, "1"]]),
+    );
+    expect(groups[0]?.ports.map((p) => [p.name, p.detail])).toEqual([["LAN", "igc1"]]);
+  });
+
   it("formats rates in bytes when asked", () => {
     expect(formatBytesPerSecond(8_000_000)).toBe("1.0 MB/s");
   });

@@ -73,6 +73,27 @@ describe("pfSense cards", () => {
     expect(screen.queryByText("vtnet2")).not.toBeInTheDocument();
   });
 
+  it("interfaces: pfSense's own descriptions, a name set in Vantage wins", async () => {
+    const id = pfsense.id;
+    const withInfo = (query: string) =>
+      query.includes("pfsense_interface_info")
+        ? vector([
+            [{ vantage_instance_id: id, interface: "vtnet0", descr: "WAN" }, "1"],
+            [{ vantage_instance_id: id, interface: "vtnet3", descr: "IoT" }, "1"],
+            [{ vantage_instance_id: id, interface: "vtnet4", descr: "LAN" }, "1"],
+          ])
+        : answer(query);
+    const instance = { ...pfsense, config: { interface_names: ["vtnet4=Office"] } };
+    renderCard(client, PfsenseInterfacesCard, withInfo, instance);
+    const list = await screen.findByRole("list", { name: "Interfaces" });
+    expect(await within(list).findByText("IoT")).toBeInTheDocument();
+    // WAN from the description is still pinned first.
+    expect(within(list).getAllByRole("listitem")[0]).toHaveTextContent("WAN");
+    expect(within(list).getByText("Office")).toBeInTheDocument();
+    expect(within(list).queryByText("LAN")).not.toBeInTheDocument();
+    expect(within(list).getByText("vtnet3")).toBeInTheDocument(); // OS name kept beside it
+  });
+
   it("interface rows: flat without parents, nothing pinned without a WAN", () => {
     const rows = interfaceRows([
       { id: "igc1.20", name: "igc1.20", rx: 5, tx: 5 },
