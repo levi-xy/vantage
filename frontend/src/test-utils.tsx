@@ -48,8 +48,8 @@ export interface FakeBackendOptions {
   setupRequired?: boolean;
   /** Users who can log in, by username (password is EXAMPLE_PASSWORD). */
   users?: Me[];
-  /** Override a route: key is "METHOD /path" relative to /api/v1. */
-  routes?: Record<string, (body: unknown) => Response | Promise<Response>>;
+  /** Override a route: key is "METHOD /path" relative to /api/v1; `url` has the query string. */
+  routes?: Record<string, (body: unknown, url: string) => Response | Promise<Response>>;
 }
 
 /**
@@ -71,7 +71,7 @@ export function fakeBackend(options: FakeBackendOptions = {}) {
     const method = init?.method ?? "GET";
     const body: unknown = init?.body ? JSON.parse(String(init.body)) : undefined;
     const override = options.routes?.[`${method} ${path}`];
-    if (override) return override(body);
+    if (override) return override(body, url);
 
     switch (`${method} ${path}`) {
       case "GET /setup/status":

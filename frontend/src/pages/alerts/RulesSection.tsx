@@ -347,6 +347,8 @@ export function RulesSection() {
   // `key` remounts the add form so a new template replaces what was typed.
   const formKey = useRef(0);
   const [adding, setAdding] = useState<{ key: number; initial?: AlertRuleInput } | null>(null);
+  // 20+ templates: collapsed until asked for, so the rules stay in view.
+  const [showTemplates, setShowTemplates] = useState(false);
 
   function fromTemplate(t: AlertTemplate) {
     setAdding({
@@ -407,14 +409,42 @@ export function RulesSection() {
         )}
       </section>
       <section aria-labelledby="templates-title" className="space-y-2.5">
-        <SectionHeader id="templates-title" title="Create from template" />
-        {templates.isError ? (
+        <h2 id="templates-title" className="text-[15px] font-semibold">
+          <button
+            type="button"
+            aria-expanded={showTemplates}
+            aria-controls="templates-list"
+            onClick={() => setShowTemplates((o) => !o)}
+            className="inline-flex items-center gap-1.5 rounded hover:underline focus-visible:ring-2 focus-visible:ring-in focus-visible:outline-none"
+          >
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.4"
+              aria-hidden="true"
+              className={showTemplates ? "rotate-90" : ""}
+            >
+              <path d="M9 6l6 6-6 6" />
+            </svg>
+            Create from template
+            {templates.data && (
+              <span className="font-normal text-muted tabular-nums">
+                {" "}
+                · {templates.data.length}
+              </span>
+            )}
+          </button>
+        </h2>
+        {!showTemplates ? null : templates.isError ? (
           <p role="alert" className={alertError}>
             Could not load the templates.
           </p>
         ) : (
           templateList.length > 0 && (
-            <ul aria-label="Templates" className={panel}>
+            <ul id="templates-list" aria-label="Templates" className={panel}>
               {templateList.map((t) => (
                 <li key={t.id} className={`${row} flex items-center justify-between gap-3`}>
                   <div className="min-w-0">

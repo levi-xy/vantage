@@ -76,13 +76,17 @@ describe("alerts page: events and rules", () => {
       state: "resolved",
       summary: `event ${100 - i}`,
     }));
-    const backend = adminBackend({ "GET /alerts/events": () => json(full) });
+    const older = full.map((e) => ({ ...e, id: e.id - 50, summary: `event ${e.id - 50}` }));
+    const backend = adminBackend({
+      // Open alerts: none. History: a full page, then older ids for before_id.
+      "GET /alerts/events": (_body, url) =>
+        json(url.includes("state=") ? [] : url.includes("before_id=") ? older.slice(0, 5) : full),
+    });
     renderApp("/alerts", backend);
-    expect(await screen.findByRole("list", { name: "Open alerts" })).toBeInTheDocument();
+    const history = await screen.findByRole("list", { name: "Alert history" });
     fireEvent.click(await screen.findByRole("button", { name: "Load older" }));
-    await waitFor(() =>
-      expect(backend.requests().some((r) => r.route.includes("before_id=51"))).toBe(true),
-    );
+    expect(await within(history).findByText("event 50")).toBeInTheDocument();
+    expect(backend.requests().some((r) => r.route.includes("before_id=51"))).toBe(true);
   });
 
   it("pre-fills a rule from a template and shows the backend's refusal text", async () => {
@@ -91,9 +95,11 @@ describe("alerts page: events and rules", () => {
       "POST /alerts/rules": () => json({ detail: "expr refused: parse error" }, 422),
     });
     renderApp("/alerts", backend);
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Use template ping: instance down" }),
-    );
+    const toggle = await screen.findByRole("button", { name: "Create from template · 1" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("list", { name: "Templates" })).toBeNull();
+    fireEvent.click(toggle);
+    fireEvent.click(screen.getByRole("button", { name: "Use template ping: instance down" }));
     const form = await screen.findByRole("form", { name: "Add a rule" });
     expect(within(form).getByLabelText<HTMLInputElement>("Rule name").value).toBe(TEMPLATE.name);
     fireEvent.click(await within(form).findByRole("checkbox", { name: "ops" }));
