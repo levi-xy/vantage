@@ -4,11 +4,12 @@ import type { Instance, IntegrationInfo } from "../../api";
 import { DeviceTypeIcon } from "../../cards/metrics/CardHeader";
 import { shownState, useScrapeStates } from "../../cards/metrics/scrapeStatus";
 import { EmptyState, PageHeader } from "../../components/PageHeader";
-import { alertError, buttonSecondary } from "../../components/styles";
+import { alertError, buttonSecondary, input } from "../../components/styles";
 import { deviceHealth, TONE_CLASS } from "./deviceStatus";
 import { InstanceForm } from "./InstanceForm";
 import { errorText, useInstance, useIntegrations } from "./queries";
 import { StateText } from "./StateText";
+import { matchesType, TYPE_HINTS } from "./typeHints";
 
 const backLink = (
   <Link to="/devices" className={buttonSecondary}>
@@ -32,7 +33,7 @@ function LoadError({ error }: { error: unknown }) {
   );
 }
 
-/** Step 1 of "Add device": the integration types, grouped by category. */
+/** Step 1 of "Add device": the integration types, grouped by category, with a search. */
 function TypePicker({
   integrations,
   onPick,
@@ -40,28 +41,56 @@ function TypePicker({
   integrations: IntegrationInfo[];
   onPick: (type: IntegrationInfo) => void;
 }) {
+  const [search, setSearch] = useState("");
   if (!integrations.length) return <EmptyState>No integrations are available.</EmptyState>;
-  const sorted = [...integrations].sort(
-    (a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name),
-  );
+  const sorted = [...integrations]
+    .filter((t) => matchesType(t, search))
+    .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
   return (
-    <ul aria-label="Device types" className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
-      {sorted.map((type) => (
-        <li key={type.type_id}>
-          <button
-            type="button"
-            onClick={() => onPick(type)}
-            className="flex w-full items-center gap-3 rounded-lg border border-line bg-panel px-3 py-2.5 text-left hover:border-in focus-visible:ring-2 focus-visible:ring-in focus-visible:outline-none"
-          >
-            <DeviceTypeIcon typeId={type.type_id} />
-            <span className="min-w-0">
-              <span className="block truncate text-[15px] font-semibold">{type.name}</span>
-              <span className="block text-xs text-muted capitalize">{type.category}</span>
-            </span>
-          </button>
-        </li>
-      ))}
-    </ul>
+    <div className="flex flex-col gap-3">
+      <input
+        type="search"
+        aria-label="Search device types"
+        placeholder="Search: pfSense, switch, ping…"
+        autoFocus
+        className={`${input} sm:max-w-sm`}
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        onKeyDown={(e) => {
+          // Enter picks the only match.
+          if (e.key === "Enter" && sorted.length === 1 && sorted[0]) onPick(sorted[0]);
+        }}
+      />
+      {sorted.length === 0 ? (
+        <p className="text-sm text-muted">No device type matches “{search.trim()}”.</p>
+      ) : (
+        <ul
+          aria-label="Device types"
+          className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3"
+        >
+          {sorted.map((type) => (
+            <li key={type.type_id}>
+              <button
+                type="button"
+                onClick={() => onPick(type)}
+                className="flex h-full w-full items-start gap-3 rounded-lg border border-line bg-panel px-3 py-2.5 text-left hover:border-in focus-visible:ring-2 focus-visible:ring-in focus-visible:outline-none"
+              >
+                <DeviceTypeIcon typeId={type.type_id} />
+                <span className="min-w-0">
+                  <span className="block truncate text-[15px] font-semibold">{type.name}</span>
+                  <span className="block text-xs text-muted capitalize">{type.category}</span>
+                  {TYPE_HINTS[type.type_id] && (
+                    <span className="mt-0.5 block text-xs text-muted">
+                      {TYPE_HINTS[type.type_id]}
+                    </span>
+                  )}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

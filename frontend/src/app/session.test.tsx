@@ -218,6 +218,12 @@ describe("login", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Too many failed logins.");
   });
 
+  it("tells a locked-out admin how to reset the password on the server", async () => {
+    renderApp("/login", fakeBackend());
+    fireEvent.click(await screen.findByText("Forgot your password or locked out?"));
+    expect(screen.getByText(/python -m app\.cli reset-password <username>/)).toBeInTheDocument();
+  });
+
   it("asks for both fields before sending", async () => {
     const { backend } = renderApp("/login", fakeBackend());
     await logIn("", "");

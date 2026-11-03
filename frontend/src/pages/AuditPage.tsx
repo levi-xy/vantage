@@ -5,7 +5,7 @@
 // It is rendered as plain text through React (never as HTML), so that placeholder shows
 // exactly as sent, and nothing in an entry can inject markup.
 
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import type { AuditEntry } from "../api";
 import { useApiClient } from "../app/session";
 import { EmptyState, PageHeader } from "../components/PageHeader";
@@ -30,21 +30,25 @@ function Changes({ changes }: { changes: Record<string, unknown> }) {
   );
 }
 
-/** Who acted: a user (through the API), the admin CLI on the server, or the backend. */
-function actor(entry: AuditEntry): string {
+/**
+ * Who acted: a user (through the API), the admin CLI on the server, or the backend. A user
+ * shows by name; one deleted since (or while the user list is loading) as "User #id".
+ */
+function actor(entry: AuditEntry, names: ReadonlyMap<number, string>): string {
   if (entry.actor_type === "cli") return "Admin CLI";
   if (entry.actor_type === "system") return "System";
-  return entry.user_id === null ? "—" : `User #${entry.user_id}`;
+  if (entry.user_id === null) return "—";
+  return names.get(entry.user_id) ?? `User #${entry.user_id}`;
 }
 
-function Row({ entry }: { entry: AuditEntry }) {
+function Row({ entry, names }: { entry: AuditEntry; names: ReadonlyMap<number, string> }) {
   const cell = "px-3 py-2 align-top";
   return (
     <tr className="border-t border-slate-200 dark:border-slate-800">
       <td className={`${cell} whitespace-nowrap`}>
         <time dateTime={entry.at}>{new Date(entry.at).toLocaleString()}</time>
       </td>
-      <td className={`${cell} whitespace-nowrap`}>{actor(entry)}</td>
+      <td className={`${cell} whitespace-nowrap`}>{actor(entry, names)}</td>
       <td className={`${cell} whitespace-nowrap font-medium`}>{entry.action}</td>
       <td className={cell}>
         <span className="whitespace-nowrap">{entry.target_type}</span>
@@ -67,6 +71,9 @@ function errorText(error: unknown): string {
 
 export function AuditPage() {
   const client = useApiClient();
+  // The page is admin-only, like GET /users: actors are shown by username.
+  const users = useQuery({ queryKey: ["users"], queryFn: () => client.users() });
+  const names = new Map((users.data ?? []).map((u) => [u.id, u.username] as const));
   const query = useInfiniteQuery({
     queryKey: ["audit"],
     queryFn: ({ pageParam }) => client.audit({ limit: AUDIT_PAGE_SIZE, before_id: pageParam }),
@@ -125,7 +132,7 @@ export function AuditPage() {
             </thead>
             <tbody>
               {entries.map((entry) => (
-                <Row key={entry.id} entry={entry} />
+                <Row key={entry.id} entry={entry} names={names} />
               ))}
             </tbody>
           </table>

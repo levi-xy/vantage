@@ -16,6 +16,7 @@ import {
   input,
   label,
 } from "../../components/styles";
+import { addDeviceCardsToMain } from "../dashboards";
 import { ColorPicker } from "./ColorPicker";
 import { ConfigFields } from "./ConfigFields";
 import { errorText } from "./queries";
@@ -158,7 +159,16 @@ export function InstanceForm({ integration, instance }: Props) {
       instance
         ? api.updateInstance(instance.id, parts)
         : api.createInstance({ type_id: integration.type_id, ...parts }),
-    onSuccess: async () => {
+    onSuccess: async (saved) => {
+      if (!instance) {
+        // A new device's cards go straight onto the main dashboard (best effort).
+        try {
+          await addDeviceCardsToMain(api, saved.id);
+          await queryClient.invalidateQueries({ queryKey: ["dashboards"] });
+        } catch {
+          // The device is saved; its cards can still be added in edit mode.
+        }
+      }
       await queryClient.invalidateQueries({ queryKey: ["instances"] });
       await navigate("/devices");
     },
