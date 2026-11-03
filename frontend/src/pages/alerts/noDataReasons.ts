@@ -1,4 +1,4 @@
-/** Why an open alert has no data, in plain words (Alerts page and dashboard headline). */
+/** Why an open alert has no data, in plain words (Alerts page and health status). */
 export const NO_DATA_REASONS: Record<string, string> = {
   source_stale: "device not reporting",
   source_down: "device not answering",

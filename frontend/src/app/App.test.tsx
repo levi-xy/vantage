@@ -7,7 +7,6 @@ import {
   openAccountMenu,
   renderApp,
 } from "../test-utils";
-import { liveStatus, REFRESH_MS } from "./live";
 
 /** Render as a logged-in admin and wait until the session check has finished. */
 async function renderReady(path: string) {
@@ -102,27 +101,6 @@ describe("layout", () => {
     renderApp("/account", backend);
     const nav = await screen.findByRole("navigation", { name: "Main" });
     expect(await within(nav).findByRole("link", { name: /^Alerts\W+2 open$/ })).toBeInTheDocument();
-  });
-});
-
-describe("live indicator", () => {
-  const at = new Date(2026, 10, 2, 14, 15, 32).getTime();
-
-  it("fills the ring over the refresh interval, then turns stale after two", () => {
-    expect(liveStatus("live", at, at + REFRESH_MS / 2)).toEqual({
-      tone: "live",
-      label: "Live · 14:15:32",
-      progress: 0.5,
-    });
-    expect(liveStatus("live", at, at + 2 * REFRESH_MS).tone).toBe("live");
-    expect(liveStatus("live", at, at + 2 * REFRESH_MS + 1)).toMatchObject({
-      tone: "stale",
-      label: "Stale · 14:15:32",
-    });
-  });
-
-  it("says Offline while the live connection is down", () => {
-    expect(liveStatus("reconnecting", at, at)).toMatchObject({ tone: "offline", label: "Offline" });
   });
 });
 

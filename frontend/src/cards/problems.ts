@@ -1,4 +1,4 @@
-// What the dashboard headline and problems strip show. Pure functions, so they're easy to test.
+// The problems the top bar's health status lists. Pure functions, so they're easy to test.
 
 import type { AlertEvent, Instance } from "../api";
 import { NO_DATA_REASONS } from "../pages/alerts/noDataReasons";
@@ -16,8 +16,8 @@ export interface Problem {
   detail: string;
   /** Epoch milliseconds, or null when unknown. */
   since: number | null;
-  /** One sentence for the headline's subline, about this problem. */
-  brief: string;
+  /** Critical: a down device or a firing alert of severity critical. Everything else warns. */
+  critical: boolean;
   /** Where "Open" goes. There is no per-device page yet, so devices go to the device list. */
   href: string;
 }
@@ -72,7 +72,6 @@ export function findProblems(
   instances: Instance[],
   events: AlertEvent[],
   stateOf: (i: Instance) => State,
-  nowMs: number,
 ): Problem[] {
   const names = new Map(instances.map((i) => [i.id, i.name] as const));
   const down = instances.filter((i) => i.enabled && stateOf(i) === "down");
@@ -96,10 +95,7 @@ export function findProblems(
       title: `${i.name} is down`,
       detail: extra ? `${reason} · ${plural(extra, "open alert")}` : reason,
       since,
-      brief:
-        since === null
-          ? `${i.name} is down.`
-          : `${i.name} stopped answering at ${clockTime(since, nowMs)}.`,
+      critical: true,
       href: "/devices",
     };
   });
@@ -116,10 +112,7 @@ export function findProblems(
         title: e.rule_name,
         detail: device ? `${words} · ${device}` : words,
         since,
-        brief:
-          since === null
-            ? `${e.rule_name}: no data.`
-            : `${e.rule_name}: no data since ${clockTime(since, nowMs)}.`,
+        critical: false,
         href: "/alerts",
       });
     } else if (e.state === "firing") {
@@ -130,10 +123,7 @@ export function findProblems(
         title: e.rule_name,
         detail: device ?? e.summary,
         since,
-        brief:
-          since === null
-            ? `${e.rule_name} is firing.`
-            : `${e.rule_name} firing since ${clockTime(since, nowMs)}.`,
+        critical: e.severity === "critical",
         href: "/alerts",
       });
     }
@@ -142,33 +132,4 @@ export function findProblems(
   return problems.sort(
     (a, b) => (a.since ?? Infinity) - (b.since ?? Infinity) || a.title.localeCompare(b.title),
   );
-}
-
-/** The headline's subline when there are problems: the first one, then what else is wrong. */
-export function problemSubline(problems: Problem[]): string {
-  const [first, ...rest] = problems;
-  if (!first) return "";
-  const otherDown = rest.filter((p) => p.tag === "DOWN").length;
-  return otherDown
-    ? `${first.brief} ${plural(otherDown, "other device")} down.`
-    : `${first.brief} Everything else is up.`;
-}
-
-/**
- * "4 devices up · 1 pending · 1 not checked yet · no active alerts · checked 12 s ago"
- * (parts left out when they don't apply).
- */
-export function normalSubline(
-  up: number,
-  pending: number,
-  notChecked: number,
-  alertsKnown: boolean,
-  checkedAgoMs: number | null,
-): string {
-  const parts = [plural(up, "device") + " up"];
-  if (pending) parts.push(`${pending} pending`);
-  if (notChecked) parts.push(`${notChecked} not checked yet`);
-  parts.push(alertsKnown ? "no active alerts" : "alerts unavailable");
-  if (checkedAgoMs !== null) parts.push(`checked ${ageText(checkedAgoMs)} ago`);
-  return parts.join(" · ");
 }
