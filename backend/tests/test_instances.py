@@ -27,6 +27,7 @@ from app.integrations import instance_config as ic
 from app.integrations.base import FirewallHint, InstanceContext, Integration, TestResult
 from app.integrations.registry import Registry
 from app.models import AuditLog, Instance, Role
+from app.models.instance import DEVICE_COLORS
 from tests.conftest import TEST_MASTER_KEY
 from tests.integrations.fake import FakeCloudIntegration, FakeConfig, FakeIntegration
 from tests.test_auth import add_user, do_setup, login, make_client
@@ -407,6 +408,45 @@ def test_patch_metadata(admin: TestClient, session: Session) -> None:
     )
     assert out["config"] == data["config"]
     assert stored_secrets(stored(session, data["id"]))["api_token"] == TOKEN
+
+
+# --- device colours (maintainer-approved 2026-11-03) ------------------------------------
+
+
+def test_create_assigns_first_unused_color_then_cycles(admin: TestClient) -> None:
+    assert create(admin, name="a")["color"] == DEVICE_COLORS[0]
+    assert create(admin, name="b", color=DEVICE_COLORS[2])["color"] == DEVICE_COLORS[2]
+    # The first colour nobody uses yet, skipping the one picked by hand.
+    assert create(admin, name="c")["color"] == DEVICE_COLORS[1]
+    assert create(admin, name="d")["color"] == DEVICE_COLORS[3]
+    for i in range(4, len(DEVICE_COLORS)):
+        create(admin, name=f"x{i}")
+    # Every colour used: start over.
+    assert create(admin, name="again")["color"] == DEVICE_COLORS[0]
+    listed = admin.get(f"{API}/instances").json()
+    assert {i["color"] for i in listed} == set(DEVICE_COLORS)
+
+
+def test_patch_color_is_validated_and_audited(admin: TestClient, session: Session) -> None:
+    data = create(admin)
+    r = admin.patch(f"{API}/instances/{data['id']}", json={"color": "teal"})
+    assert r.status_code == 200, r.text
+    assert r.json()["color"] == "teal"
+    assert admin.get(f"{API}/instances/{data['id']}").json()["color"] == "teal"
+    created, updated = audit_rows(session)
+    assert created.changes["color"] == data["color"]
+    assert updated.changes == {"color": {"old": data["color"], "new": "teal"}}
+
+
+@pytest.mark.parametrize("color", ["red", "#ff0000", "", None])
+def test_bad_color_is_refused(admin: TestClient, color: str | None) -> None:
+    data = create(admin)
+    r = admin.patch(f"{API}/instances/{data['id']}", json={"color": color})
+    assert r.status_code == 422
+    assert admin.get(f"{API}/instances/{data['id']}").json() == data
+    if color is not None:  # null on create means "assign one"
+        r = admin.post(f"{API}/instances", json=body(name="other", color=color))
+        assert r.status_code == 422
 
 
 @pytest.mark.parametrize(

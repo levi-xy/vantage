@@ -65,7 +65,7 @@ export function PingCheckCard({ instanceId, title, instance }: CardProps) {
         </KeyFigure>
       ) : (
         <div className="flex items-baseline gap-4" role="group" aria-label="Round trip">
-          <span className="text-[28px] leading-tight font-medium tracking-tight tabular-nums">
+          <span className="text-[28px] leading-tight font-medium tracking-tight text-device tabular-nums">
             {formatMs(rttValue)}
           </span>
           <Loss ratio={lossValue} />

@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import type { Instance, TestResult } from "../api";
+import { deviceColor } from "../app/deviceColors";
 import { useApiClient, useUser } from "../app/session";
 import { DeviceTypeIcon } from "../cards/metrics/CardHeader";
 import { shownState, useScrapeStates } from "../cards/metrics/scrapeStatus";
@@ -165,6 +166,7 @@ function DeviceRow({
   const { status } = instance;
   const checked = timeText(status.checked_at, now);
   const last = timeText(status.last_success_at, now);
+  const color = deviceColor(instance);
   let lastText: string;
   if (last) lastText = last.short;
   else if (health.scraped) lastText = "scraped by Prometheus";
@@ -177,8 +179,19 @@ function DeviceRow({
       <div className="flex min-w-0 items-center gap-3">
         <DeviceTypeIcon typeId={instance.type_id} />
         <div className="min-w-0">
-          <div className="truncate text-[15px] font-semibold" title={instance.name}>
-            {instance.name}
+          <div className="flex min-w-0 items-center gap-2">
+            {color && (
+              <span
+                data-testid="device-swatch"
+                role="img"
+                aria-label={`Colour: ${instance.color}`}
+                style={{ backgroundColor: color }}
+                className="h-2.5 w-2.5 shrink-0 rounded-full"
+              />
+            )}
+            <span className="truncate text-[15px] font-semibold" title={instance.name}>
+              {instance.name}
+            </span>
           </div>
           <div className="truncate text-xs text-muted">
             {typeName}

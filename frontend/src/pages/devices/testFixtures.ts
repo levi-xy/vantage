@@ -38,6 +38,7 @@ export function exampleInstance(overrides: Partial<Instance> = {}): Instance {
     site: "lab",
     tags: ["storage"],
     enabled: true,
+    color: "teal",
     config: { host: "10.0.0.10", port: 8443, verify_tls: true },
     secrets_set: { api_token: true, client_secret: true, snmp_community: false },
     status: { state: "up", checked_at: null, last_success_at: null, error: null },

@@ -1,13 +1,13 @@
-// How the device pages show a device's state. Same words as the card header: healthy is
-// muted plain text ("UP"); only a problem gets colour (critical for DOWN, amber for a device
-// that is failing polls but isn't down yet).
+// How the device pages show a device's state. Same words and colours as the card header:
+// "UP" is green; a problem is critical (DOWN) or amber (a device failing polls that isn't
+// down yet, on its problem line).
 
 import type { Instance, InstanceStatus } from "../../api";
 import { ageText, clockTime } from "../../cards/problems";
 
 type State = InstanceStatus["state"];
 
-export type Tone = "crit" | "warn" | undefined;
+export type Tone = "ok" | "crit" | "warn" | undefined;
 
 export interface DeviceHealth {
   /** "UP", "DOWN", "PENDING", "UNKNOWN", "DISABLED". */
@@ -50,7 +50,7 @@ export function deviceHealth(instance: Instance, shown: State): DeviceHealth {
   }
   return {
     text: shown.toUpperCase(),
-    tone: undefined,
+    tone: shown === "up" ? "ok" : undefined,
     problem: error,
     problemTone: error ? "warn" : undefined,
     rank: error ? 1 : 2,
@@ -58,7 +58,8 @@ export function deviceHealth(instance: Instance, shown: State): DeviceHealth {
   };
 }
 
-export const TONE_CLASS: Record<"crit" | "warn", string> = {
+export const TONE_CLASS: Record<"ok" | "crit" | "warn", string> = {
+  ok: "font-semibold text-ok-text",
   crit: "font-semibold text-crit-text",
   warn: "text-warn",
 };

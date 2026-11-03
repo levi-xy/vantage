@@ -225,6 +225,8 @@ export interface Instance {
   site: string | null;
   tags: string[];
   enabled: boolean;
+  /** A device colour name (`app/deviceColors.ts`); null only for an uncoloured row. */
+  color: string | null;
   /** Non-secret config fields only. */
   config: Record<string, unknown>;
   /** For each secret field: whether a value is stored. */
@@ -241,6 +243,8 @@ export interface InstanceCreate {
   site?: string | null;
   tags?: string[];
   enabled?: boolean;
+  /** Omitted: the backend assigns the first unused colour. */
+  color?: string;
   config: Record<string, unknown>;
 }
 
@@ -253,6 +257,7 @@ export interface InstanceUpdate {
   site?: string | null;
   tags?: string[];
   enabled?: boolean;
+  color?: string;
   config?: Record<string, unknown>;
 }
 

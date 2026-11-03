@@ -3,8 +3,9 @@ import type { ReactNode } from "react";
 import { StaleContext } from "./freshness";
 
 /**
- * The one line a small card shows under its name. `tone` colours it, except for a past
- * (stale) value, which never looks good or bad as if it were current.
+ * The one line a small card shows under its name, in the device's colour. `tone` (a
+ * problem) wins over it, except for a past (stale) value, which never looks good or bad as
+ * if it were current.
  */
 export function KeyFigure({
   label,
@@ -17,7 +18,8 @@ export function KeyFigure({
   children: ReactNode;
 }) {
   const stale = useContext(StaleContext);
-  const color = stale || !tone ? "" : tone === "bad" ? "font-semibold text-crit-text" : "text-warn";
+  const color =
+    stale || !tone ? "text-device" : tone === "bad" ? "font-semibold text-crit-text" : "text-warn";
   return (
     <div
       role="group"

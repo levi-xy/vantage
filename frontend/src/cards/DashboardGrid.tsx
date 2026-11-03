@@ -1,9 +1,11 @@
 import { useLayoutEffect, useState } from "react";
+import type { CSSProperties } from "react";
 import GridLayout from "react-grid-layout";
 import type { Layout } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import type { CardPlacement, Instance } from "../api";
+import { deviceColor } from "../app/deviceColors";
 import { cardMinSize, cardTier, widget } from "./widgets";
 import { cardKey, GRID_COLUMNS, GRID_MARGIN, gridHeightPx, ROW_HEIGHT } from "./layout";
 import { cardComponent, cardSettingsEditor } from "./registry";
@@ -135,15 +137,27 @@ export function DashboardGrid({
         </CardTierContext.Provider>
       );
     }
+    // A device's cards share its colour (dashboard-wide widgets have none): the card sets
+    // --vt-device for its header chip and figures, and gets a strip along its top edge.
+    const color = c.instance_id === null ? undefined : deviceColor(instances.get(c.instance_id));
     return (
       <div
         key={key}
         data-testid="card"
+        style={color ? ({ "--vt-device": color } as CSSProperties) : undefined}
         className={`relative rounded-xl border bg-panel ${
           compact ? (tile ? "min-w-0 " : "col-span-2 ") : "overflow-hidden "
         }${editing ? "border-in" : "border-line"}`}
       >
         {content}
+        {color && (
+          // A border on a rounded overlay, so the strip follows the card's corners.
+          <span
+            aria-hidden="true"
+            data-testid="device-strip"
+            className="pointer-events-none absolute inset-0 rounded-[11px] border-t-[3px] border-device"
+          />
+        )}
         {editing && (
           // Covers the card while editing: the card's own buttons don't react, and the
           // cover is what you drag. Resize with the bottom-right corner.

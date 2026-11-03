@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { DeviceLink, Instance } from "../../api";
+import { deviceColor } from "../../app/deviceColors";
 import { useApiClient } from "../../app/session";
 import { useUnits } from "../../app/units";
 import { buttonPrimary, buttonSecondary, input } from "../../components/styles";
@@ -163,7 +164,15 @@ export function NetworkMapCard({ instances }: WidgetProps) {
           const state = shownState(i, scrape);
           return (
             <g key={i.id}>
-              <circle cx={p.x} cy={p.y} r={12} fill={STATE_COLOUR[state]} stroke="white">
+              {/* The state fills the node; the ring is the device's colour. */}
+              <circle
+                cx={p.x}
+                cy={p.y}
+                r={12}
+                fill={STATE_COLOUR[state]}
+                stroke={deviceColor(i) ?? "white"}
+                strokeWidth={deviceColor(i) ? 3 : 1}
+              >
                 <title>{`${i.name}: ${state}`}</title>
               </circle>
               <text

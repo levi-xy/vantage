@@ -7,6 +7,9 @@ say only which secret fields are set (``secrets_set``).
 
 On PATCH, ``config`` is merged into the stored one: an omitted field (secret or not)
 keeps its value, and an explicit ``null`` clears an optional field.
+
+Every instance has a ``color`` from a fixed palette (maintainer-approved 2026-11-03): given
+on create or assigned (the first palette colour no instance uses yet), changeable on PATCH.
 """
 
 import asyncio
@@ -38,6 +41,7 @@ from app.integrations.base import (
     TestResult,
 )
 from app.models import Instance
+from app.models.instance import DeviceColor, next_color
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -83,6 +87,8 @@ class InstanceCreate(BaseModel):
     site: Site | None = None
     tags: Tags = Field(default_factory=list)
     enabled: bool = True
+    # Omitted or null: the first palette colour no instance uses yet.
+    color: DeviceColor | None = None
     # Every config field, secrets included. Validated against the integration's schema.
     config: dict[str, Any] = Field(default_factory=dict)
 
@@ -93,6 +99,7 @@ class InstanceUpdate(BaseModel):
     site: Site | None = None
     tags: Tags | None = None
     enabled: bool | None = None
+    color: DeviceColor | None = None
     # Merged into the stored config: omitted fields, secrets included, stay unchanged.
     config: dict[str, Any] | None = None
 
@@ -123,6 +130,8 @@ class InstanceOut(BaseModel):
     site: str | None
     tags: list[str]
     enabled: bool
+    # A palette colour name (null only for a row the migration or API never coloured).
+    color: str | None
     # Non-secret fields only.
     config: dict[str, Any]
     # For each secret field of the schema: whether a value is stored. Never the value.
@@ -260,6 +269,7 @@ def _out(
         site=row.site,
         tags=list(row.tags),
         enabled=row.enabled,
+        color=row.color,
         config=ic.public_config(row.config, schema),
         secrets_set=secrets_set,
         status=_status(row, cls, polled),
@@ -367,6 +377,7 @@ async def create_instance(
     if secrets:  # P0-6: never write a secret under a key that doesn't match
         key_check.require(db, box)
 
+    color = body.color or next_color(db.scalars(select(Instance.color)))
     instance_id = uuid.uuid4()
     row = Instance(
         id=instance_id,
@@ -375,6 +386,7 @@ async def create_instance(
         site=body.site,
         tags=body.tags,
         enabled=body.enabled,
+        color=color,
         config=config,
         secrets=ic.encrypt(box, instance_id, secrets),
     )
@@ -393,6 +405,7 @@ async def create_instance(
             "site": row.site,
             "tags": row.tags,
             "enabled": row.enabled,
+            "color": row.color,
             "config": {**config, **dict.fromkeys(secrets, audit.REDACTED)},
         },
         schema=cls.config_schema,
@@ -444,14 +457,20 @@ async def update_instance(
     row = _get_row(db, instance_id)
     cls = _stored_integration(registry, row)
     sent = body.model_dump(exclude_unset=True)
-    for field in ("name", "enabled", "tags"):
+    for field in ("name", "enabled", "tags", "color"):
         if field in sent and sent[field] is None:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
                 [{"loc": ["body", field], "msg": "may not be null", "type": "value_error"}],
             )
 
-    before = {"name": row.name, "site": row.site, "tags": list(row.tags), "enabled": row.enabled}
+    before = {
+        "name": row.name,
+        "site": row.site,
+        "tags": list(row.tags),
+        "enabled": row.enabled,
+        "color": row.color,
+    }
     after = {**before, **{k: v for k, v in sent.items() if k != "config"}}
     changes = audit.diff(before, after)
 
@@ -478,7 +497,7 @@ async def update_instance(
         )
         if clash is not None:
             raise _name_taken()
-    for field in ("name", "site", "tags", "enabled"):
+    for field in ("name", "site", "tags", "enabled", "color"):
         if field in sent:
             setattr(row, field, sent[field])
     _flush(db)

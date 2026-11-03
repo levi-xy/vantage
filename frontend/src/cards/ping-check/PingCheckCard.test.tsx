@@ -46,7 +46,7 @@ describe("PingCheckCard", () => {
     // Healthy is plain text: no green, and the header says a muted UP.
     expect(screen.getByText("0.0%").className).not.toMatch(/emerald|crit/);
     expect(screen.getByText("router-ping")).toBeInTheDocument();
-    expect(screen.getByText("UP").className).toContain("text-muted");
+    expect(screen.getByText("UP").className).toContain("text-ok-text");
   });
 
   it("shows 100% loss as the header's state, in the critical colour", async () => {
