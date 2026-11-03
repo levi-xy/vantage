@@ -9,12 +9,20 @@ Upgrade (no ``key_check`` row yet): every stored secret blob is tried with the c
 key. All decrypt (or there are none): the row is created. None decrypt: ``wrong_key``.
 Some decrypt: ``mixed_key``. Only counts are ever reported, never values.
 
+A row that doesn't open while **no** secret blob is stored is sealed again with the
+current key (logged at WARNING): nothing can end up on two keys then. This is the way out
+after a lost key: delete the devices and channels whose credentials can't be read, and
+the next check passes.
+
 Every secret write calls :func:`require` inside its own transaction, so a database can
-never end up with secrets written under two keys.
+never end up with secrets written under two keys. It takes a shared lock on the row
+(Postgres; SQLite serialises writers anyway), so a write can't commit under the old key
+while a rotation holds the row.
 """
 
 import base64
 import binascii
+import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, cast
@@ -24,6 +32,8 @@ from sqlalchemy.orm import Session
 
 from app.core.crypto import DecryptionError, SecretBox, row_context
 from app.models import Channel, Instance, Setting
+
+log = logging.getLogger(__name__)
 
 KEY_CHECK_KEY = "key_check"
 KEY_CHECK_CONTEXT = row_context("settings", KEY_CHECK_KEY)
@@ -56,6 +66,8 @@ class KeyCheck:
     # didn't decrypt.
     counts: dict[str, tuple[int, int]] = field(default_factory=dict)
     created: bool = False
+    # The row didn't open but no secret was stored: sealed again with the current key.
+    resealed: bool = False
 
     @property
     def ok(self) -> bool:
@@ -114,14 +126,31 @@ def classify(counts: dict[str, tuple[int, int]]) -> Mismatch | None:
     return Mismatch.WRONG_KEY if good == 0 else Mismatch.MIXED_KEY
 
 
-def check(db: Session, box: SecretBox, *, create: bool = True) -> KeyCheck:
+def no_blobs(counts: dict[str, tuple[int, int]]) -> bool:
+    return all(total == 0 for total, _ in counts.values())
+
+
+def check(db: Session, box: SecretBox, *, create: bool = True, lock: bool = False) -> KeyCheck:
     """Check the running key against the database. With ``create``, a missing row is
-    created (flushed, not committed) when every stored blob decrypts."""
-    row = db.get(Setting, KEY_CHECK_KEY)
+    created, and a row that doesn't open while no secret is stored is sealed again
+    (flushed, not committed). ``lock``: hold a shared lock on the row until commit."""
+    query = select(Setting).where(Setting.key == KEY_CHECK_KEY)
+    if lock:
+        query = query.with_for_update(read=True)
+    row = db.scalars(query).one_or_none()
     if row is not None:
         if opens(box, row.value):
             return KeyCheck(None)
-        return KeyCheck(Mismatch.WRONG_KEY, blob_counts(db, box))
+        counts = blob_counts(db, box)
+        if create and no_blobs(counts):
+            row.value = seal(box)
+            db.flush()
+            log.warning(
+                "master key check value didn't open with the running key, but no secret "
+                "is stored: sealed again with the running key"
+            )
+            return KeyCheck(None, counts, resealed=True)
+        return KeyCheck(Mismatch.WRONG_KEY, counts)
     counts = blob_counts(db, box)
     mismatch = classify(counts)
     if mismatch is None and create:
@@ -134,5 +163,5 @@ def check(db: Session, box: SecretBox, *, create: bool = True) -> KeyCheck:
 def require(db: Session, box: SecretBox) -> None:
     """Call before writing a secret, in the same transaction. Raises
     :class:`KeyMismatchError` (the API answers 503 ``key_mismatch``)."""
-    if not check(db, box, create=True).ok:
+    if not check(db, box, create=True, lock=True).ok:
         raise KeyMismatchError()

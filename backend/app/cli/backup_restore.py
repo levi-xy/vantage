@@ -481,6 +481,11 @@ def _check_restored_key(conn: Connection, box: SecretBox, total: int, bad: int) 
             if matches:
                 db.add(Setting(key=KEY_CHECK_KEY, value=key_check.seal(box)))
                 db.flush()
+        elif total == 0 and not key_check.opens(box, row.value):
+            # Nothing is encrypted with the old key: seal it with this server's.
+            row.value = key_check.seal(box)
+            db.flush()
+            matches, mixed = True, False
         else:
             matches = key_check.opens(box, row.value)
             mixed = bad > 0 if matches else bad < total

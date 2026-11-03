@@ -295,15 +295,17 @@ still log in and see what's wrong:
 - polling, live rates and notification delivery stop (queued messages wait; they are
   sent once the key matches);
 - every secret write (an instance or channel created or edited with credentials) is
-  refused with `503 {"reason": "key_mismatch"}`, checked again inside each write's own
-  transaction, so a database can never hold secrets under two keys;
+  refused with `503 {"detail": "<short message>", "reason": "key_mismatch"}` and nothing
+  is written; it is checked again inside each write's own transaction, so a database can
+  never hold secrets under two keys;
 - `/healthz` answers `503 {"reason": "key_mismatch"}` (first in its order), so an
   external monitor sees it even though no channel can send;
 - the log repeats an ERROR line every 5 minutes, with per-table counts of the blobs that
   decrypt (never values);
 - a system alert "Master key mismatch" is stored; its messages are recorded `failed`
   with `error_kind` `credentials_unreadable` (the channel credentials can't be decrypted
-  either), never silently dropped.
+  either), never silently dropped. Once the alert resolves, its RESOLVED message stands
+  in for them: they no longer count for `notifications_stuck` or the delivery banner.
 
 On an upgrade from a version without the check value, it is created when every stored
 secret decrypts with the current key (or none is stored). If none decrypt, the mode is
@@ -313,9 +315,14 @@ secret decrypts with the current key (or none is stored). If none decrypt, the m
 database to `deploy/secrets/master.key` (same owner and mode as before) and run
 `docker compose up -d --force-recreate backend`. The next check passes, the system alert
 resolves and polling resumes. If the right key is lost, the stored credentials can't be
-recovered: restore a backup together with its key, or delete and re-add the affected
-devices and channels after starting over with an empty database. A `mixed_key` database
-needs the key most secrets were written with, then the remaining ones re-entered.
+recovered: restore a backup together with its key, or **delete the affected devices and
+channels** (deleting needs no key) and re-add them. Once no stored secret is left, the
+next check (within 15 s) seals the check value again with the running key (logged at
+WARNING), the mode ends, and the devices and channels can be re-added with their
+credentials. The same applies to a `mixed_key` database: delete the devices and channels
+whose credentials don't decrypt, or run with the key most of them were written with and
+re-enter the rest. A restore of a backup holding no secrets takes the server's key the
+same way.
 
 ## User management
 

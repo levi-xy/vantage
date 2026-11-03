@@ -96,12 +96,17 @@ class KeyMonitor:
             except Exception as exc:  # a DB hiccup must not stop the re-checks
                 log.warning("master key check failed (%s)", type(exc).__name__)
 
-    async def check(self) -> bool:
-        """Check once and switch modes when the answer changed. Returns whether the key
-        matches."""
+    def _check_db(self) -> key_check.KeyCheck:
         with self._sessions() as db:
             result = key_check.check(db, self._box, create=True)
             db.commit()
+        return result
+
+    async def check(self) -> bool:
+        """Check once and switch modes when the answer changed. Returns whether the key
+        matches."""
+        # The database read and the decrypts run off the event loop.
+        result = await asyncio.to_thread(self._check_db)
         if result.created:
             log.info("master key check value created (%s)", result.describe() or "no secrets")
         now = self._clock()

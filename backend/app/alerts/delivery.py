@@ -60,11 +60,14 @@ from app.alerts.channels import (
 from app.core.crypto import DecryptionError, SecretBox
 from app.core.db import utcnow
 from app.models import (
+    AlertEvent,
     AlertNotification,
+    AlertState,
     Channel,
     ChannelType,
     NotificationKind,
     NotificationStatus,
+    SystemKind,
 )
 from app.models.notification import UNFINISHED
 
@@ -331,13 +334,25 @@ def batch_text(texts: Sequence[str], weights: Sequence[int] | None = None) -> st
 
 def stuck_count(db: Session, now: datetime | None = None) -> int:
     """Rows unfinished for more than :data:`STUCK_AFTER`, plus rows that failed within
-    the last :data:`FAILED_BANNER_WINDOW` (counted at once)."""
+    the last :data:`FAILED_BANNER_WINDOW` (counted at once).
+
+    Not counted (P0-6): the failed messages of a ``key_mismatch`` system alert that has
+    resolved. They could never be sent (the channels' credentials couldn't be
+    decrypted); its RESOLVED message stands in for them. They stay ``failed``."""
     now = now or utcnow()
+    resolved_key_mismatch = select(AlertEvent.id).where(
+        AlertEvent.system_kind == SystemKind.KEY_MISMATCH.value,
+        AlertEvent.state == AlertState.RESOLVED,
+    )
+    failed = (
+        (N.status == Status.FAILED)
+        & (N.finished_at >= now - FAILED_BANNER_WINDOW)
+        & ~(N.event_id.is_not(None) & N.event_id.in_(resolved_key_mismatch))
+    )
     return int(
         db.scalar(
             select(func.count()).where(
-                (N.status.in_(UNFINISHED) & (N.created_at < now - STUCK_AFTER))
-                | ((N.status == Status.FAILED) & (N.finished_at >= now - FAILED_BANNER_WINDOW))
+                (N.status.in_(UNFINISHED) & (N.created_at < now - STUCK_AFTER)) | failed
             )
         )
         or 0
