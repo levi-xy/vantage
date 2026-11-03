@@ -27,6 +27,21 @@
   --vt-warn: #b7791f;
   /* The outline of a port with no link or disabled. */
   --vt-port-off: #a9b4c4;
+  /*
+   * Device colours (src/app/deviceColors.ts): at least 4.5:1 on the panel in light mode,
+   * the 400 shades in dark. No red, amber or green: those mean problems and healthy.
+   */
+  --vt-dev-blue: #2563eb;
+  --vt-dev-violet: #7c3aed;
+  --vt-dev-teal: #0f766e;
+  --vt-dev-pink: #db2777;
+  --vt-dev-orange: #c2410c;
+  --vt-dev-lime: #4d7c0f;
+  --vt-dev-cyan: #0e7490;
+  --vt-dev-indigo: #4f46e5;
+  --vt-dev-fuchsia: #c026d3;
+  --vt-dev-sky: #0369a1;
+  --vt-dev-purple: #9333ea;
 }
 
 :root.dark {
@@ -47,6 +62,17 @@
   --vt-crit-text: #fca5a5;
   --vt-warn: #fbbf24;
   --vt-port-off: #4a5566;
+  --vt-dev-blue: #60a5fa;
+  --vt-dev-violet: #a78bfa;
+  --vt-dev-teal: #2dd4bf;
+  --vt-dev-pink: #f472b6;
+  --vt-dev-orange: #fb923c;
+  --vt-dev-lime: #a3e635;
+  --vt-dev-cyan: #22d3ee;
+  --vt-dev-indigo: #818cf8;
+  --vt-dev-fuchsia: #e879f9;
+  --vt-dev-sky: #38bdf8;
+  --vt-dev-purple: #c084fc;
 }
 
 @theme inline {
@@ -67,6 +93,11 @@
   --color-crit-text: var(--vt-crit-text);
   --color-warn: var(--vt-warn);
   --color-port-off: var(--vt-port-off);
+  /*
+   * The colour of the device a card belongs to: its card sets --vt-device (DashboardGrid).
+   * Outside a device card (the dashboard-wide widgets) it is the plain text colour.
+   */
+  --color-device: var(--vt-device, var(--vt-ink));
 }
 
 @theme {

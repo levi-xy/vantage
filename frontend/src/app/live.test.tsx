@@ -18,6 +18,7 @@ const nas = {
   site: null,
   tags: [],
   enabled: true,
+  color: "blue",
   config: {},
   secrets_set: {},
   status: { state: "pending", checked_at: null, last_success_at: null, error: null },

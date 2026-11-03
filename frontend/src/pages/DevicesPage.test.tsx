@@ -82,7 +82,7 @@ describe("device list", () => {
     expect(within(fw).getByRole("button", { name: "Enable fw-1" })).toBeInTheDocument();
   });
 
-  it("puts problems first, by site, and shows healthy devices in plain text", async () => {
+  it("puts problems first, by site, and shows healthy devices in green", async () => {
     const id = (n: number) => `00000000-0000-4000-8000-00000000000${n}`;
     const up = { state: "up" as const, checked_at: null, last_success_at: null, error: null };
     renderApp(
@@ -127,8 +127,13 @@ describe("device list", () => {
     expect(scraped).toHaveTextContent("scraped by Prometheus");
     expect(within(failing as HTMLElement).getByText("timed out")).toHaveClass("text-warn");
     const okState = within(ok as HTMLElement).getByText("UP");
-    expect(okState).toHaveClass("text-muted");
-    expect(okState.className).not.toMatch(/ok|green|emerald/);
+    expect(okState).toHaveClass("text-ok-text", "font-semibold");
+  });
+
+  it("shows each device's colour next to its name", async () => {
+    renderApp("/devices", backendWith([exampleInstance({ color: "pink" })]));
+    const swatch = await screen.findByRole("img", { name: "Colour: pink" });
+    expect(swatch).toHaveStyle({ backgroundColor: "var(--vt-dev-pink)" });
   });
 
   it("says when there are no devices", async () => {
@@ -316,7 +321,8 @@ describe("add device", () => {
     fill("Host", "10.0.0.10");
     fill("Api Token", NEW_TOKEN);
     fireEvent.click(screen.getByRole("button", { name: "Test connection" }));
-    expect(await screen.findByText("Connection OK: reachable")).toBeInTheDocument();
+    const ok = await screen.findByText("Connection OK: reachable");
+    expect(ok.className).toMatch(/emerald/);
   });
 
   it("shows the backend's validation message and keeps the form", async () => {
@@ -383,6 +389,20 @@ describe("edit device", () => {
       enabled: true,
       config: { host: "10.0.0.10", port: 9443, verify_tls: true },
     });
+  });
+
+  it("changes the device colour with a keyboard-accessible radio group", async () => {
+    const { backend, router } = await openEdit({
+      [`PATCH ${ITEM}`]: () => json(exampleInstance({ color: "pink" })),
+    });
+    const group = screen.getByRole("group", { name: "Colour" });
+    expect(within(group).getAllByRole("radio")).toHaveLength(11);
+    expect(within(group).getByRole("radio", { name: "Teal" })).toBeChecked();
+    fireEvent.click(within(group).getByRole("radio", { name: "Pink" }));
+    expect(within(group).getByRole("radio", { name: "Pink" })).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/devices"));
+    expect(sentBody(backend, `PATCH ${ITEM}`)).toMatchObject({ color: "pink" });
   });
 
   it("sends a re-entered secret", async () => {

@@ -143,7 +143,7 @@ export function UsageBar({
       ? "bg-crit"
       : clamped >= 75
         ? "bg-warn"
-        : "bg-in";
+        : "bg-ok";
   return (
     <div className="flex flex-col gap-0.5">
       <div className="flex justify-between gap-2 text-xs">

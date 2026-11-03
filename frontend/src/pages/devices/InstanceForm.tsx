@@ -3,10 +3,12 @@ import { useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { useNavigate } from "react-router";
 import type { Instance, IntegrationInfo, TestResult } from "../../api";
-import { useApiClient } from "../../app/session";
+import { isDeviceColor } from "../../app/deviceColors";
+import { useApiClient, useUser } from "../../app/session";
 import {
   alertError,
   alertInfo,
+  alertSuccess,
   buttonPrimary,
   buttonSecondary,
   fieldError,
@@ -14,6 +16,7 @@ import {
   input,
   label,
 } from "../../components/styles";
+import { ColorPicker } from "./ColorPicker";
 import { ConfigFields } from "./ConfigFields";
 import { errorText } from "./queries";
 import { buildConfig, configChanged, configFields, initialValues } from "./schemaForm";
@@ -36,10 +39,7 @@ function parseTags(text: string): string[] {
 export function TestOutcome({ result }: { result: TestResult }) {
   if (result.ok) {
     return (
-      <div
-        role="status"
-        className="rounded-md border border-line bg-inset px-3 py-2 text-sm text-ink"
-      >
+      <div role="status" className={alertSuccess}>
         Connection OK: {result.message}
       </div>
     );
@@ -84,6 +84,9 @@ export function InstanceForm({ integration, instance }: Props) {
   const [site, setSite] = useState(instance?.site ?? "");
   const [tags, setTags] = useState(instance?.tags.join(", ") ?? "");
   const [enabled, setEnabled] = useState(instance?.enabled ?? true);
+  // A new device gets the first unused colour from the backend; it can be changed here.
+  const [color, setColor] = useState<string | null>(instance?.color ?? null);
+  const isAdmin = useUser().role === "admin";
   const [values, setValues] = useState(() => initialValues(fields, instance?.config));
   const [clearSecrets, setClearSecrets] = useState<ReadonlySet<string>>(new Set());
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -132,6 +135,7 @@ export function InstanceForm({ integration, instance }: Props) {
       site: site.trim() || null,
       tags: tagList,
       enabled,
+      ...(instance && isDeviceColor(color) && color !== instance.color ? { color } : {}),
       config: built.config,
     };
   }
@@ -279,6 +283,7 @@ export function InstanceForm({ integration, instance }: Props) {
         />
         Enabled
       </label>
+      {editing && isAdmin && <ColorPicker value={color} onChange={setColor} />}
 
       <fieldset className="space-y-4 border-t border-line pt-4">
         <legend className="pr-2 text-sm font-semibold">{integration.name} settings</legend>

@@ -11,9 +11,10 @@ export interface StatTileProps {
   tone?: "ok" | "bad";
 }
 
-// Healthy is the plain text colour; only a problem stands out.
+// A plain value is in the device's colour (`text-device`); healthy is green, and a problem
+// always wins over the device colour.
 const TONES = {
-  ok: "",
+  ok: "text-ok-text",
   bad: "text-crit-text",
 };
 
@@ -25,7 +26,7 @@ export function StatTile({ label, value, spark, tone }: StatTileProps) {
     <div className="flex min-w-0 flex-col gap-0.5">
       <span className="text-xs text-slate-500 dark:text-slate-400">{label}</span>
       <span
-        className={`truncate text-xl font-semibold tabular-nums ${shownTone ? TONES[shownTone] : ""}`}
+        className={`truncate text-xl font-semibold tabular-nums ${shownTone ? TONES[shownTone] : "text-device"}`}
       >
         {value}
       </span>

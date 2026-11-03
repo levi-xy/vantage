@@ -402,3 +402,35 @@ def test_0010_keeps_dashboards_and_orders_them_by_id(db_url: str) -> None:
             assert conn.execute(text("SELECT MAX(id) FROM dashboards")).scalar() == 4
     finally:
         eng.dispose()
+
+
+def test_0011_colours_existing_instances_in_created_order(db_url: str) -> None:
+    cfg = alembic_config(db_url)
+    command.upgrade(cfg, "0010")
+    eng = make_engine(db_url)
+    palette = 11
+    try:
+        with eng.begin() as conn:
+            # Inserted out of order; created_at decides. One more than the palette: cycles.
+            for n in reversed(range(palette + 1)):
+                conn.execute(
+                    text(
+                        "INSERT INTO instances (id, type_id, name, tags, enabled, config, "
+                        "created_at, updated_at) VALUES (:id, 'ping_check', :name, '[]', :enabled, "
+                        "'{}', :at, :at)"
+                    ),
+                    {
+                        "enabled": True,
+                        "id": f"{n:032x}",  # how SQLite stores a Uuid
+                        "name": f"dev-{n:02d}",
+                        "at": f"2026-01-01 00:00:{n:02d}",
+                    },
+                )
+        command.upgrade(cfg, "0011")
+        with eng.connect() as conn:
+            got = dict(conn.execute(text("SELECT name, color FROM instances")).all())
+        assert [got[f"dev-{n:02d}"] for n in (0, 1, 2)] == ["blue", "violet", "teal"]
+        assert got[f"dev-{palette - 1:02d}"] == "purple"
+        assert got[f"dev-{palette:02d}"] == "blue"
+    finally:
+        eng.dispose()

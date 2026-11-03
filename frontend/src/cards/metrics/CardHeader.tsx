@@ -1,11 +1,13 @@
 // The header every device card shares: a type icon, the device name, a subtitle
 // ("pfSense · up 7h 50m" or "pfSense · no data since 14:02") and a plain-text state on the
-// right. Healthy is muted text; only a problem uses the critical colour. The collector's
+// right. UP is green; a problem uses the critical colour. The icon chip is tinted with the
+// device's colour (`app/deviceColors.ts`), which a problem never changes. The collector's
 // full error is never printed here (it would overflow small cards): it is the state's
 // tooltip, and the health popover and the Devices page show it in full.
 
 import { useEffect, useState } from "react";
 import type { Instance } from "../../api";
+import { deviceColor, tint } from "../../app/deviceColors";
 import { shownState, useScrapeStates } from "./scrapeStatus";
 import { formatAsOf } from "./freshness";
 import type { Freshness } from "./freshness";
@@ -55,9 +57,13 @@ const ICON_PATHS: Record<Icon, string[]> = {
   play: ["M5 4h14v16H5z", "M10 9l5 3-5 3z"],
 };
 
-function TypeIcon({ icon }: { icon: Icon }) {
+function TypeIcon({ icon, color }: { icon: Icon; color?: string }) {
   return (
-    <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-lg bg-chip text-muted">
+    <span
+      data-testid="type-icon"
+      style={color ? { backgroundColor: tint(color), color } : undefined}
+      className={`flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-lg ${color ? "" : "bg-chip text-muted"}`}
+    >
       <svg
         width="18"
         height="18"
@@ -131,12 +137,14 @@ export function CardHeader({
 
   let text: string;
   let bad = true;
+  let ok = false;
   if (problem) text = problem;
   else if (state === "down") text = lastSeen ? `DOWN ${shortAge(now - lastSeen)}` : "DOWN";
   else if (freshness.kind === "stale" || (state === "up" && freshness.kind === "missing"))
     text = "NO DATA";
   else {
     bad = false;
+    ok = state === "up";
     text = state === "up" ? "UP" : state === "pending" ? "PENDING" : "UNKNOWN";
   }
 
@@ -151,7 +159,7 @@ export function CardHeader({
     <span
       data-state={state}
       title={error}
-      className={`shrink-0 text-xs tracking-wide whitespace-nowrap ${bad ? "font-semibold text-crit-text" : "text-muted"}`}
+      className={`shrink-0 text-xs tracking-wide whitespace-nowrap ${bad ? "font-semibold text-crit-text" : ok ? "font-semibold text-ok-text" : "text-muted"}`}
     >
       <span className="sr-only">Status: </span>
       {text}
@@ -170,7 +178,7 @@ export function CardHeader({
   }
   return (
     <div className="flex min-w-0 items-center gap-3">
-      <TypeIcon icon={type.icon} />
+      <TypeIcon icon={type.icon} color={deviceColor(instance)} />
       <div className="min-w-0 flex-1">
         <div className="truncate text-[15px] font-semibold">
           {instance?.name ?? "Unknown device"}
