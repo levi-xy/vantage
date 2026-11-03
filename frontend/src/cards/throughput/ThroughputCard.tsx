@@ -21,6 +21,7 @@ import {
   isWanPort,
   rateQuery,
   settingsWithPorts,
+  PFSENSE_INFO_QUERY,
   SNMP_INFO_QUERY,
 } from "./ports";
 import type { PortRef } from "./ports";
@@ -32,11 +33,13 @@ export function usePortOptions(instances: Instance[]) {
   const snmp = useFleetQuery(PORT_LIST_QUERIES.snmp);
   const node = useFleetQuery(PORT_LIST_QUERIES.node);
   const info = useFleetQuery(SNMP_INFO_QUERY);
+  const pfsenseInfo = useFleetQuery(PFSENSE_INFO_QUERY);
   return {
     groups: portOptions(
       { pfsense: pfsense.data, snmp: snmp.data, node: node.data },
       info.data,
       instances,
+      pfsenseInfo.data,
     ),
     loading: pfsense.isPending || snmp.isPending || node.isPending,
   };

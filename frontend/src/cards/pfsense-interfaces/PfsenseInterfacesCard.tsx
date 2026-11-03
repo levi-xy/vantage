@@ -4,7 +4,12 @@ import { cardFreshness } from "../metrics/freshness";
 import { CardFrame } from "../metrics/CardFrame";
 import { byLabel } from "../metrics/promql";
 import { useInstantQuery } from "../metrics/useMetricQuery";
-import { interfaceSettings, REAL_IF } from "./interfaceSettings";
+import {
+  IF_INFO_METRIC,
+  interfaceDescriptions,
+  interfaceSettings,
+  REAL_IF,
+} from "./interfaceSettings";
 import { interfaceRows } from "./interfaceRows";
 import { useUnits } from "../../app/units";
 import { KeyFigure } from "../metrics/KeyFigure";
@@ -22,7 +27,8 @@ export function PfsenseInterfacesCard({ instanceId, title, instance }: CardProps
   const [expanded, setExpanded] = useState(false);
   const rx = useInstantQuery(instanceId, (sel) => `8 * rate(net_bytes_recv${sel(REAL_IF)}[5m])`);
   const tx = useInstantQuery(instanceId, (sel) => `8 * rate(net_bytes_sent${sel(REAL_IF)}[5m])`);
-  const settings = interfaceSettings(instance);
+  const info = useInstantQuery(instanceId, (sel) => `${IF_INFO_METRIC}${sel()}`);
+  const settings = interfaceSettings(instance, interfaceDescriptions(info.data));
 
   const txBy = new Map(byLabel(tx.data, "interface").map((r) => [r.key, r.value] as const));
   const rows = interfaceRows(
