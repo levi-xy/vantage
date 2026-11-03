@@ -28,6 +28,7 @@ from prometheus_client import generate_latest
 from pydantic import SecretStr, ValidationError
 from sqlalchemy import Engine
 
+from app.alerts.labels import fingerprint, stored_labels
 from app.collectors.scheduler import MAX_POLL_TIMEOUT_SECONDS, PollScheduler, PollSpec
 from app.collectors.store import MetricsStore, make_registry
 from app.core.crypto import SecretBox
@@ -78,7 +79,7 @@ TCP_HINT = {
 }
 OWN_LABELS = {"node", "vmid", "guest_type", "storage"}
 # The maintainer's label exception (INTEGRATIONS.md section 9): device text, info series only.
-FREE_TEXT_LABELS = {"sys_name", "sys_descr", "if_descr", "if_alias", "guest_name"}
+FREE_TEXT_LABELS = {"sys_name", "sys_descr", "if_descr", "if_alias", "guest_name", "guest_tags"}
 
 V = "/api2/json"
 
@@ -962,9 +963,9 @@ async def test_poll_parses_large_answers_off_the_event_loop(
 
 
 async def test_free_text_labels_only_on_info_series(fake_net: FakeNetwork) -> None:
-    """Maintainer exception (2026-10-28): cleaned, capped guest names may be a label
-    value on vantage_proxmox_guest_info only (value 1), never on a value series. Tags
-    and other device text are never emitted."""
+    """INTEGRATIONS.md section 9: cleaned, capped guest names and tags may be label
+    values on vantage_proxmox_guest_info only (value 1), never on a value series. Other
+    device text is never emitted."""
     serve(fake_net)
     samples = await run_poll(cfg())
     info = [s for s in samples if s.name.endswith("_info")]
@@ -972,13 +973,19 @@ async def test_free_text_labels_only_on_info_series(fake_net: FakeNetwork) -> No
     for sample in samples:
         if sample.name.endswith("_info"):
             assert sample.value == 1.0 and sample.type == "gauge"
-            assert set(sample.labels) == {"node", "vmid", "guest_type", "guest_name"}
+            assert set(sample.labels) == {
+                "node",
+                "vmid",
+                "guest_type",
+                "guest_name",
+                "guest_tags",
+            }
         else:
             assert not FREE_TEXT_LABELS & sample.labels.keys(), sample.name
             assert set(sample.labels) <= OWN_LABELS, sample
-            for text in GUEST_TEXT:
+            for text in (*GUEST_TEXT, "example;web"):
                 assert text not in sample.labels.values()
-        for text in ("example;web", "lvmthin", "Example CPU"):
+        for text in ("lvmthin", "Example CPU"):
             assert text not in sample.labels.values()
     names = {s.labels["vmid"]: s.labels["guest_name"] for s in info}
     # Templates are skipped, so 9000 has no info series either.
@@ -988,6 +995,53 @@ async def test_free_text_labels_only_on_info_series(fake_net: FakeNetwork) -> No
         "200": "example-dns",
         "201": "example-new",
     }
+
+
+async def test_guest_tags_on_the_info_series(fake_net: FakeNetwork) -> None:
+    serve(fake_net)
+    samples = await run_poll(cfg())
+    tags = {s.labels["vmid"]: s.labels["guest_tags"] for s in samples if s.name.endswith("_info")}
+    # ";", "," and spaces all split; lowercased and sorted; no tags gives "".
+    assert tags == {"100": "example;web", "101": "db;prod", "200": "dns;infra", "201": ""}
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("web;prod", "prod;web"),
+        ("web,prod", "prod;web"),
+        ("web prod", "prod;web"),
+        (" ;Web,, PROD ;web ", "prod;web"),
+        ("we<b>;p/rod;ok+1.x_y-z", "ok+1.x_y-z;prod;web"),
+        ("<>;;!", ""),
+        (None, ""),
+        (42, ""),
+        (["web"], ""),
+        ("t9;t8;t7;t6;t5;t4;t3;t2;t1;t0", "t0;t1;t2;t3;t4;t5;t6;t7"),
+        ("a" * 70 + ";" + "b" * 70 + ";c", "a" * 70 + ";c"),
+        ("x" * 121, ""),
+    ],
+)
+def test_clean_tags(raw: Any, expected: str) -> None:
+    assert pve.clean_tags(raw) == expected
+    assert len(expected) <= pve.MAX_GUEST_TAGS_CHARS
+
+
+def test_tags_never_change_an_alert_fingerprint() -> None:
+    base = {
+        "__name__": f"{PREFIX}_guest_info",
+        "vantage_instance_id": "00000000-0000-0000-0000-000000000001",
+        "node": "pve-example",
+        "vmid": "100",
+        "guest_type": "qemu",
+        "guest_name": "example-web",
+        "guest_tags": "example;web",
+    }
+    retagged = {**base, "guest_tags": "prod"}
+    untagged = {k: v for k, v in base.items() if k != "guest_tags"}
+    assert fingerprint(base) == fingerprint(retagged) == fingerprint(untagged)
+    # Shown on the event, not part of its identity.
+    assert stored_labels(base)["guest_tags"] == "example;web"
 
 
 async def test_guest_name_is_cleaned_and_capped(fake_net: FakeNetwork) -> None:
