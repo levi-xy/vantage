@@ -15,7 +15,10 @@ RUN pip install ".[postgres]" && useradd --system --uid 10001 --no-create-home v
 
 USER vantage
 EXPOSE 8000
-# Apply database migrations, then start the API. --no-proxy-headers keeps the request's
-# client address the real TCP peer: the app decides itself which proxies to trust
-# (VANTAGE_TRUSTED_PROXIES), so uvicorn must not rewrite it from X-Forwarded-For.
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn --factory app.main:create_app --host 0.0.0.0 --port 8000 --no-proxy-headers"]
+# First the startup gate (P0-6): it exits 1, so nothing is migrated or started, while an
+# offline command (restore, master-key rotation) holds the maintenance lock; the restart
+# policy (compose: unless-stopped) retries until the lock is gone. Then apply database
+# migrations and start the API. --no-proxy-headers keeps the request's client address the
+# real TCP peer: the app decides itself which proxies to trust (VANTAGE_TRUSTED_PROXIES),
+# so uvicorn must not rewrite it from X-Forwarded-For.
+CMD ["sh", "-c", "python -m app.cli startup-gate && alembic upgrade head && exec uvicorn --factory app.main:create_app --host 0.0.0.0 --port 8000 --no-proxy-headers"]

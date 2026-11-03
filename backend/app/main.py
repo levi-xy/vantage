@@ -33,8 +33,10 @@ from app.core.crypto import SecretBox, load_master_key
 from app.core.db import make_engine, make_session_factory
 from app.core.key_check import KeyMismatchError
 from app.core.login_failures import UserLoginFailures
+from app.core.maintenance import HEARTBEAT_SECONDS
 from app.core.net_guard import NetGuard, NetPolicy
 from app.core.prometheus_auth import PrometheusToken, load_prometheus_token
+from app.heartbeat import Heartbeat
 from app.integrations.instance_config import NetGuardFactory, default_net_guard_factory
 from app.integrations.registry import Registry, builtin_registry
 from app.live.rates import LiveRates
@@ -68,18 +70,21 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        poller: PollScheduler = app.state.poller
-        live_rates: LiveRates = app.state.live_rates
-        dispatcher: DeliveryDispatcher = app.state.delivery
-        # The master key check (P0-6) comes first: in key_mismatch mode polling, live
-        # rates and delivery don't start (the key monitor starts them once it matches).
+        # The heartbeat and the maintenance lock (P0-6) come first: with a lock nothing
+        # starts until it is gone. Then the master key check (P0-6): in key_mismatch mode
+        # polling, live rates and delivery don't start (the key monitor starts them once
+        # it matches).
+        heartbeat: Heartbeat = app.state.heartbeat
+        try:
+            await heartbeat.beat()
+        except Exception as exc:  # retried on every beat
+            log.warning("heartbeat at startup failed (%s)", type(exc).__name__)
         key_monitor: KeyMonitor = app.state.key_monitor
         try:
             await key_monitor.check()
         except Exception as exc:  # re-checked every few seconds; secret writes check too
             log.warning("master key check at startup failed (%s)", type(exc).__name__)
-        if key_monitor.ok:
-            await resume_secret_users()
+        await workers.apply()
         # last_success_at from Prometheus, in the background: never delays polling.
         seeding = asyncio.create_task(
             seed_last_success(
@@ -87,23 +92,19 @@ def create_app(
             ),
             name="vantage-seed-last-success",
         )
-        evaluator: AlertEvaluator = app.state.alert_evaluator
-        evaluator.start()
-        watchdog: Watchdog = app.state.alert_watchdog
-        watchdog.start()
+        heartbeat.start()
         key_monitor.start()
         try:
             yield
         finally:
             seeding.cancel()
             await asyncio.gather(seeding, return_exceptions=True)
+            await heartbeat.stop()
             await key_monitor.stop()
-            await watchdog.stop()
-            await evaluator.stop()
-            await dispatcher.stop()
-            await live_rates.stop()
-            await poller.stop()
+            await workers.stop()
             await app.state.prometheus.aclose()
+            # Last: the CLI may run as soon as the heartbeat is gone.
+            await heartbeat.shutdown()
             engine.dispose()
 
     # Interactive API docs are off unless VANTAGE_API_DOCS is set (development only).
@@ -183,16 +184,22 @@ def create_app(
     )
     app.state.metrics_registry.register(DeliveryCollector(app.state.delivery))
 
-    # Everything that decrypts secrets in the background; stopped in key_mismatch mode.
+    workers = _Workers(
+        poller=app.state.poller,
+        live_rates=app.state.live_rates,
+        delivery=app.state.delivery,
+        evaluator=app.state.alert_evaluator,
+        watchdog=app.state.alert_watchdog,
+    )
+    app.state.workers = workers
+
     async def pause_secret_users() -> None:
-        await app.state.poller.stop()
-        await app.state.live_rates.stop()
-        await app.state.delivery.stop()
+        workers.key_mismatch = True
+        await workers.apply()
 
     async def resume_secret_users() -> None:
-        app.state.poller.start()
-        app.state.live_rates.start()
-        app.state.delivery.start()
+        workers.key_mismatch = False
+        await workers.apply()
 
     app.state.key_monitor = KeyMonitor(
         session_factory=app.state.session_factory,
@@ -201,6 +208,13 @@ def create_app(
         pause=pause_secret_users,
         resume=resume_secret_users,
     )
+
+    async def maintenance_changed(active: bool) -> None:
+        app.state.self_monitor.maintenance = active
+        workers.maintenance = active
+        await workers.apply()
+
+    app.state.heartbeat = Heartbeat(engine, maintenance_changed, interval=HEARTBEAT_SECONDS)
 
     app.include_router(api_router)
     app.include_router(sd_router)
@@ -226,6 +240,65 @@ def create_app(
         return {"status": "ok"}
 
     return app
+
+
+class _Workers:
+    """The background work that pauses: everything that decrypts secrets (polling, live
+    rates, delivery) in key_mismatch mode, and that plus alert evaluation (with its
+    watchdog, which would otherwise restart it) in maintenance mode."""
+
+    def __init__(
+        self,
+        *,
+        poller: PollScheduler,
+        live_rates: LiveRates,
+        delivery: DeliveryDispatcher,
+        evaluator: AlertEvaluator,
+        watchdog: Watchdog,
+    ) -> None:
+        self._poller = poller
+        self._live_rates = live_rates
+        self._delivery = delivery
+        self._evaluator = evaluator
+        self._watchdog = watchdog
+        self.key_mismatch = False
+        self.maintenance = False
+        self._secret_users = False
+        self._evaluating = False
+        self._lock = asyncio.Lock()
+
+    async def apply(self) -> None:
+        """Start or stop each group to match the current modes."""
+        async with self._lock:
+            want_evaluating = not self.maintenance
+            want_secret_users = not (self.maintenance or self.key_mismatch)
+            if self._evaluating and not want_evaluating:
+                await self._watchdog.stop()
+                await self._evaluator.stop()
+                self._evaluating = False
+            if self._secret_users and not want_secret_users:
+                await self._poller.stop()
+                await self._live_rates.stop()
+                await self._delivery.stop()
+                self._secret_users = False
+            if want_secret_users and not self._secret_users:
+                self._poller.start()
+                self._live_rates.start()
+                self._delivery.start()
+                self._secret_users = True
+            if want_evaluating and not self._evaluating:
+                self._evaluator.start()
+                self._watchdog.start()
+                self._evaluating = True
+
+    async def stop(self) -> None:
+        async with self._lock:
+            await self._watchdog.stop()
+            await self._evaluator.stop()
+            await self._delivery.stop()
+            await self._live_rates.stop()
+            await self._poller.stop()
+            self._secret_users = self._evaluating = False
 
 
 def _instance_state(store: MetricsStore) -> Callable[[uuid.UUID], str | None]:
@@ -286,6 +359,11 @@ async def _key_mismatch(_request: Request, _exc: Exception) -> Response:
     )
 
 
+# State-changing requests still served in maintenance mode: logging in and out, and the
+# PromQL proxy (a read sent as POST).
+MAINTENANCE_ALLOWED = frozenset({"/api/v1/auth/login", "/api/v1/auth/logout", "/api/v1/query"})
+
+
 async def _api_guard(
     request: Request, call_next: Callable[[Request], Awaitable[Response]]
 ) -> Response:
@@ -295,6 +373,22 @@ async def _api_guard(
     if request.method not in SAFE_METHODS and request.headers.get("sec-fetch-site") == "cross-site":
         return JSONResponse(
             {"detail": "cross-site request refused"}, status_code=status.HTTP_403_FORBIDDEN
+        )
+    heartbeat: Heartbeat | None = getattr(request.app.state, "heartbeat", None)
+    if (
+        heartbeat is not None
+        and heartbeat.maintenance
+        and request.method not in SAFE_METHODS
+        and request.url.path.rstrip("/") not in MAINTENANCE_ALLOWED
+    ):
+        # P0-6: an offline command (restore, key rotation) holds the maintenance lock.
+        return JSONResponse(
+            {
+                "detail": "maintenance in progress: changes are refused until it finishes",
+                "reason": "maintenance",
+            },
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            headers={"Cache-Control": "no-store"},
         )
     response = await call_next(request)
     # API responses carry user data and CSRF tokens; keep them out of caches.

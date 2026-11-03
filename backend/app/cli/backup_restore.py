@@ -64,6 +64,7 @@ from app.core import audit, key_check
 from app.core.crypto import DecryptionError, SecretBox, row_context
 from app.core.db import Base, UTCDateTime
 from app.core.key_check import KEY_CHECK_KEY
+from app.core.maintenance import RUNTIME_KEYS
 from app.models import Setting
 
 FORMAT = "vantage-backup"
@@ -250,9 +251,13 @@ def write_backup(engine: Engine, out: IO[bytes]) -> BackupSummary:
             columns = list(table.columns)
             kinds = [_kind(c) for c in columns]
             pk = list(table.primary_key.columns)
+            query = select(table).order_by(*pk)
+            if table.name == Setting.__tablename__:
+                # The maintenance lock and the heartbeat are runtime state, not data (P0-6).
+                query = query.where(table.c.key.not_in(RUNTIME_KEYS))
             rows = [
                 [_encode(k, v) for k, v in zip(kinds, row, strict=True)]
-                for row in conn.execute(select(table).order_by(*pk))
+                for row in conn.execute(query)
             ]
             doc["tables"][table.name] = {"columns": [c.name for c in columns], "rows": rows}
             total += len(rows)
@@ -395,6 +400,14 @@ def _reset_sequences(conn: Connection) -> None:
         conn.execute(select(func.setval(sequence, highest + 1, False)))
 
 
+def _data_rows(table: Table) -> Any:
+    """``table``'s rows that are data (for settings: not the runtime rows)."""
+    query = select(table)
+    if table.name == Setting.__tablename__:
+        query = query.where(table.c.key.not_in(RUNTIME_KEYS))
+    return query.subquery()
+
+
 def count_undecryptable(conn: Connection, box: SecretBox) -> tuple[int, int]:
     """``(total, undecryptable)`` stored secret blobs for ``box``'s key."""
     total = bad = 0
@@ -417,24 +430,33 @@ def restore(engine: Engine, backup: Backup, box: SecretBox, *, overwrite: bool) 
         # A freshly started Vantage has already written its own key check value: that
         # row doesn't make the database "not empty", and the backup brings its own.
         conn.execute(delete(Setting).where(Setting.key == KEY_CHECK_KEY))
+        # The maintenance lock (this command's own) and the heartbeat are runtime state:
+        # not counted, not replaced, never taken from a backup (P0-6).
         existing = sum(
-            conn.execute(select(func.count()).select_from(t)).scalar_one() for t in tables()
+            conn.execute(select(func.count()).select_from(_data_rows(t))).scalar_one()
+            for t in tables()
         )
         if existing and not overwrite:
             raise BackupError(
-                f"the database is not empty ({existing} row(s)): restore into a freshly "
-                "started Vantage, or pass --overwrite to replace everything in it"
+                f"the database is not empty ({existing} row(s)): restore into an empty "
+                "Vantage database, or pass --overwrite to replace everything in it"
             )
         if existing:
             for table in reversed(tables()):
-                conn.execute(table.delete())
+                if table.name == Setting.__tablename__:
+                    conn.execute(table.delete().where(table.c.key.not_in(RUNTIME_KEYS)))
+                else:
+                    conn.execute(table.delete())
         restored = skipped = 0
         for table in tables():
+            rows = backup.rows[table.name]
+            if table.name == Setting.__tablename__:
+                rows = [r for r in rows if r.get("key") not in RUNTIME_KEYS]
             if table.name in SKIPPED_TABLES:
-                skipped += len(backup.rows[table.name])
-            elif backup.rows[table.name]:
-                conn.execute(table.insert(), backup.rows[table.name])
-                restored += len(backup.rows[table.name])
+                skipped += len(rows)
+            elif rows:
+                conn.execute(table.insert(), rows)
+                restored += len(rows)
         _reset_sequences(conn)
         with Session(bind=conn) as db:
             audit.record(

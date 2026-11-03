@@ -7,10 +7,16 @@ Run it where the backend runs::
     docker compose exec backend python -m app.cli list-users
     docker compose exec backend python -m app.cli unlock <username>
     docker compose exec -T backend python -m app.cli backup - > vantage-backup.json.gz
-    docker compose exec -T backend python -m app.cli restore - < vantage-backup.json.gz
     docker compose stop backend
+    docker compose run --rm -T backend python -m app.cli restore - < vantage-backup.json.gz
     docker compose run --rm -T backend python -m app.cli rotate-master-key \
         --new-key-file - < secrets/master.key.new
+    docker compose run --rm backend python -m app.cli maintenance-unlock
+
+``restore`` and ``rotate-master-key`` are offline (P0-6): they hold the maintenance lock
+(``app.core.maintenance``) for their whole transaction and refuse to run while the
+backend's heartbeat is fresh. ``startup-gate`` is the backend container's first step: it
+exits 1 while the lock is held, so the backend doesn't start next to one of them.
 
 Shell access to the host is the trust boundary, so no login is needed.
 
@@ -50,7 +56,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.auth import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, USERNAME_PATTERN
 from app.cli import backup_restore as backups
-from app.core import audit, users
+from app.core import audit, maintenance, users
 from app.core.auth import Passwords
 from app.core.config import ConfigError, Settings, load_settings
 from app.core.crypto import MasterKeyError, SecretBox, decode_key, load_master_key, read_key_file
@@ -226,6 +232,8 @@ class Context:
     passwords: Passwords
     # The running master key; loaded only by the commands that need it.
     master_key: Callable[[], bytes]
+    # The maintenance lock this command holds (restore, rotate-master-key).
+    lock_token: str | None = None
 
 
 def _find_user(db: Session, username: str) -> User | None:
@@ -377,7 +385,7 @@ def list_users(ctx: Context) -> None:
 
 # --- backup, restore, master-key rotation (M8.2) -------------------------------------
 
-RESTART_HINT = "Restart the backend so it picks this up: docker compose restart backend"
+RESTART_HINT = "Start the backend again: docker compose up -d backend"
 # Base64 of 32 bytes is 44 characters; a little room for a newline and whitespace.
 _MAX_KEY_INPUT = 256
 
@@ -503,6 +511,101 @@ def rotate_master_key(ctx: Context, new_key_source: str) -> None:
     )
 
 
+# --- maintenance lock (P0-6) ---------------------------------------------------------
+
+UNLOCK_HINT = (
+    "if it was interrupted (the command is no longer running), remove the lock with: "
+    "docker compose run --rm backend python -m app.cli maintenance-unlock"
+)
+
+
+def _offline(ctx: Context, operation: str) -> None:
+    """Take the maintenance lock for ``operation``; raises :class:`CliError` when another
+    command holds it or the backend runs."""
+    try:
+        token = maintenance.acquire(ctx.engine, operation)
+    except maintenance.LockHeld as exc:
+        who = exc.holder.describe() if exc.holder else "another command"
+        raise CliError(
+            f"maintenance in progress: {who}. Wait for it to finish, or, {UNLOCK_HINT}"
+        ) from None
+    except maintenance.BackendRunning as exc:
+        raise CliError(
+            f"the backend is running (heartbeat {max(0, round(exc.age_seconds))} s ago): stop "
+            "it first (docker compose stop backend), then run this command with docker "
+            "compose run --rm backend python -m app.cli ...; nothing was changed"
+        ) from None
+    ctx.lock_token = token
+
+
+def _release(ctx: Context) -> None:
+    token, ctx.lock_token = ctx.lock_token, None
+    if token is None:
+        return
+    try:
+        maintenance.release(ctx.engine, token)
+    except SQLAlchemyError:
+        ctx.console.err(
+            "warning: could not remove the maintenance lock; the backend won't start until "
+            "it is gone: docker compose run --rm backend python -m app.cli maintenance-unlock"
+        )
+
+
+def maintenance_unlock(ctx: Context) -> None:
+    holder = maintenance.unlock(ctx.engine)
+    if holder is None:
+        ctx.console.out("No maintenance lock is held.")
+        return
+    with ctx.session_factory() as db:
+        audit.record(
+            db,
+            actor_type=audit.ActorType.CLI,
+            action=audit.Action.DELETE,
+            target_type="maintenance_lock",
+            target_id=None,
+            user_id=None,
+            changes={"operation": holder.operation, "source": AUDIT_SOURCE},
+        )
+        db.commit()
+    ctx.console.out(f"Removed the maintenance lock held by {holder.describe()}.")
+    ctx.console.out(
+        "If that command was still running, its changes are either complete or rolled back "
+        "(it runs in one transaction); check its output. Start Vantage with: "
+        "docker compose up -d"
+    )
+
+
+def startup_gate(console: Console, settings: Settings) -> int:
+    """The backend container's first step: 0 to go on, 1 while the lock is held.
+
+    A database that doesn't exist yet, or has no tables, passes (a fresh install: the
+    migrations come next). Never creates a database.
+    """
+    try:
+        url = make_url(settings.database_url)
+    except ArgumentError:
+        raise CliError("VANTAGE_DATABASE_URL is not a valid database URL") from None
+    if url.get_backend_name() == "sqlite":
+        path = url.database
+        if path and path != ":memory:" and not path.startswith("file:"):
+            if not Path(path).is_file():
+                return 0
+    engine = make_engine(settings.database_url)
+    try:
+        if "settings" not in set(inspect(engine).get_table_names()):
+            return 0
+        holder = maintenance.startup_gate(engine)
+    finally:
+        engine.dispose()
+    if holder is None:
+        return 0
+    console.err(
+        f"maintenance in progress: {holder.describe()}. Start Vantage again when it "
+        "finishes, or run app.cli maintenance-unlock if it was interrupted"
+    )
+    return 1
+
+
 # --- argument parsing ----------------------------------------------------------------
 
 # argparse repeats the offending value in these messages; a mistyped command may carry a
@@ -592,7 +695,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="import a backup into an empty database",
         description=(
             "Import a backup made at the same database schema revision, in one "
-            "transaction. Refuses a database that already holds data unless --overwrite."
+            "transaction. Refuses a database that already holds data unless --overwrite. "
+            "Stop the backend first (docker compose stop backend) and run this with "
+            "docker compose run --rm; then start the backend again."
         ),
         allow_abbrev=False,
     )
@@ -619,6 +724,26 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="file with the new key (openssl rand -base64 32), or - to read it from stdin",
     )
+
+    commands.add_parser(
+        "maintenance-unlock",
+        help="remove a maintenance lock left by an interrupted restore or key rotation",
+        description=(
+            "Remove the maintenance lock and print which command held it. Only for a lock "
+            "left by a command that was killed: the lock never expires on its own, and "
+            "the backend doesn't start while it is held."
+        ),
+        allow_abbrev=False,
+    )
+    commands.add_parser(
+        "startup-gate",
+        help="(backend container start) exit 1 while a maintenance command holds the lock",
+        description=(
+            "Run by the backend container before the migrations: writes the backend "
+            "heartbeat, then exits 1 if a maintenance lock is held."
+        ),
+        allow_abbrev=False,
+    )
     return parser
 
 
@@ -637,8 +762,11 @@ def main(
     except SystemExit as exc:  # usage errors and --help
         return exc.code if isinstance(exc.code, int) else 2
     engine: Engine | None = None
+    ctx: Context | None = None
     try:
         settings = settings or load_settings()
+        if args.command == "startup-gate":
+            return startup_gate(console, settings)
         engine = _open_engine(settings)
         ctx = Context(
             console=console,
@@ -656,10 +784,14 @@ def main(
         elif args.command == "backup":
             backup(ctx, args.file)
         elif args.command == "restore":
+            _offline(ctx, "restore")
             if not restore(ctx, args.file, args.overwrite):
                 return 1
         elif args.command == "rotate-master-key":
+            _offline(ctx, "rotate-master-key")
             rotate_master_key(ctx, args.new_key_file)
+        elif args.command == "maintenance-unlock":
+            maintenance_unlock(ctx)
         else:
             list_users(ctx)
     except (CliError, ConfigError, MasterKeyError, backups.BackupError) as exc:
@@ -679,6 +811,10 @@ def main(
         console.err("error: the database refused the change; nothing was changed")
         return 1
     finally:
+        # The lock is released whatever happened (success, error, Ctrl-C), before the
+        # engine goes. Only a killed process leaves it behind.
+        if ctx is not None:
+            _release(ctx)
         if engine is not None:
             engine.dispose()
     return 0
