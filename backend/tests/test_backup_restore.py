@@ -158,7 +158,10 @@ def test_backup_restore_round_trip(engine: Engine, db_url: str, tmp_path: Path) 
     restore_audit = after.pop("audit_log")
     # Everything but the sessions comes back: everyone logs in again.
     assert len(before["sessions"]) == 1 and after.pop("sessions") == []
-    assert after == {k: v for k, v in before.items() if k not in ("audit_log", "sessions")}
+    # The backup predates the key check value (P0-6): restore created one for this key.
+    assert before["settings"] == [] and [k for k, _ in after.pop("settings")] == ["key_check"]
+    skipped = ("audit_log", "sessions", "settings")
+    assert after == {k: v for k, v in before.items() if k not in skipped}
     assert "1 skipped" in restored.out
     assert restore_audit[: len(before["audit_log"])] == before["audit_log"]
     entry = audit_rows(engine)[-1]

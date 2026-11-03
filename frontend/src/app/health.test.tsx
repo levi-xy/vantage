@@ -102,6 +102,14 @@ describe("health level", () => {
         },
       }),
     ).toBe("warning");
+    expect(
+      level({
+        delivery: {
+          stuck: 0,
+          system_alerts: [{ system_kind: "key_mismatch", since: "2026-11-02T13:00:00Z" }],
+        },
+      }),
+    ).toBe("critical");
     expect(level({ alerts: undefined, alertsFailed: true })).toBe("warning");
     expect(level({ delivery: undefined, deliveryFailed: true })).toBe("warning");
   });

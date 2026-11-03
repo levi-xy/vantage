@@ -24,7 +24,9 @@ folds the affected alerts' NO DATA messages into the system alert's messages (se
 ``app.alerts.evaluator``), so an outage sends one message, not one per alert.
 
 **/healthz** answers 200, or 503 with exactly one reason code, chosen in this order (the
-first that applies): ``evaluator_stalled`` (nothing else is being checked then),
+first that applies): ``key_mismatch`` (P0-6: the master key doesn't match the stored
+secrets, see ``app.alerts.key_monitor``), ``evaluator_stalled`` (nothing else is being
+checked then),
 ``prometheus_unreachable``, ``metrics_not_collected``, ``notifications_stuck`` (a message
 unfinished for more than 15 minutes, or failed within 24 hours: the UI banner's rule).
 The conditions live in memory, so they start over on a restart.
@@ -40,7 +42,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from enum import StrEnum
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -56,6 +58,7 @@ from app.models import (
     EndReason,
     EventSource,
     NotificationKind,
+    NotificationStatus,
     SystemKind,
 )
 
@@ -79,13 +82,15 @@ TITLES = {
     SystemKind.PROMETHEUS_UNREACHABLE: "Prometheus unreachable",
     SystemKind.METRICS_NOT_COLLECTED: "Metrics not being collected",
     SystemKind.EVALUATOR_STALLED: "Alert evaluation stopped",
+    SystemKind.KEY_MISMATCH: "Master key mismatch",
 }
 SYSTEM_SEVERITY = "critical"
 
 
 class Health(StrEnum):
-    """``/healthz`` reason codes. PR 10/11 add ``maintenance`` and ``key_mismatch``."""
+    """``/healthz`` reason codes. A later PR adds ``maintenance``."""
 
+    KEY_MISMATCH = "key_mismatch"
     EVALUATOR_STALLED = "evaluator_stalled"
     PROMETHEUS_UNREACHABLE = "prometheus_unreachable"
     METRICS_NOT_COLLECTED = "metrics_not_collected"
@@ -94,6 +99,7 @@ class Health(StrEnum):
 
 # When several apply, the first one is reported.
 HEALTH_PRIORITY = (
+    Health.KEY_MISMATCH,
     Health.EVALUATOR_STALLED,
     Health.PROMETHEUS_UNREACHABLE,
     Health.METRICS_NOT_COLLECTED,
@@ -163,6 +169,8 @@ class SelfMonitor:
         self._stuck: tuple[datetime, int] | None = None
         # Set when the watchdog saw the evaluator stalled; cleared by its next tick.
         self.stalled_at: datetime | None = None
+        # Set by the key monitor (P0-6) while the master key doesn't match.
+        self.key_mismatch = False
 
     # --- conditions ----------------------------------------------------------------------
 
@@ -236,6 +244,7 @@ class SelfMonitor:
         """The ``/healthz`` reason, None when healthy."""
         now = now or self.clock()
         active = {
+            Health.KEY_MISMATCH: self.key_mismatch,
             Health.EVALUATOR_STALLED: self.stalled(now) or self.stalled_at is not None,
             Health.PROMETHEUS_UNREACHABLE: self.prometheus_down(now),
             Health.METRICS_NOT_COLLECTED: self.metrics_down(now),
@@ -295,10 +304,16 @@ class SelfMonitor:
             )
         )
 
-    def open_alert(self, kind: SystemKind, detail: str, *, since: datetime) -> bool:
+    def open_alert(
+        self, kind: SystemKind, detail: str, *, since: datetime, undeliverable: str | None = None
+    ) -> bool:
         """Open the system alert of ``kind`` (FIRING, ``started_at`` = ``since``) and queue
         its message to every channel with ``system_alerts``, in one transaction. False if
-        one is already open."""
+        one is already open.
+
+        ``undeliverable``: the messages can't be sent (``key_mismatch``: the channels'
+        credentials can't be decrypted). They are stored ``failed`` with that
+        ``error_kind`` instead of queued, so the record shows they were never sent."""
         now = self.clock()
         summary = f"{TITLES[kind]}: {detail}" if detail else TITLES[kind]
         with self._sessions() as db:
@@ -328,6 +343,17 @@ class SelfMonitor:
                     event_id=event.id,
                     now=now,
                 )
+                if undeliverable is not None:
+                    db.execute(
+                        update(AlertNotification)
+                        .where(AlertNotification.event_id == event.id)
+                        .values(
+                            status=NotificationStatus.FAILED,
+                            error_kind=undeliverable,
+                            finished_at=now,
+                        )
+                        .execution_options(synchronize_session=False)
+                    )
                 db.commit()
             except IntegrityError:  # opened meanwhile by another writer
                 db.rollback()

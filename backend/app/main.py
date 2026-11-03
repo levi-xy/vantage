@@ -17,6 +17,7 @@ from app import __version__
 from app.alerts.channels import default_client_factory
 from app.alerts.delivery import DeliveryCollector, DeliveryDispatcher
 from app.alerts.evaluator import AlertEvaluator
+from app.alerts.key_monitor import KeyMonitor
 from app.alerts.selfcheck import SelfMonitor, Watchdog
 from app.api import api_router
 from app.api.auth import LOGIN_LIMITS, LOGIN_WINDOW_SECONDS
@@ -30,6 +31,7 @@ from app.core.auth import LoginRateLimiter, Passwords
 from app.core.config import Settings, get_settings
 from app.core.crypto import SecretBox, load_master_key
 from app.core.db import make_engine, make_session_factory
+from app.core.key_check import KeyMismatchError
 from app.core.login_failures import UserLoginFailures
 from app.core.net_guard import NetGuard, NetPolicy
 from app.core.prometheus_auth import PrometheusToken, load_prometheus_token
@@ -38,6 +40,8 @@ from app.integrations.registry import Registry, builtin_registry
 from app.live.rates import LiveRates
 from app.query.proxy import PrometheusClient
 from app.sd.targets import router as sd_router
+
+log = logging.getLogger(__name__)
 
 
 def create_app(
@@ -66,7 +70,16 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         poller: PollScheduler = app.state.poller
         live_rates: LiveRates = app.state.live_rates
-        poller.start()
+        dispatcher: DeliveryDispatcher = app.state.delivery
+        # The master key check (P0-6) comes first: in key_mismatch mode polling, live
+        # rates and delivery don't start (the key monitor starts them once it matches).
+        key_monitor: KeyMonitor = app.state.key_monitor
+        try:
+            await key_monitor.check()
+        except Exception as exc:  # re-checked every few seconds; secret writes check too
+            log.warning("master key check at startup failed (%s)", type(exc).__name__)
+        if key_monitor.ok:
+            await resume_secret_users()
         # last_success_at from Prometheus, in the background: never delays polling.
         seeding = asyncio.create_task(
             seed_last_success(
@@ -74,18 +87,17 @@ def create_app(
             ),
             name="vantage-seed-last-success",
         )
-        live_rates.start()
         evaluator: AlertEvaluator = app.state.alert_evaluator
         evaluator.start()
         watchdog: Watchdog = app.state.alert_watchdog
         watchdog.start()
-        dispatcher: DeliveryDispatcher = app.state.delivery
-        dispatcher.start()
+        key_monitor.start()
         try:
             yield
         finally:
             seeding.cancel()
             await asyncio.gather(seeding, return_exceptions=True)
+            await key_monitor.stop()
             await watchdog.stop()
             await evaluator.stop()
             await dispatcher.stop()
@@ -171,10 +183,30 @@ def create_app(
     )
     app.state.metrics_registry.register(DeliveryCollector(app.state.delivery))
 
+    # Everything that decrypts secrets in the background; stopped in key_mismatch mode.
+    async def pause_secret_users() -> None:
+        await app.state.poller.stop()
+        await app.state.live_rates.stop()
+        await app.state.delivery.stop()
+
+    async def resume_secret_users() -> None:
+        app.state.poller.start()
+        app.state.live_rates.start()
+        app.state.delivery.start()
+
+    app.state.key_monitor = KeyMonitor(
+        session_factory=app.state.session_factory,
+        secret_box=secret_box,
+        monitor=app.state.self_monitor,
+        pause=pause_secret_users,
+        resume=resume_secret_users,
+    )
+
     app.include_router(api_router)
     app.include_router(sd_router)
     app.include_router(metrics_router)
     app.add_exception_handler(RequestValidationError, _validation_error)
+    app.add_exception_handler(KeyMismatchError, _key_mismatch)
     app.middleware("http")(_api_guard)
 
     @app.get("/healthz", include_in_schema=False)
@@ -240,6 +272,18 @@ async def _validation_error(_request: Request, exc: Exception) -> Response:
         for err in exc.errors()
     ]
     return JSONResponse({"detail": errors}, status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
+
+
+async def _key_mismatch(_request: Request, _exc: Exception) -> Response:
+    """A secret write refused in key_mismatch mode (P0-6); nothing was written."""
+    return JSONResponse(
+        {
+            "detail": "the master key doesn't match the stored secrets; fix the key file "
+            "and restart the backend",
+            "reason": "key_mismatch",
+        },
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+    )
 
 
 async def _api_guard(

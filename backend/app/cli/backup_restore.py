@@ -50,6 +50,7 @@ from sqlalchemy import (
     String,
     Table,
     Uuid,
+    delete,
     func,
     select,
     text,
@@ -59,10 +60,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 import app.models  # noqa: F401  (registers every table on Base.metadata)
-from app.core import audit
+from app.core import audit, key_check
 from app.core.crypto import DecryptionError, SecretBox, row_context
 from app.core.db import Base, UTCDateTime
-from app.models import Channel, Instance
+from app.core.key_check import KEY_CHECK_KEY
+from app.models import Setting
 
 FORMAT = "vantage-backup"
 FORMAT_VERSION = 1
@@ -73,10 +75,10 @@ _TOP_LEVEL_KEYS = frozenset(
     {"format", "format_version", "alembic_revision", "created_at", "tables"}
 )
 
-# Every table with an encrypted ``secrets`` column, bound to row_context(table, id).
-# Rotation refuses to run if a model gains a binary column that isn't listed here
-# (see check_encrypted_columns), so a new kind of secret can't be left on the old key.
-ENCRYPTED_MODELS: tuple[type[Instance] | type[Channel], ...] = (Instance, Channel)
+# ENCRYPTED_MODELS (app.core.key_check): every table with an encrypted ``secrets``
+# column. Rotation refuses to run if a model gains a binary column that isn't listed
+# there (see check_encrypted_columns), so a new kind of secret can't be left on the old
+# key. The ``settings`` row ``key_check`` (P0-6) is re-encrypted with them.
 
 KEY_REMINDER = (
     "The master key is NOT in the backup. Without it the device and channel credentials "
@@ -86,7 +88,7 @@ KEY_REMINDER = (
 
 
 def _encrypted_tables() -> list[Table]:
-    return [cast(Table, m.__table__) for m in ENCRYPTED_MODELS]
+    return key_check.encrypted_tables()
 
 
 class BackupError(Exception):
@@ -358,6 +360,9 @@ class RestoreResult:
     sessions_skipped: int
     secrets_total: int
     secrets_undecryptable: int
+    # The restored key check value (or, for a backup without one, every blob) opens with
+    # this server's key. False: the backup was made with another key, consistently.
+    key_matches: bool = True
 
 
 def _check_revision(backup_revision: str, current: str) -> None:
@@ -409,6 +414,9 @@ def restore(engine: Engine, backup: Backup, box: SecretBox, *, overwrite: bool) 
     with engine.connect() as conn:
         _begin_snapshot(conn, write=True)
         _check_revision(backup.revision, db_revision(conn))
+        # A freshly started Vantage has already written its own key check value: that
+        # row doesn't make the database "not empty", and the backup brings its own.
+        conn.execute(delete(Setting).where(Setting.key == KEY_CHECK_KEY))
         existing = sum(
             conn.execute(select(func.count()).select_from(t)).scalar_one() for t in tables()
         )
@@ -446,10 +454,47 @@ def restore(engine: Engine, backup: Backup, box: SecretBox, *, overwrite: bool) 
             )
             db.flush()
         total, bad = count_undecryptable(conn, box)
+        matches = _check_restored_key(conn, box, total, bad)
         conn.commit()
     return RestoreResult(
-        rows=restored, sessions_skipped=skipped, secrets_total=total, secrets_undecryptable=bad
+        rows=restored,
+        sessions_skipped=skipped,
+        secrets_total=total,
+        secrets_undecryptable=bad,
+        key_matches=matches,
     )
+
+
+def _check_restored_key(conn: Connection, box: SecretBox, total: int, bad: int) -> bool:
+    """The restored database must be on one key (P0-6). Returns whether that key is this
+    server's; raises :class:`BackupError` (nothing restored) for a mixed-key backup.
+
+    A backup without a key check value (made before P0-6) gets one when every blob
+    decrypts with this server's key; otherwise the backend creates it once the matching
+    key is in place.
+    """
+    with Session(bind=conn) as db:
+        row = db.get(Setting, KEY_CHECK_KEY)
+        if row is None:
+            matches = bad == 0
+            mixed = 0 < bad < total
+            if matches:
+                db.add(Setting(key=KEY_CHECK_KEY, value=key_check.seal(box)))
+                db.flush()
+        elif total == 0 and not key_check.opens(box, row.value):
+            # Nothing is encrypted with the old key: seal it with this server's.
+            row.value = key_check.seal(box)
+            db.flush()
+            matches, mixed = True, False
+        else:
+            matches = key_check.opens(box, row.value)
+            mixed = bad > 0 if matches else bad < total
+    if mixed:
+        raise BackupError(
+            "the backup's stored secrets are encrypted with more than one master key; "
+            "nothing was changed"
+        )
+    return matches
 
 
 # --- master-key rotation -----------------------------------------------------------
@@ -501,6 +546,19 @@ def rotate_master_key(engine: Engine, old: SecretBox, new: SecretBox) -> dict[st
         if bad or total != sum(counts.values()):
             raise BackupError("re-encrypted secrets failed verification; nothing was changed")
         with Session(bind=conn) as db:
+            # The key check value (P0-6) moves to the new key in the same transaction, so
+            # a backend still on the old key sees key_mismatch instead of failing reads.
+            row = db.get(Setting, KEY_CHECK_KEY)
+            if row is not None and not key_check.opens(old, row.value):
+                raise BackupError(
+                    "the stored key check value doesn't open with the current master key; "
+                    "nothing was changed"
+                )
+            if row is None:
+                db.add(Setting(key=KEY_CHECK_KEY, value=key_check.seal(new)))
+            else:
+                row.value = key_check.seal(new)
+            db.flush()
             audit.record(
                 db,
                 actor_type=audit.ActorType.CLI,

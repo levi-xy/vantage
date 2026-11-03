@@ -24,7 +24,7 @@ from app.alerts import channels as ch
 from app.alerts.delivery import cancel_for_channel
 from app.api.deps import AdminDep, DbDep
 from app.api.instances import SecretBoxDep
-from app.core import audit
+from app.core import audit, key_check
 from app.core.crypto import DecryptionError, SecretBox
 from app.integrations import instance_config as ic
 from app.models import Channel, ChannelType
@@ -160,6 +160,7 @@ def create_channel(body: ChannelCreate, auth: AdminDep, db: DbDep, box: SecretBo
     channel_type = ChannelType(body.type)
     model = _validate(ch.CHANNEL_SCHEMAS[channel_type], body.config)
     config, secrets = ic.split(model)
+    key_check.require(db, box)  # P0-6: never write a secret under a key that doesn't match
     row = Channel(
         type=channel_type, name=body.name, config=config, system_alerts=body.system_alerts
     )
@@ -208,6 +209,7 @@ def update_channel(
         },
     )
     if body.config is not None:
+        key_check.require(db, box)  # P0-6, before reading the stored secrets
         merged = {**row.config, **_stored_secrets(box, row), **body.config}
         model = _validate(schema, merged)
         config, secrets = ic.split(model)

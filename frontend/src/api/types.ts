@@ -76,7 +76,11 @@ export type AlertNoDataReason =
 
 /** Vantage's own alerts (no rule). Later versions may add kinds. */
 export type SystemAlertKind =
-  "prometheus_unreachable" | "metrics_not_collected" | "evaluator_stalled" | (string & {});
+  | "prometheus_unreachable"
+  | "metrics_not_collected"
+  | "evaluator_stalled"
+  | "key_mismatch"
+  | (string & {});
 
 export type AlertEndReason =
   "recovered" | "rule_disabled" | "rule_deleted" | "rule_changed" | "closed_by_user";

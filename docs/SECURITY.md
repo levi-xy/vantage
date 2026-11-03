@@ -249,7 +249,11 @@ docker compose up -d --force-recreate backend
   and only restores a backup from the same schema revision. A backup from an older
   version is refused in v0.1: restore it with the Vantage version that made it, then
   upgrade. It reports how many stored secrets decrypt with the server's key,
-  and exits 1 (data restored) if some don't. Restore is audited (`target_type`
+  and exits 1 (data restored) if some don't. A restored database carries its own key
+  check value (see "Master key mismatch"), checked against the server's key: a backup
+  whose secrets are on more than one key is refused (nothing changes); one made
+  consistently with another key is restored, and the backend stays in key_mismatch mode
+  until it runs with that key. Restore is audited (`target_type`
   `database`, `actor_type` `cli`). **Login sessions are never restored** (a session
   revoked after the backup, or a stolen cookie, would come back): everyone logs in again
   after a restore. The audit entry records how many were skipped.
@@ -257,7 +261,9 @@ docker compose up -d --force-recreate backend
   backend runs with) and the new one. In one transaction, with the database locked
   against writes, it decrypts every `instances.secrets` and `channels.secrets` blob with
   the current key, re-encrypts it with the new one and reads everything back with the
-  new key before committing. If any blob doesn't decrypt, nothing changes. It refuses
+  new key before committing. The key check value moves to the new key in the same
+  transaction, so a backend still running on the old key goes into key_mismatch mode
+  instead of failing on every secret. If any blob doesn't decrypt, nothing changes. It refuses
   to run if a table gains a binary column it doesn't know about. One audit entry
   (`target_type` `master_key`, `actor_type` `cli`) records only the per-table counts.
   Stop the backend first (`docker compose stop backend`) and run the command with
@@ -271,6 +277,52 @@ docker compose up -d --force-recreate backend
   restore and rotation under table locks, id sequences reset after a restore). For
   routine Postgres backups, `pg_dump` works as well; it carries the same encrypted
   blobs, and the master key still has to be backed up separately.
+
+### Master key mismatch (`key_mismatch`)
+
+The database holds a key check value: a `settings` row `key_check` with a fixed, known
+value encrypted with the master key under its own context, so no other blob can stand
+in for it. The backend decrypts it at startup and every 15 seconds. When that fails, the
+key in `deploy/secrets/master.key` (or `VANTAGE_MASTER_KEY`) isn't the one the stored
+device and channel credentials were encrypted with: the key file was replaced, lost, or
+belongs to another installation, or a backup was restored with a different key.
+
+The backend then runs in **key_mismatch mode** instead of refusing to start, so you can
+still log in and see what's wrong:
+
+- reads, logins and the UI keep working; a banner on every page says the master key
+  doesn't match;
+- polling, live rates and notification delivery stop (queued messages wait; they are
+  sent once the key matches);
+- every secret write (an instance or channel created or edited with credentials) is
+  refused with `503 {"detail": "<short message>", "reason": "key_mismatch"}` and nothing
+  is written; it is checked again inside each write's own transaction, so a database can
+  never hold secrets under two keys;
+- `/healthz` answers `503 {"reason": "key_mismatch"}` (first in its order), so an
+  external monitor sees it even though no channel can send;
+- the log repeats an ERROR line every 5 minutes, with per-table counts of the blobs that
+  decrypt (never values);
+- a system alert "Master key mismatch" is stored; its messages are recorded `failed`
+  with `error_kind` `credentials_unreadable` (the channel credentials can't be decrypted
+  either), never silently dropped. Once the alert resolves, its RESOLVED message stands
+  in for them: they no longer count for `notifications_stuck` or the delivery banner.
+
+On an upgrade from a version without the check value, it is created when every stored
+secret decrypts with the current key (or none is stored). If none decrypt, the mode is
+`wrong_key`; if only some do, `mixed_key` (the log names the per-table counts).
+
+**To fix it**, put the right key back and restart: copy the key that belongs to this
+database to `deploy/secrets/master.key` (same owner and mode as before) and run
+`docker compose up -d --force-recreate backend`. The next check passes, the system alert
+resolves and polling resumes. If the right key is lost, the stored credentials can't be
+recovered: restore a backup together with its key, or **delete the affected devices and
+channels** (deleting needs no key) and re-add them. Once no stored secret is left, the
+next check (within 15 s) seals the check value again with the running key (logged at
+WARNING), the mode ends, and the devices and channels can be re-added with their
+credentials. The same applies to a `mixed_key` database: delete the devices and channels
+whose credentials don't decrypt, or run with the key most of them were written with and
+re-enter the rest. A restore of a backup holding no secrets takes the server's key the
+same way.
 
 ## User management
 
@@ -467,8 +519,9 @@ restart happens at most once until a tick really finishes again.
 Both are unauthenticated and carry nothing but a fixed code.
 
 - `GET /healthz`: `200 {"status": "ok"}`, or `503 {"reason": "<code>"}` with exactly one
-  code. When several apply, the first in this order wins: `evaluator_stalled` (nothing
-  else is being checked then), `prometheus_unreachable`, `metrics_not_collected`,
+  code. When several apply, the first in this order wins: `key_mismatch` (the master
+  key doesn't match the stored secrets, see "Master key mismatch"), `evaluator_stalled`
+  (nothing else is being checked then), `prometheus_unreachable`, `metrics_not_collected`,
   `notifications_stuck` (an alert message undelivered for more than 15 minutes, or failed
   within 24 hours: the UI banner's rule). The conditions are kept in memory, so they start
   over when the backend restarts.

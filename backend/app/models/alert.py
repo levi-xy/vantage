@@ -35,6 +35,8 @@ class SystemKind(StrEnum):
     PROMETHEUS_UNREACHABLE = "prometheus_unreachable"
     METRICS_NOT_COLLECTED = "metrics_not_collected"
     EVALUATOR_STALLED = "evaluator_stalled"
+    # The master key doesn't match the stored secrets (P0-6, app.alerts.key_monitor).
+    KEY_MISMATCH = "key_mismatch"
 
 
 class EndReason(StrEnum):
