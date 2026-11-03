@@ -8,7 +8,7 @@ import { alertError, alertInfo, buttonPrimary, input, label } from "../component
 function loginError(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 401) return "Wrong username or password.";
-    if (error.status === 429) return "Too many failed logins. Wait a few minutes and try again.";
+    if (error.status === 429) return "Too many failed logins. Wait up to 15 minutes and try again.";
     if (error.status === 0) return "Could not reach the Vantage backend.";
   }
   return "Login failed. Try again.";
@@ -90,6 +90,20 @@ export function LoginPage() {
         <button type="submit" disabled={busy} className={`${buttonPrimary} w-full`}>
           {busy ? "Logging in…" : "Log in"}
         </button>
+        <details className="text-xs text-muted">
+          <summary className="cursor-pointer">Forgot your password or locked out?</summary>
+          <p className="mt-2">
+            Ask another admin to reset it on the Users page. If you are the only admin, run this on
+            the Vantage server:
+          </p>
+          <pre className="mt-1 overflow-x-auto rounded bg-inset px-2 py-1 font-mono">
+            docker compose exec backend python -m app.cli reset-password &lt;username&gt;
+          </pre>
+          <p className="mt-1">
+            A lockout ends by itself within 15 minutes; <code>app.cli unlock &lt;username&gt;</code>{" "}
+            ends it now.
+          </p>
+        </details>
       </form>
     </AuthScreen>
   );

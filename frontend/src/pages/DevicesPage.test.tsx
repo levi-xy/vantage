@@ -247,6 +247,74 @@ describe("add device", () => {
     return result;
   }
 
+  it("searches the device types and shows a hint for each known type", async () => {
+    const types = [
+      FAKE_TYPE,
+      { ...FAKE_TYPE, type_id: "ping_check", name: "Ping check", category: "generic" },
+    ];
+    renderApp("/devices", backendWith([], { "GET /integrations": () => json(types) }));
+    fireEvent.click(await screen.findByRole("link", { name: "Add device" }));
+    const list = await screen.findByRole("list", { name: "Device types" });
+    expect(within(list).getAllByRole("button")).toHaveLength(2);
+    expect(within(list).getByText(/answering ping/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Search device types"), { target: { value: "PING" } });
+    expect(within(list).getAllByRole("button")).toHaveLength(1);
+    fireEvent.change(screen.getByLabelText("Search device types"), { target: { value: "zzz" } });
+    expect(screen.getByText(/No device type matches/)).toBeInTheDocument();
+  });
+
+  it("puts a new device's cards on the main dashboard, after the cards already there", async () => {
+    const existing = {
+      instance_id: null,
+      card_type: "devices-health",
+      x: 0,
+      y: 0,
+      w: 3,
+      h: 2,
+      settings: {},
+    };
+    const backend = backendWith([], {
+      "POST /instances": () => json(exampleInstance(), 201),
+      [`GET ${ITEM}/cards`]: () =>
+        json([{ card_type: "ping-check", title: "Ping", default_size: [3, 2] }]),
+      "GET /dashboards": () => json([{ id: 4, name: "Main", position: 0 }]),
+      "GET /dashboards/4": () =>
+        json({ id: 4, name: "Main", layout: { version: 2, cards: [existing] } }),
+      "PUT /dashboards/4": (body) => json({ id: 4, name: "Main", ...(body as object) }),
+    });
+    const { router } = await openForm(backend);
+    fill("Name", "nas-1");
+    fill("Host", "10.0.0.10");
+    fill("Api Token", NEW_TOKEN);
+    fireEvent.click(screen.getByRole("button", { name: "Add device" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/devices"));
+    const { layout: saved } = sentBody(backend, "PUT /dashboards/4") as {
+      layout: { version: number; cards: { instance_id: string | null; card_type: string }[] };
+    };
+    expect(saved.version).toBe(2);
+    expect(saved.cards[0]).toEqual(existing);
+    expect(saved.cards[1]).toMatchObject({
+      instance_id: INSTANCE_ID,
+      card_type: "ping-check",
+      x: 0,
+      y: 2,
+    });
+  });
+
+  it("still saves the device when its cards can't be put on the dashboard", async () => {
+    const backend = backendWith([], {
+      "POST /instances": () => json(exampleInstance(), 201),
+      [`GET ${ITEM}/cards`]: () => json({ detail: "boom" }, 500),
+    });
+    const { router } = await openForm(backend);
+    fill("Name", "nas-1");
+    fill("Host", "10.0.0.10");
+    fill("Api Token", NEW_TOKEN);
+    fireEvent.click(screen.getByRole("button", { name: "Add device" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/devices"));
+    expect(routesSent(backend).some((r) => r.startsWith("PUT /dashboards"))).toBe(false);
+  });
+
   it("generates the form from the schema, with empty password inputs for secrets", async () => {
     await openForm();
     expect(screen.getByLabelText("Host")).toHaveAttribute("placeholder", "192.0.2.10");

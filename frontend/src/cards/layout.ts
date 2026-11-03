@@ -39,8 +39,9 @@ const clamp = (n: number, min: number, max: number) => Math.min(Math.max(Math.tr
 const bottom = (cards: CardPlacement[]) => cards.reduce((b, c) => Math.max(b, c.y + c.h), 0);
 
 /**
- * Bring a saved layout in line with what exists now. Nothing is ever added on its own (the
- * admin adds cards in edit mode), except once: a layout older than version 2 gets the
+ * Bring a saved layout in line with what exists now. Nothing is added here (a new device's
+ * cards are saved onto the main dashboard when it is created, `addDeviceCardsToMain`; the
+ * rest are added in edit mode), except once: a layout older than version 2 gets the
  * dashboard-wide cards on a row above everything, since they used to be a fixed row.
  *
  * Cards of deleted instances are dropped. A card whose instance's card list loaded and no

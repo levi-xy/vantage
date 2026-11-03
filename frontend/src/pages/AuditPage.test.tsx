@@ -75,6 +75,29 @@ describe("audit page", () => {
     expect(auditRequests(backend)).toEqual(["GET /audit?limit=50"]);
   });
 
+  it("shows the acting user by name, a deleted one by id", async () => {
+    const backend = fakeBackend({
+      session: exampleMe("admin"),
+      routes: {
+        "GET /users": () =>
+          json([
+            {
+              id: 1,
+              username: "example-admin",
+              role: "admin",
+              created_at: "2026-01-01T00:00:00+00:00",
+              last_login_at: null,
+            },
+          ]),
+        "GET /audit": () => json([entry(2), entry(1, { user_id: 9 })]),
+      },
+    });
+    renderApp("/audit", backend);
+    const table = await findTable();
+    expect(await within(table).findByText("example-admin")).toBeInTheDocument();
+    expect(within(table).getByText("User #9")).toBeInTheDocument();
+  });
+
   it('shows redacted secret fields exactly as "<changed>"', async () => {
     const backend = fakeBackend({
       session: exampleMe("admin"),
