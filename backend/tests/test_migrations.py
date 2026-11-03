@@ -395,5 +395,10 @@ def test_0010_keeps_dashboards_and_orders_them_by_id(db_url: str) -> None:
             rows = conn.execute(text("SELECT id, position, layout FROM dashboards ORDER BY id"))
             got = [(r[0], r[1], json.loads(r[2])) for r in rows]
         assert got == [(1, 0, layout), (3, 1, layout)]
+        # A deleted dashboard's id is never handed out again.
+        with eng.begin() as conn:
+            conn.execute(text("DELETE FROM dashboards WHERE id = 3"))
+            conn.execute(text("INSERT INTO dashboards (name, layout) VALUES ('N', '{}')"))
+            assert conn.execute(text("SELECT MAX(id) FROM dashboards")).scalar() == 4
     finally:
         eng.dispose()

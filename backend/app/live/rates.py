@@ -1,7 +1,8 @@
 """Live traffic rates for the dashboard's throughput card (maintainer-approved 2026-10-30).
 
 While at least one browser is connected to ``/ws``, every :data:`TICK_SECONDS` this reads
-the traffic counters of the ports chosen on the dashboard's throughput card, and
+the traffic counters of the ports chosen on the main dashboard's throughput card (the
+first dashboard by position; maintainer-approved 2026-11-02), and
 publishes their summed rate as a ``live_rate`` message. Nothing is stored: history stays
 in Prometheus at its normal resolution.
 
@@ -22,7 +23,7 @@ Reads go through each instance's guarded clients (``InstanceContext``), like a p
 
 SNMP counters are read live, so unchanged counters there mean no traffic (rate 0).
 
-Ports come only from the saved layout (admin-written), at most :data:`MAX_PORTS`; the
+Ports come only from the saved layout (written by a logged-in user), at most :data:`MAX_PORTS`; the
 interface name is only compared with label values, never sent anywhere.
 """
 
@@ -59,7 +60,6 @@ SCRAPED_STALE_SECONDS = 30.0
 READ_TIMEOUT_SECONDS = 1.5
 MAX_PORTS = 8
 MAX_BODY_BYTES = 8 * 1024 * 1024
-DASHBOARD_ID = 1
 THROUGHPUT_CARD = "throughput"
 USER_AGENT = "Vantage live rates"
 
@@ -237,7 +237,11 @@ class LiveRates:
 
     def _load(self) -> tuple[list[Port], dict[uuid.UUID, PollSpec]]:
         with self._session_factory() as db:
-            dashboard = db.get(Dashboard, DASHBOARD_ID)
+            # The main dashboard (first by position, then id), looked up every time: it
+            # changes when dashboards are moved or deleted.
+            dashboard = db.scalars(
+                select(Dashboard).order_by(Dashboard.position, Dashboard.id).limit(1)
+            ).first()
             ports = ports_from_layout(dashboard.layout if dashboard else None)
             if not ports:
                 return [], {}

@@ -8,9 +8,10 @@ Additive (maintainer-approved 2026-11-02): ``dashboards.position`` (int, NOT NUL
 the dashboard tabs. Existing dashboards keep their ids and layouts and get dense
 positions in id order, so dashboard 1 stays the main one.
 
-Dashboard 1 used to be inserted with an explicit id, which on Postgres leaves the id
-sequence behind; the upgrade moves the sequence to the highest id so new dashboards get
-fresh ids.
+Ids are never reused: on SQLite the table is rebuilt with AUTOINCREMENT (Postgres
+sequences never reuse). Dashboard 1 used to be inserted with an explicit id, which on
+Postgres leaves the id sequence behind; the upgrade moves the sequence to the highest id
+so new dashboards get fresh ids.
 """
 
 from collections.abc import Sequence
@@ -29,7 +30,11 @@ _dashboards = sa.table(
 
 
 def upgrade() -> None:
-    with op.batch_alter_table("dashboards") as batch:
+    # On SQLite the table is rebuilt with AUTOINCREMENT, so a deleted dashboard's id is
+    # never reused (a tab still open on /d/<id> must not reach a new dashboard).
+    with op.batch_alter_table(
+        "dashboards", recreate="always", table_kwargs={"sqlite_autoincrement": True}
+    ) as batch:
         batch.add_column(sa.Column("position", sa.Integer(), nullable=False, server_default="0"))
     bind = op.get_bind()
     ids = bind.execute(sa.select(_dashboards.c.id).order_by(_dashboards.c.id)).scalars().all()

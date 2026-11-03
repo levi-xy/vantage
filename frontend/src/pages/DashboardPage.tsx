@@ -5,6 +5,7 @@ import { ApiError } from "../api";
 import type { CardPlacement, Dashboard, Instance } from "../api";
 import { useApiClient } from "../app/session";
 import { DashboardGrid } from "../cards/DashboardGrid";
+import { MainDashboardContext } from "../cards/mainDashboard";
 import {
   addCard,
   cardKey,
@@ -189,6 +190,11 @@ function DashboardView({
   });
   const notFound =
     dashboardId === null || (dashboard.error instanceof ApiError && dashboard.error.status === 404);
+  // The backend pushes live rates for the main dashboard's throughput card only.
+  const list = useDashboards().data;
+  const main = list ? (list[0]?.id ?? DEFAULT_DASHBOARD_ID) : undefined;
+  const isMain =
+    typeof dashboardId === "number" && (main === undefined ? atMain : main === dashboardId);
   // While editing: the layout being edited, saved only on Done.
   const [draft, setDraft] = useState<CardPlacement[] | null>(null);
   const [adding, setAdding] = useState(false);
@@ -329,7 +335,7 @@ function DashboardView({
   }
 
   return (
-    <>
+    <MainDashboardContext.Provider value={isMain}>
       <PageHeader title="Dashboard">{actions}</PageHeader>
       <DashboardTabs
         current={dashboardId ?? null}
@@ -359,6 +365,6 @@ function DashboardView({
         />
       )}
       {body}
-    </>
+    </MainDashboardContext.Provider>
   );
 }

@@ -118,6 +118,22 @@ def setup(
         yield rates, hub, clock, db
 
 
+def test_reads_the_main_dashboards_ports_only(
+    setup: tuple[LiveRates, EventHub, Clock, Session],
+) -> None:
+    """The main dashboard is the first by position; a copy elsewhere never counts."""
+    rates, _hub, _clock, db = setup
+    assert [p.instance_id for p in rates._load()[0]] == [PF_ID]
+    other = Dashboard(id=2, name="Other", layout={"cards": []}, position=0)
+    db.add(other)
+    db.get_one(Dashboard, 1).position = 1
+    db.commit()
+    assert rates._load()[0] == []  # dashboard 2 is main now, with no throughput card
+    db.delete(other)
+    db.commit()
+    assert [p.instance_id for p in rates._load()[0]] == [PF_ID]
+
+
 async def test_reads_the_chosen_port_and_publishes_its_rate(
     setup: tuple[LiveRates, EventHub, Clock, Session], fake_net: FakeNetwork
 ) -> None:

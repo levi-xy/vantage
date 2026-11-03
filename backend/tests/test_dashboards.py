@@ -115,6 +115,9 @@ def test_viewer_creates_copies_moves_renames_and_deletes(admin: TestClient, db: 
     assert admin.get(f"{API}/dashboards/1").status_code == 404
     assert viewer.delete(f"{API}/dashboards/2").status_code == 409  # the last one stays
     assert summaries(admin) == [(2, "Lab", 0)]
+    # Deleted ids are never reused: a tab still open on /d/3 can't reach a new dashboard.
+    assert viewer.post(f"{API}/dashboards", json={"name": "New"}).json()["id"] == 4
+    viewer.delete(f"{API}/dashboards/4")
 
     assert dashboard_audit(db) == [
         ("create", viewer_id, {"name": "Rack"}),
@@ -123,6 +126,8 @@ def test_viewer_creates_copies_moves_renames_and_deletes(admin: TestClient, db: 
         ("update", viewer_id, {"name": {"old": "Rack", "new": "Lab"}}),
         ("delete", viewer_id, {"name": "Rack"}),
         ("delete", viewer_id, {"name": "Default"}),
+        ("create", viewer_id, {"name": "New"}),
+        ("delete", viewer_id, {"name": "New"}),
     ]
 
 

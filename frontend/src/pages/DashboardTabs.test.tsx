@@ -100,7 +100,7 @@ describe("dashboard tabs", () => {
   });
 
   it("on a phone: a select of the dashboards", async () => {
-    const { router } = renderApp("/", backend());
+    const { router } = renderApp("/d/3", backend());
     const select = await screen.findByRole("combobox", { name: "Dashboard" });
     await within(select).findByRole("option", { name: "Rack" });
     fireEvent.change(select, { target: { value: "5" } });

@@ -8,6 +8,9 @@ from app.core.db import Base
 
 class Dashboard(Base):
     __tablename__ = "dashboards"
+    # A deleted dashboard's id is never handed out again, so a browser tab still open on
+    # /d/<id> can't load or overwrite an unrelated new dashboard (Postgres never reuses).
+    __table_args__ = ({"sqlite_autoincrement": True},)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(128))
