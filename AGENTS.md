@@ -200,6 +200,7 @@ All routes under `/api/v1`, JSON, session auth, CSRF token on state-changing req
 | POST | `/instances/{id}/test` | admin | Run `test_connection` |
 | POST | `/instances/test` | admin | Test an unsaved config |
 | GET | `/instances/{id}/cards` | any | Card specs for the instance |
+| GET | `/instances/{id}/now-playing` | any | Emby only (404 for other types): `{checked_at, sessions: [{user, title}]}`, who is playing what from the latest successful poll, cleaned and capped (50 rows). Kept in memory only, never in Prometheus (no viewing history); empty before the first poll, after a restart and for a disabled device (maintainer-approved 2026-11-03) |
 | POST | `/query` | any | PromQL proxy: `{query, start?, end?, step?}`; backend enforces limits and rejects queries over the time/size budget |
 | GET/POST | `/dashboards` | any | List `[{id, name, position}]` ordered by position, then id (creates "Default" when there is none) / create `{name, copy_from?}`: an empty layout or a copy of another dashboard's, appended last; at most 50 (409) (maintainer-approved 2026-11-02) |
 | GET/PUT | `/dashboards/{id}` | any / any | Layout (PUT open to any role, maintainer-approved 2026-11-02) |

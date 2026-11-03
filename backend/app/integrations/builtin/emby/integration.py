@@ -28,13 +28,17 @@ import logging
 import math
 import re
 import ssl
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, ClassVar, Self
 
 import httpx
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
+from app.core.db import utcnow
 from app.core.net_guard import NetGuardError
 from app.integrations.base import (
     CardSpec,
@@ -398,8 +402,9 @@ def session_samples(data: Any) -> list[Sample]:
     """``GET /Sessions``: counts of sessions and of what is playing, by play method.
 
     A session is "playing" if it has a ``NowPlayingItem``. Its ``PlayState.PlayMethod``
-    says transcode, direct stream or direct play. User, device, client address and
-    title fields are never read.
+    says transcode, direct stream or direct play. User and title are read only for the
+    in-memory now-playing list (:func:`now_playing_rows`), never for a metric; device and
+    client address fields are never read.
     """
     if not isinstance(data, list):
         raise _NotTheApi("sessions is not a list")
@@ -424,6 +429,97 @@ def session_samples(data: Any) -> list[Sample]:
         for m, n in methods.items()
     ]
     return samples
+
+
+# --- now playing (live only, maintainer-approved 2026-11-03) -----------------------------
+#
+# Who is playing what, from the same ``GET /Sessions`` answer. Never a metric: it stays in
+# memory (the latest successful poll per instance), so no viewing history is kept and
+# titles don't become Prometheus series. Served by ``GET /instances/{id}/now-playing``.
+
+MAX_NOW_PLAYING = 50
+MAX_USER_TEXT = 64
+
+
+@dataclass(frozen=True)
+class PlayingRow:
+    user: str  # the Emby user name, cleaned; "" when the session has none
+    title: str  # what is playing, cleaned (see :func:`playing_title`)
+
+
+@dataclass(frozen=True)
+class NowPlaying:
+    checked_at: datetime
+    rows: tuple[PlayingRow, ...]
+
+
+def _text(value: Any, cap: int) -> str:
+    return clean_text(value, cap) if isinstance(value, str) else ""
+
+
+def playing_title(item: dict[str, Any]) -> str:
+    """ "Series · S01E02 · Episode", "Artist · Track", or the item's name."""
+    name = _text(item.get("Name"), MAX_LABEL_TEXT)
+    kind = item.get("Type")
+    if kind == "Episode":
+        series = _text(item.get("SeriesName"), MAX_LABEL_TEXT)
+        season, episode = item.get("ParentIndexNumber"), item.get("IndexNumber")
+        code = (
+            f"S{season:02d}E{episode:02d}"
+            if isinstance(season, int) and isinstance(episode, int)
+            else ""
+        )
+        parts = [p for p in (series, code, name) if p]
+    elif kind == "Audio":
+        artists = item.get("Artists")
+        artist = item.get("AlbumArtist") or (
+            artists[0] if isinstance(artists, list) and artists else None
+        )
+        parts = [p for p in (_text(artist, MAX_LABEL_TEXT), name) if p]
+    else:
+        parts = [name] if name else []
+    return clean_text(" · ".join(parts), MAX_LABEL_TEXT * 2) or "Unknown item"
+
+
+def now_playing_rows(data: Any) -> tuple[PlayingRow, ...]:
+    """Every session with a ``NowPlayingItem``: its user and title, nothing else (no device,
+    client, address or ids). At most :data:`MAX_NOW_PLAYING`."""
+    if not isinstance(data, list):
+        raise _NotTheApi("sessions is not a list")
+    rows: list[PlayingRow] = []
+    for session in data[:MAX_SESSIONS]:
+        if not isinstance(session, dict):
+            continue
+        item = session.get("NowPlayingItem")
+        if not isinstance(item, dict):
+            continue
+        rows.append(
+            PlayingRow(
+                user=_text(session.get("UserName"), MAX_USER_TEXT), title=playing_title(item)
+            )
+        )
+        if len(rows) == MAX_NOW_PLAYING:
+            break
+    return tuple(rows)
+
+
+class NowPlayingStore:
+    """The latest now-playing list per instance, in memory only (gone on restart)."""
+
+    def __init__(self) -> None:
+        self._by_instance: dict[uuid.UUID, NowPlaying] = {}
+
+    def remember(self, instance_id: uuid.UUID, rows: tuple[PlayingRow, ...]) -> None:
+        self._by_instance[instance_id] = NowPlaying(checked_at=utcnow(), rows=rows)
+
+    def latest(self, instance_id: uuid.UUID) -> NowPlaying | None:
+        return self._by_instance.get(instance_id)
+
+    def forget(self, instance_id: uuid.UUID) -> None:
+        self._by_instance.pop(instance_id, None)
+
+
+NOW_PLAYING = NowPlayingStore()
 
 
 def count_samples(data: Any) -> list[Sample]:
@@ -590,7 +686,9 @@ class Emby(Integration):
                     async with _client(ctx, cfg) as client:
                         info = await _get_json(client, PATH_INFO, timeout)
                         samples += info_samples(info, parse_info(info))
-                        samples += session_samples(await _get_json(client, PATH_SESSIONS, timeout))
+                        sessions = await _get_json(client, PATH_SESSIONS, timeout)
+                        samples += session_samples(sessions)
+                        NOW_PLAYING.remember(ctx.instance_id, now_playing_rows(sessions))
                         for path, parse in (
                             (PATH_COUNTS, count_samples),
                             (PATH_LIBRARIES, library_samples),
@@ -618,6 +716,7 @@ class Emby(Integration):
         return [
             CardSpec(card_type="emby-overview", title="Emby", default_size=(4, 3)),
             CardSpec(card_type="emby-libraries", title="Emby libraries", default_size=(4, 2)),
+            CardSpec(card_type="emby-now-playing", title="Now playing", default_size=(4, 3)),
         ]
 
     def firewall_hints(self, ctx: InstanceContext) -> list[FirewallHint]:

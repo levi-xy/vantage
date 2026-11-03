@@ -10,6 +10,7 @@ import type {
   AuditEntry,
   AuditQuery,
   CardSpec,
+  NowPlaying,
   Channel,
   ChannelCreate,
   ChannelTestResult,
@@ -319,6 +320,11 @@ export class ApiClient {
   /** The card types an instance offers, with their default grid sizes. */
   instanceCards(id: string): Promise<CardSpec[]> {
     return this.request("GET", `/instances/${encodeURIComponent(id)}/cards`);
+  }
+
+  /** Emby only: who is playing what, from the latest poll. */
+  nowPlaying(id: string): Promise<NowPlaying> {
+    return this.request("GET", `/instances/${encodeURIComponent(id)}/now-playing`);
   }
 
   /** Every dashboard in tab order; "Default" is created when there is none. */
