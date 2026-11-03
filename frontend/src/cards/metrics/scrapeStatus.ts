@@ -48,7 +48,7 @@ export function useScrapeStates(instances: (Instance | undefined)[]): Map<string
   return scrapeStates(useScrapeQuery(instances.filter(needsScrapeState).length).data);
 }
 
-/** For the dashboard headline: also says whether Prometheus answered. */
+/** For the health status: also says whether Prometheus answered. */
 export function useScrapeStatus(instances: (Instance | undefined)[]): ScrapeStatus {
   const needed = instances.filter(needsScrapeState).length;
   const query = useScrapeQuery(needed);

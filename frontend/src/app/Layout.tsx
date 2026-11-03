@@ -1,35 +1,20 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router";
 import type { Role } from "../api";
+import { OPEN_ALERTS_LIMIT, useOpenAlerts } from "../cards/openAlerts";
 import { ThemeToggle } from "../components/ThemeToggle";
-import { LiveIndicator } from "./LiveIndicator";
-import { ALERTS_KEY, REFRESH_MS, useLastDataUpdate, useLiveUpdates } from "./live";
-import { useApiClient, useSession, useUser } from "./session";
-
-const DELIVERY_POLL_MS = 60_000;
-
-const SYSTEM_ALERT_TEXT: Record<string, string> = {
-  prometheus_unreachable: "Prometheus is unreachable: alert rules can't be checked.",
-  metrics_not_collected:
-    "Prometheus isn't collecting Vantage's metrics: polled devices can't be checked.",
-  evaluator_stalled: "Alert evaluation has stopped.",
-};
-
-function systemAlertText(kind: string): string {
-  return SYSTEM_ALERT_TEXT[kind] ?? `System alert: ${kind.replace(/_/g, " ")}.`;
-}
+import { systemAlertText } from "./health";
+import { useDeliveryStatus } from "./deliveryStatus";
+import { HealthStatus } from "./HealthStatus";
+import { useLastDataUpdate, useLiveUpdates } from "./live";
+import { useSession, useUser } from "./session";
 
 /** Shown to every logged-in user while a system alert fires (Prometheus unreachable, ...)
  * or alert messages wait 15+ minutes or recently failed. One poll for both. */
 function DeliveryBanner() {
-  const api = useApiClient();
-  const status = useQuery({
-    queryKey: [...ALERTS_KEY, "delivery-status"],
-    queryFn: () => api.alertDeliveryStatus(),
-    refetchInterval: DELIVERY_POLL_MS,
-  });
+  const status = useDeliveryStatus();
   const stuck = status.data?.stuck ?? 0;
   const system = status.data?.system_alerts ?? [];
   return (
@@ -64,21 +49,12 @@ function DeliveryBanner() {
 
 const ROLE_LABELS: Record<Role, string> = { admin: "Admin", viewer: "Viewer" };
 
-/** Same key and limit as the dashboard's Active alerts card and the Alerts page. */
-const OPEN_ALERTS_LIMIT = 200;
-
 /**
  * Open (firing or no data) alerts, for the tab badge. Refetched every refresh interval and
- * on every `/ws` alert push, so it is also the live indicator's heartbeat on every page.
+ * on every `/ws` alert push, so it is also the health status's heartbeat on every page.
  */
 function useOpenAlertCount(): number {
-  const api = useApiClient();
-  const open = useQuery({
-    queryKey: [...ALERTS_KEY, "open"],
-    queryFn: () => api.openAlertEvents(OPEN_ALERTS_LIMIT),
-    refetchInterval: REFRESH_MS,
-  });
-  return open.data?.length ?? 0;
+  return useOpenAlerts().data?.length ?? 0;
 }
 
 const focusRing =
@@ -390,7 +366,7 @@ export function Layout() {
           </Link>
           <TopNav alerts={alerts} />
           <div className="relative ml-auto flex items-center gap-3">
-            <LiveIndicator connection={live} lastUpdate={lastUpdate} />
+            <HealthStatus connection={live} lastUpdate={lastUpdate} />
             <ThemeToggle />
             <button
               ref={userButtonRef}

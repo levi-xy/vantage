@@ -14,9 +14,8 @@ import {
 } from "../cards/layout";
 import { cardFullSize, widget, WIDGETS } from "../cards/widgets";
 import type { AvailableCard } from "../cards/layout";
-import { EmptyState } from "../components/PageHeader";
+import { EmptyState, PageHeader } from "../components/PageHeader";
 import { alertError, buttonPrimary, buttonSecondary } from "../components/styles";
-import { DashboardHeadline } from "./DashboardHeadline";
 import { dashboardKey, DEFAULT_DASHBOARD_ID, useDashboards } from "./dashboards";
 import { DashboardTabs } from "./DashboardTabs";
 import { errorText, useInstances } from "./devices/queries";
@@ -331,16 +330,12 @@ function DashboardView({
 
   return (
     <>
+      <PageHeader title="Dashboard">{actions}</PageHeader>
       <DashboardTabs
         current={dashboardId ?? null}
         currentName={dashboard.data?.name}
         editing={editing}
         atMain={atMain}
-      />
-      <DashboardHeadline
-        instances={instances.data}
-        listUpdatedAt={instances.dataUpdatedAt}
-        actions={actions}
       />
       {save.isError && (
         <p role="alert" className={`mb-4 ${alertError}`}>
