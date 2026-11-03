@@ -77,6 +77,11 @@ function TypeIcon({ icon }: { icon: Icon }) {
   );
 }
 
+/** The card header's icon for an integration (`type_id`), for the Devices page. */
+export function DeviceTypeIcon({ typeId }: { typeId: string }) {
+  return <TypeIcon icon={deviceType(typeId).icon} />;
+}
+
 /** Now in Unix seconds, updated every 30 s (for "DOWN 12m"). */
 function useMinuteClock(): number {
   const [now, setNow] = useState(() => Date.now() / 1000);

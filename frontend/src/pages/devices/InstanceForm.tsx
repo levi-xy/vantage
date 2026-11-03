@@ -38,7 +38,7 @@ export function TestOutcome({ result }: { result: TestResult }) {
     return (
       <div
         role="status"
-        className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-100"
+        className="rounded-md border border-line bg-inset px-3 py-2 text-sm text-ink"
       >
         Connection OK: {result.message}
       </div>
@@ -199,7 +199,11 @@ export function InstanceForm({ integration, instance }: Props) {
   });
 
   return (
-    <form onSubmit={onSubmit} noValidate className="max-w-xl space-y-4">
+    <form
+      onSubmit={onSubmit}
+      noValidate
+      className="max-w-2xl space-y-4 rounded-lg border border-line bg-panel p-4 md:p-6"
+    >
       {formError && (
         <p role="alert" className={alertError}>
           {formError}
@@ -227,7 +231,7 @@ export function InstanceForm({ integration, instance }: Props) {
       </div>
       <div>
         <label htmlFor="meta-site" className={label}>
-          Site <span className="font-normal text-slate-500 dark:text-slate-400">(optional)</span>
+          Site <span className="font-normal text-muted">(optional)</span>
         </label>
         <input
           id="meta-site"
@@ -246,7 +250,7 @@ export function InstanceForm({ integration, instance }: Props) {
       </div>
       <div>
         <label htmlFor="meta-tags" className={label}>
-          Tags <span className="font-normal text-slate-500 dark:text-slate-400">(optional)</span>
+          Tags <span className="font-normal text-muted">(optional)</span>
         </label>
         <input
           id="meta-tags"
@@ -276,7 +280,7 @@ export function InstanceForm({ integration, instance }: Props) {
         Enabled
       </label>
 
-      <fieldset className="space-y-4 border-t border-slate-200 pt-4 dark:border-slate-800">
+      <fieldset className="space-y-4 border-t border-line pt-4">
         <legend className="pr-2 text-sm font-semibold">{integration.name} settings</legend>
         <ConfigFields
           fields={fields}

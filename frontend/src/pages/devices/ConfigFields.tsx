@@ -13,14 +13,13 @@ interface Props {
   onClearSecret: (key: string, clear: boolean) => void;
 }
 
+// A plain chip: "set" is not a health state, so it isn't coloured.
 function SecretBadge({ set }: { set: boolean }) {
-  return set ? (
-    <span className="ml-2 rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
-      set
-    </span>
-  ) : (
-    <span className="ml-2 rounded bg-slate-200 px-1.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
-      not set
+  return (
+    <span
+      className={`ml-2 rounded bg-chip px-1.5 py-0.5 text-xs font-medium ${set ? "text-ink" : "text-muted"}`}
+    >
+      {set ? "set" : "not set"}
     </span>
   );
 }
@@ -151,7 +150,7 @@ export function ConfigFields(props: Props) {
             <label htmlFor={id} className={label}>
               {field.label}
               {!field.required && !field.secret && (
-                <span className="font-normal text-slate-500 dark:text-slate-400"> (optional)</span>
+                <span className="font-normal text-muted"> (optional)</span>
               )}
               {field.secret && editing && <SecretBadge set={secretsSet[field.key] === true} />}
             </label>
