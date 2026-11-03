@@ -18,12 +18,14 @@ const focusRing = "focus-visible:ring-2 focus-visible:ring-in focus-visible:outl
 const actionButton = `inline-flex h-8 items-center justify-center rounded-md border border-line px-2.5 text-[13px] text-ink hover:bg-chip disabled:cursor-not-allowed disabled:opacity-60 ${focusRing}`;
 
 // Columns on desktop: device, state, last error, last success (and the admin actions).
-// Phones: the device and its state on one line, the rest below.
+// Every track has a fixed or fr width (no `auto`), so each row, which is its own grid, and
+// the column header line up. The header and the rows share these strings, padding included.
 const COLUMNS = {
-  admin: "md:grid-cols-[minmax(0,1.2fr)_6.5rem_minmax(0,1.4fr)_11rem_auto]",
-  viewer: "md:grid-cols-[minmax(0,1.2fr)_6.5rem_minmax(0,1.4fr)_11rem]",
+  admin: "gap-x-4 px-4 md:grid-cols-[minmax(0,1.2fr)_6.5rem_minmax(0,1.4fr)_11rem_16rem]",
+  viewer: "gap-x-4 px-4 md:grid-cols-[minmax(0,1.2fr)_6.5rem_minmax(0,1.4fr)_11rem]",
 };
-const rowGrid = "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1";
+// Phones: the device and its state on one line, the rest below.
+const rowGrid = "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-y-1";
 // Phone lines under the device line start under its name, not its icon.
 const underName = "max-md:pl-[46px]";
 
@@ -170,7 +172,7 @@ function DeviceRow({
 
   return (
     <li
-      className={`${rowGrid} ${isAdmin ? COLUMNS.admin : COLUMNS.viewer} px-4 py-2.5 ${instance.enabled ? "" : "text-muted"}`}
+      className={`${rowGrid} ${isAdmin ? COLUMNS.admin : COLUMNS.viewer} py-2.5 ${instance.enabled ? "" : "text-muted"}`}
     >
       <div className="flex min-w-0 items-center gap-3">
         <DeviceTypeIcon typeId={instance.type_id} />
@@ -220,7 +222,8 @@ interface Group {
 function groupBySite(rows: Row[]): Group[] {
   const bySite = new Map<string, Row[]>();
   for (const row of rows) {
-    const site = row.instance.site ?? NO_SITE;
+    // An empty site is no site (vantage_site="" in Prometheus).
+    const site = row.instance.site || NO_SITE;
     bySite.set(site, [...(bySite.get(site) ?? []), row]);
   }
   const groups = [...bySite].map(([site, list]) => {
@@ -303,16 +306,6 @@ export function DevicesPage() {
   } else {
     body = (
       <div className="flex flex-col gap-4">
-        <div
-          aria-hidden="true"
-          className={`hidden gap-x-4 border-x border-transparent px-4 text-xs text-muted md:grid ${isAdmin ? COLUMNS.admin : COLUMNS.viewer}`}
-        >
-          <span>Device</span>
-          <span>State</span>
-          <span>Last error</span>
-          <span>Last success</span>
-          {isAdmin && <span />}
-        </div>
         {groupBySite(rows).map((group) => {
           const headingId = `site-${encodeURIComponent(group.site)}`;
           return (
@@ -326,6 +319,16 @@ export function DevicesPage() {
                   {group.site}
                 </h2>
                 <Summary rows={group.rows} />
+              </div>
+              <div
+                aria-hidden="true"
+                className={`hidden border-b border-line py-1.5 text-xs text-muted md:grid ${isAdmin ? COLUMNS.admin : COLUMNS.viewer}`}
+              >
+                <span>Device</span>
+                <span>State</span>
+                <span>Last error</span>
+                <span>Last success</span>
+                {isAdmin && <span />}
               </div>
               <ul aria-label={`Devices, ${group.site}`} className="divide-y divide-line">
                 {group.rows.map((row) => (

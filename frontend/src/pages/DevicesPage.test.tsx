@@ -63,7 +63,7 @@ describe("device list", () => {
         exampleInstance({
           id: "00000000-0000-4000-8000-000000000002",
           name: "fw-1",
-          site: null,
+          site: "", // an empty site is no site
           enabled: false,
           status: { state: "unknown", checked_at: null, last_success_at: null, error: null },
         }),
