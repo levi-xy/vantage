@@ -1,4 +1,4 @@
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { ApiClient } from "../../api";
 import { renderCard, vector } from "../testRender";
 import { SnmpOverviewCard } from "../snmp-overview/SnmpOverviewCard";
@@ -41,10 +41,18 @@ describe("snmp cards", () => {
     expect(screen.queryByRole("button", { name: "port1: up" })).not.toBeInTheDocument();
   });
 
-  it("medium switch panel: ports up and the busiest port, no front panel", async () => {
+  it("medium switch panel: the front panel stays, without details or taps", async () => {
     renderCard(client, SwitchPanelCard, answer, undefined, { tier: "medium" });
-    expect((await screen.findByText("Ports up")).nextSibling).toHaveTextContent("1/3");
-    expect(screen.getByText("Busiest").nextSibling).toHaveTextContent("port1");
+    const panel = await screen.findByRole("group", { name: "Front panel" });
+    expect(within(panel).queryAllByRole("button")).toHaveLength(0);
+    expect(within(panel).getAllByRole("img")).toHaveLength(3);
+    expect(screen.queryByText("Busiest")).not.toBeInTheDocument();
+    expect(screen.queryByText("Tap a port for details.")).not.toBeInTheDocument();
+  });
+
+  it("small switch panel: ports up instead of the panel", async () => {
+    renderCard(client, SwitchPanelCard, answer, undefined, { tier: "small" });
+    expect(await screen.findByText("1/3 up")).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Front panel" })).not.toBeInTheDocument();
   });
 

@@ -82,3 +82,45 @@ export function faceplate<T extends Pick<Port, "id" | "speed">>(
 export function isSfp(port: Pick<Port, "id" | "speed">): boolean {
   return /sfp/i.test(port.id) || (port.speed ?? 0) >= 10e9;
 }
+
+// Front panel sizes at scale 1, in px: port tiles, the gaps between them and between
+// blocks, the SFP block's divider, and the panel's padding and border.
+export const PLATE = {
+  copperW: 34,
+  cageW: 42,
+  tileH: 32,
+  gap: 5,
+  blockGap: 16,
+  divider: 13,
+  pad: 12,
+  border: 1,
+} as const;
+
+/** Smallest scale the panel is drawn at; below it the card shows a figure instead. */
+export const MIN_SCALE = 0.35;
+
+/** The front panel's width and height at scale 1. */
+export function plateSize(
+  copperBlocks: number[],
+  cages: number,
+): { width: number; height: number } {
+  const cols = (n: number, w: number) => {
+    const c = Math.ceil(n / 2);
+    return c * w + Math.max(0, c - 1) * PLATE.gap;
+  };
+  const blocks = copperBlocks.map((n) => cols(n, PLATE.copperW));
+  if (cages > 0) blocks.push(cols(cages, PLATE.cageW) + (copperBlocks.length ? PLATE.divider : 0));
+  const inner = blocks.reduce((a, b) => a + b, 0) + Math.max(0, blocks.length - 1) * PLATE.blockGap;
+  const frame = 2 * (PLATE.pad + PLATE.border);
+  return { width: inner + frame, height: 2 * PLATE.tileH + PLATE.gap + frame };
+}
+
+/** The scale that fits the panel in the room it has: at most 1, never below MIN_SCALE. */
+export function plateScale(
+  natural: { width: number; height: number },
+  room: { width: number; height?: number },
+): number {
+  const byWidth = room.width / natural.width;
+  const byHeight = room.height === undefined ? 1 : room.height / natural.height;
+  return Math.max(MIN_SCALE, Math.min(1, byWidth, byHeight));
+}

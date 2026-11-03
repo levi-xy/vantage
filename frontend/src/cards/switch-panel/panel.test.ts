@@ -1,4 +1,4 @@
-import { faceplate, isSfp, panelBlocks } from "./panel";
+import { faceplate, isSfp, MIN_SCALE, panelBlocks, plateScale, plateSize } from "./panel";
 
 describe("switch front panel", () => {
   it("lays 28 ports out as 8-8-8-4, odd ports on the bottom, even on top", () => {
@@ -93,5 +93,15 @@ describe("switch front panel", () => {
     const { copper, sfp } = faceplate(first);
     expect(sfp.map((p) => p.port.id)).toEqual(["sfp1"]);
     expect(copper.flat()).toHaveLength(7);
+  });
+
+  it("sizes the panel and scales it down to the room it has", () => {
+    // 8-8-8 copper (4 columns each) and a 2 x 2 SFP block.
+    const natural = plateSize([8, 8, 8], 4);
+    expect(natural).toEqual({ width: 3 * 151 + 89 + 13 + 3 * 16 + 26, height: 95 });
+    expect(plateScale(natural, { width: 2000 })).toBe(1); // never larger
+    expect(plateScale(natural, { width: natural.width / 2 })).toBe(0.5);
+    expect(plateScale(natural, { width: 2000, height: 95 * 0.6 })).toBeCloseTo(0.6);
+    expect(plateScale(natural, { width: 10 })).toBe(MIN_SCALE);
   });
 });

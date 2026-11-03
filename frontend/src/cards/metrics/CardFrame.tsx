@@ -52,7 +52,7 @@ export function CardFrame({
     // subtitle says how old ("no data since 14:02"); no footer, which small cards would clip.
     <div
       data-stale="true"
-      className={`flex min-w-0 flex-col opacity-60 grayscale ${tier === "full" ? "gap-3" : "gap-2"}`}
+      className={`flex min-h-0 min-w-0 flex-1 flex-col opacity-60 grayscale ${tier === "full" ? "gap-3" : "gap-2"}`}
     >
       <StaleContext.Provider value>{children}</StaleContext.Provider>
     </div>
