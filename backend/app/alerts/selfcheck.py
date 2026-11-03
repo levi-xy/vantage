@@ -24,7 +24,8 @@ folds the affected alerts' NO DATA messages into the system alert's messages (se
 ``app.alerts.evaluator``), so an outage sends one message, not one per alert.
 
 **/healthz** answers 200, or 503 with exactly one reason code, chosen in this order (the
-first that applies): ``key_mismatch`` (P0-6: the master key doesn't match the stored
+first that applies): ``maintenance`` (P0-6: an offline command holds the maintenance
+lock, see ``app.heartbeat``), ``key_mismatch`` (P0-6: the master key doesn't match the stored
 secrets, see ``app.alerts.key_monitor``), ``evaluator_stalled`` (nothing else is being
 checked then),
 ``prometheus_unreachable``, ``metrics_not_collected``, ``notifications_stuck`` (a message
@@ -88,8 +89,9 @@ SYSTEM_SEVERITY = "critical"
 
 
 class Health(StrEnum):
-    """``/healthz`` reason codes. A later PR adds ``maintenance``."""
+    """``/healthz`` reason codes."""
 
+    MAINTENANCE = "maintenance"
     KEY_MISMATCH = "key_mismatch"
     EVALUATOR_STALLED = "evaluator_stalled"
     PROMETHEUS_UNREACHABLE = "prometheus_unreachable"
@@ -99,6 +101,7 @@ class Health(StrEnum):
 
 # When several apply, the first one is reported.
 HEALTH_PRIORITY = (
+    Health.MAINTENANCE,
     Health.KEY_MISMATCH,
     Health.EVALUATOR_STALLED,
     Health.PROMETHEUS_UNREACHABLE,
@@ -171,6 +174,8 @@ class SelfMonitor:
         self.stalled_at: datetime | None = None
         # Set by the key monitor (P0-6) while the master key doesn't match.
         self.key_mismatch = False
+        # Set by the heartbeat (P0-6) while the maintenance lock is held.
+        self.maintenance = False
 
     # --- conditions ----------------------------------------------------------------------
 
@@ -244,6 +249,7 @@ class SelfMonitor:
         """The ``/healthz`` reason, None when healthy."""
         now = now or self.clock()
         active = {
+            Health.MAINTENANCE: self.maintenance,
             Health.KEY_MISMATCH: self.key_mismatch,
             Health.EVALUATOR_STALLED: self.stalled(now) or self.stalled_at is not None,
             Health.PROMETHEUS_UNREACHABLE: self.prometheus_down(now),

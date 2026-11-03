@@ -10,6 +10,9 @@ services:
   backend:
     <<: *hardening
     build: ../backend
+    # Time for a clean shutdown before SIGKILL: it ends by deleting the backend heartbeat,
+    # so restore and key rotation can run at once after `docker compose stop backend`.
+    stop_grace_period: 20s
     environment:
       VANTAGE_DATABASE_URL: ${VANTAGE_DATABASE_URL:-sqlite:////data/vantage.db}
       VANTAGE_MASTER_KEY_FILE: /run/secrets/master_key

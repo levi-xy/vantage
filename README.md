@@ -131,7 +131,7 @@ How alerts resolve: an alert resolves only after two clean checks on two differe
 
 Logs: the backend logs at INFO by default (for example each delivered alert message). Change it with `VANTAGE_LOG_LEVEL` (`DEBUG`, `INFO`, `WARNING` or `ERROR`) in `.env`.
 
-Backups: `docker compose exec -T backend python -m app.cli backup - > vantage-backup.json.gz` (restore with `app.cli restore`). The master key is not in the backup; keep its own copy. `app.cli rotate-master-key` re-encrypts every stored secret with a new key. See [docs/SECURITY.md](docs/SECURITY.md#backup-restore-and-master-key-rotation).
+Backups: `docker compose exec -T backend python -m app.cli backup - > vantage-backup.json.gz`, while Vantage runs. The master key is not in the backup; keep its own copy. Restoring (`app.cli restore`) and `app.cli rotate-master-key` (re-encrypts every stored secret with a new key) are offline: stop the backend first (`docker compose stop backend`) and run them with `docker compose run --rm -T backend python -m app.cli ...`; they refuse while the backend runs, and the backend doesn't start while one of them runs. See [docs/SECURITY.md](docs/SECURITY.md#backup-restore-and-master-key-rotation).
 
 ## Development
 

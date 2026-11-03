@@ -223,9 +223,11 @@ Run from `deploy/`. `-T` matters: it pipes stdin/stdout instead of a terminal.
 docker compose exec -T backend python -m app.cli backup - > vantage-backup.json.gz
 # or inside the data volume: ... python -m app.cli backup /data/backups/vantage.json.gz
 
-# Restore into a freshly started (empty) Vantage, then restart the backend.
-docker compose exec -T backend python -m app.cli restore - < vantage-backup.json.gz
-docker compose restart backend
+# Restore, with the backend stopped, into an empty database (one that was started once,
+# so the tables exist), then start the backend again.
+docker compose stop backend
+docker compose run --rm -T backend python -m app.cli restore - < vantage-backup.json.gz
+docker compose up -d backend
 
 # Rotate the master key, with the backend stopped.
 openssl rand -base64 32 > secrets/master.key.new
@@ -236,14 +238,20 @@ mv secrets/master.key secrets/master.key.old && mv secrets/master.key.new secret
 docker compose up -d --force-recreate backend
 ```
 
+Backup runs while Vantage runs. **Restore and rotation are offline**: they refuse to run
+while the backend runs, and the backend doesn't start while one of them runs (see
+"Maintenance lock" below). `docker compose run --rm` starts a one-off container from the
+backend image with the command given, so the backend itself stays stopped.
+
 - **The master key is never in a backup.** Stored credentials stay encrypted in the file,
   so a backup without its key is useless for them. Back up `deploy/secrets/master.key`
   separately and keep it apart from the backup files; the CLI prints this reminder
   after every backup. The file still holds password hashes and the audit log: treat
   it as sensitive. A backup written to a path is created with mode `0600` and never
   overwrites an existing file; `backup -` refuses to write to a terminal.
-- **Restore is one transaction and doesn't clobber.** It refuses a database that holds
-  any row unless `--overwrite` is given (which deletes everything first). It parses the
+- **Restore is one transaction and doesn't clobber.** It needs the backend stopped (see
+  "Maintenance lock"). It refuses a database that holds any row unless `--overwrite` is
+  given (which deletes everything first). It parses the
   file strictly (only JSON, exactly Vantage's tables and columns, every value
   type-checked, enum columns limited to their allowed values, 1 GiB uncompressed cap)
   and only restores a backup from the same schema revision. A backup from an older
@@ -266,8 +274,9 @@ docker compose up -d --force-recreate backend
   instead of failing on every secret. If any blob doesn't decrypt, nothing changes. It refuses
   to run if a table gains a binary column it doesn't know about. One audit entry
   (`target_type` `master_key`, `actor_type` `cli`) records only the per-table counts.
-  Stop the backend first (`docker compose stop backend`) and run the command with
-  `docker compose run --rm`, so nothing is written with the old key in between; then
+  Stop the backend first (`docker compose stop backend`; the command refuses while it
+  runs) and run the command with `docker compose run --rm`, so nothing is written with
+  the old key in between; then
   swap the key file (give the new one the same owner and mode as `master.key`) and
   start the backend. Keep the old
   key as long as you keep backups made before the rotation.
@@ -277,6 +286,81 @@ docker compose up -d --force-recreate backend
   restore and rotation under table locks, id sequences reset after a restore). For
   routine Postgres backups, `pg_dump` works as well; it carries the same encrypted
   blobs, and the master key still has to be backed up separately.
+
+### Maintenance lock
+
+Restore and master-key rotation must never run next to a live backend: the backend would
+keep polling and writing with the old data or the old key in between. Two `settings`
+rows enforce that (both runtime state: a backup leaves them out, a restore keeps them):
+
+- **`maintenance_lock`** `{operation, started_at, host, pid, token}`. `restore` and
+  `rotate-master-key` take it with a plain INSERT, which fails while the row exists, so
+  only one command holds it at a time. A second one is refused with the holder's
+  operation, start time, host and pid. The command releases it when its transaction has
+  ended, whether it succeeded or failed (also on Ctrl-C).
+- **`backend_heartbeat`** `{state, at, host, pid, token}`. The backend rewrites it every
+  10 seconds and then reads the lock; a clean shutdown (`docker compose stop`) deletes
+  it, so a command can run at once afterwards. The compose file gives the backend 20
+  seconds to shut down (`stop_grace_period`) before Docker kills it; a backend killed
+  before it got there leaves a heartbeat that blocks the commands for up to 30 seconds.
+
+After taking the lock the command reads the heartbeat. One younger than 30 seconds means
+the backend runs: the command releases the lock and refuses ("stop it first"), with
+nothing changed. There is no `--force`. Each side commits its own row before reading the
+other's, so a backend starting at the same moment as a command never lets both go on.
+A backend killed without a clean shutdown leaves a heartbeat that goes stale after 30
+seconds; wait that long.
+
+**The startup gate.** The backend container's first step, before the migrations, is
+`python -m app.cli startup-gate`. It writes the heartbeat (`starting`), then reads the
+lock. With a lock present it logs
+
+```
+maintenance in progress: restore since 2026-11-02T10:00:00+00:00 (<host>, pid 7). Start
+Vantage again when it finishes, or run app.cli maintenance-unlock if it was interrupted
+```
+
+and exits 1: nothing is migrated or started. Docker's restart policy (`unless-stopped`)
+retries with a growing delay (up to a minute), so a backend that was started by mistake,
+or by a host reboot, during a restore comes up by itself once the lock is gone. A
+database without tables (a fresh install) passes.
+
+Known gap: the gate's `starting` heartbeat goes stale after 30 seconds, and the backend
+writes its own only once the migrations are done and it has started. If an upgrade's
+migrations take longer than that, a command started in that window isn't refused. The
+backend then sees its lock on its first heartbeat and goes into maintenance mode, and
+the database's own locks keep the two from writing at the same time, but don't start a
+restore or rotation while an upgrade is still migrating.
+
+**Maintenance mode.** If a lock appears while the backend runs (for example a command
+started while the backend was hung, so its heartbeat looked stale), the backend notices
+on its next heartbeat (within 10 seconds) and:
+
+- pauses polling, live rates, alert evaluation and notification delivery, and skips the
+  master-key check (it would write the check value, a system alert and its messages);
+  the first check after maintenance runs before anything resumes;
+- refuses every state-changing API request with
+  `503 {"detail": "<short message>", "reason": "maintenance"}`, nothing written; reads,
+  login, logout and PromQL queries keep working;
+- answers `/healthz` with `503 {"reason": "maintenance"}`, first in its order.
+
+The first heartbeat without a lock resumes everything.
+
+**A stuck lock.** A command that was killed (`kill -9`, the container removed, the host
+lost power) can't release its lock, and the lock never expires on its own: the backend
+then refuses to start, and its log shows the message above. Its transaction was rolled
+back by the database, so nothing half-done is left. Make sure the command really is gone
+(`docker compose ps -a`, `docker ps`), then remove the lock:
+
+```bash
+docker compose run --rm backend python -m app.cli maintenance-unlock
+# Removed the maintenance lock held by restore since ... (<host>, pid 7).
+docker compose up -d backend
+```
+
+`maintenance-unlock` prints which command held the lock and records an audit entry
+(`target_type` `maintenance_lock`, `actor_type` `cli`). Run the interrupted command again
+if it didn't finish.
 
 ### Master key mismatch (`key_mismatch`)
 
@@ -519,8 +603,10 @@ restart happens at most once until a tick really finishes again.
 Both are unauthenticated and carry nothing but a fixed code.
 
 - `GET /healthz`: `200 {"status": "ok"}`, or `503 {"reason": "<code>"}` with exactly one
-  code. When several apply, the first in this order wins: `key_mismatch` (the master
-  key doesn't match the stored secrets, see "Master key mismatch"), `evaluator_stalled`
+  code. When several apply, the first in this order wins: `maintenance` (a restore or
+  key rotation holds the maintenance lock, see "Maintenance lock"), `key_mismatch` (the
+  master key doesn't match the stored secrets, see "Master key mismatch"),
+  `evaluator_stalled`
   (nothing else is being checked then), `prometheus_unreachable`, `metrics_not_collected`,
   `notifications_stuck` (an alert message undelivered for more than 15 minutes, or failed
   within 24 hours: the UI banner's rule). The conditions are kept in memory, so they start
