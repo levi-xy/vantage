@@ -44,6 +44,7 @@ export function SwitchPanelCard({ instanceId, title, instance }: CardProps) {
   const ports = showInternal ? all : physical;
   const { copper, sfp } = faceplate(ports);
   const chosen = ports.find((p) => p.index === selected);
+  const chosenCage = sfp.find((p) => p.port.index === selected)?.cage;
   const up = physical.filter((p) => p.state === "up").length;
   const top = busiest(physical);
   const tier = useCardTier();
@@ -76,7 +77,7 @@ export function SwitchPanelCard({ instanceId, title, instance }: CardProps) {
     );
   }
 
-  const tile = ({ port, column, row }: Placed<Port>, cage: boolean) => {
+  const tile = ({ port, column, row, cage: number }: Placed<Port>, cage: boolean) => {
     const on = selected === port.index;
     const notch = (
       <span
@@ -90,7 +91,7 @@ export function SwitchPanelCard({ instanceId, title, instance }: CardProps) {
         type="button"
         style={{ gridColumn: column, gridRow: row }}
         aria-pressed={on}
-        aria-label={`${port.name}: ${port.state}`}
+        aria-label={`${number ? `SFP ${number}, ` : ""}${port.name}: ${port.state}`}
         title={describe(port, formatRate)}
         onClick={() => setSelected(on ? null : port.index)}
         className={`flex h-8 flex-col items-center border-[1.5px] text-[11px] tabular-nums ${TILE[port.state]} ${
@@ -100,7 +101,7 @@ export function SwitchPanelCard({ instanceId, title, instance }: CardProps) {
         } ${on ? "outline-2 outline-offset-2 outline-in" : ""}`}
       >
         {!cage && row === 2 && notch}
-        <span>{port.index}</span>
+        <span>{number ?? port.index}</span>
         {!cage && row === 1 && notch}
       </button>
     );
@@ -155,7 +156,7 @@ export function SwitchPanelCard({ instanceId, title, instance }: CardProps) {
           label={
             chosen
               ? [
-                  `Port ${chosen.index}`,
+                  chosenCage ? `SFP ${chosenCage}` : `Port ${chosen.index}`,
                   chosen.name,
                   chosen.alias,
                   speedText(chosen.speed),
