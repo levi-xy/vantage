@@ -1,5 +1,5 @@
 import { ApiError } from "../api";
-import { createQueryClient, retryDelay, shouldRetry } from "./queryClient";
+import { createQueryClient, MAX_BUSY_RETRIES, retryDelay, shouldRetry } from "./queryClient";
 
 describe("query retries", () => {
   it.each([401, 403, 404, 422])("does not retry a %i", (status) => {
@@ -14,10 +14,12 @@ describe("query retries", () => {
     }
   });
 
-  it("retries a 429 (busy) after a short random wait", () => {
+  it("retries a 429 (busy) up to five times after a short random wait", () => {
     const busy = new ApiError(429, "too many queries in progress; try again");
+    expect(MAX_BUSY_RETRIES).toBe(5);
     expect(shouldRetry(0, busy)).toBe(true);
-    expect(shouldRetry(2, busy)).toBe(false);
+    expect(shouldRetry(4, busy)).toBe(true);
+    expect(shouldRetry(5, busy)).toBe(false);
     const delay = retryDelay(0, busy);
     expect(delay).toBeGreaterThanOrEqual(500);
     expect(delay).toBeLessThanOrEqual(1_500);

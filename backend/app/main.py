@@ -56,6 +56,7 @@ def create_app(
     net_guard_factory: NetGuardFactory | None = None,
     prometheus_token: PrometheusToken | None = None,
     prometheus_client: PrometheusClient | None = None,
+    alert_prometheus_client: PrometheusClient | None = None,
 ) -> FastAPI:
     """Build the app. Run with ``uvicorn --factory app.main:create_app``.
 
@@ -147,8 +148,8 @@ def create_app(
     # slot answers 429 instead of queueing.
     app.state.query_gate = QueryGate()
     # The alert evaluator gets its own client (own connection pool, no /query caps), so
-    # browser queries can never starve alert evaluation.
-    app.state.alert_prometheus = PrometheusClient.guarded(
+    # browser queries can never starve alert evaluation. Tests may inject a fake one.
+    app.state.alert_prometheus = alert_prometheus_client or PrometheusClient.guarded(
         settings.prometheus_url, NetGuard(NetPolicy())
     )
     # Poll collector (M2.4): results kept in memory, served on /metrics.

@@ -13,8 +13,10 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import CSRF_HEADER
-from app.core.config import ConfigError, load_settings
+from app.core.config import ConfigError, Settings, load_settings
+from app.core.crypto import SecretBox
 from app.core.net_guard import NetGuard, NetPolicy
+from app.main import create_app
 from app.models import Role, UserSession
 from app.query.proxy import (
     MAX_CONCURRENT_QUERIES,
@@ -177,7 +179,7 @@ def test_concurrency_caps_answer_429(
 ) -> None:
     gate: QueryGate = admin.app.state.query_gate  # type: ignore[attr-defined]
     mine = session.scalars(select(UserSession.id)).one()
-    assert (MAX_QUERIES_PER_SESSION, MAX_CONCURRENT_QUERIES) == (4, 6)
+    assert (MAX_QUERIES_PER_SESSION, MAX_CONCURRENT_QUERIES) == (4, 12)
     # This session already has its four queries running: refused at once, nothing sent.
     for _ in range(MAX_QUERIES_PER_SESSION - 1):
         assert gate.acquire(mine)
@@ -313,3 +315,16 @@ def test_prometheus_url_setting() -> None:
     assert "example-password" not in str(err.value)
     with pytest.raises(ConfigError):
         load_settings({"VANTAGE_PROMETHEUS_URL": "file:///etc/passwd"})
+
+
+def test_alert_prometheus_client_can_be_injected(db_url: str) -> None:
+    browser = PrometheusClient(httpx.AsyncClient(base_url="http://prom.test"))
+    alerts = PrometheusClient(httpx.AsyncClient(base_url="http://prom.test"))
+    app = create_app(
+        Settings(database_url=db_url),
+        secret_box=SecretBox(b"vantage-test-key-not-a-secret-00"),
+        prometheus_client=browser,
+        alert_prometheus_client=alerts,
+    )
+    assert app.state.prometheus is browser
+    assert app.state.alert_prometheus is alerts

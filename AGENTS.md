@@ -180,7 +180,7 @@ class Integration(ABC):
 
 ## Contract 3: HTTP API (v1)
 
-All routes under `/api/v1`, JSON, session auth, CSRF token on state-changing requests. In maintenance mode (see Contract 2, maintenance lock) every state-changing request except `POST /auth/login`, `POST /auth/logout` and `POST /query` answers 503 `{"detail": <short message>, "reason": "maintenance"}` and changes nothing; reads keep working (maintainer-approved 2026-11-02, P0-6).
+All routes under `/api/v1`, JSON, session auth, CSRF token on state-changing requests. In maintenance mode (see Contract 2, maintenance lock) every state-changing request except `POST /auth/login`, `POST /auth/logout` and `POST /query` answers 503 `{"detail": <short message>, "reason": "maintenance"}` and changes nothing; reads keep working (maintainer-approved 2026-11-02, P0-6). Security fixes of PR #77 (M8.3, awaiting the owner's merge approval): `POST /query` may answer 429 with `Retry-After` when its concurrency caps (in total and per session) are full, and when `VANTAGE_PUBLIC_HOSTS` is set every `/api/*` request whose `Host` isn't listed answers 400 `{"detail": "unknown host"}` (the `/ws` handshake is refused).
 
 | Method | Path | Role | Purpose |
 |---|---|---|---|
