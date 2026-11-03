@@ -219,6 +219,11 @@ describe("alerts page: events and rules", () => {
     });
     renderApp("/alerts", backend);
     const firing = await screen.findByRole("list", { name: "Open alerts" });
+    // Collapsed to a count until asked for.
+    expect(within(firing).queryByRole("list", { name: "Notifications" })).toBeNull();
+    const toggle = within(firing).getByRole("button", { name: "4 notifications · 2 waiting" });
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
     const lines = within(firing).getByRole("list", { name: "Notifications" });
     expect(
       within(lines).getByText("firing to ops: queued (3 attempts, rate limited)"),
@@ -295,6 +300,7 @@ describe("alerts page: events and rules", () => {
     const open = await screen.findByRole("list", { name: "Open alerts" });
     expect(within(open).getByText("No data: device not answering")).toBeVisible();
     expect(within(open).getByText(/no data since/)).toBeVisible();
+    fireEvent.click(within(open).getByRole("button", { name: "1 notification" }));
     expect(within(open).getByText("no data to ops: delivered (1 attempt)")).toBeVisible();
     fireEvent.click(within(open).getByRole("button", { name: "Close alert 7" }));
     fireEvent.click(within(open).getByRole("button", { name: "Confirm closing alert 7" }));
@@ -305,6 +311,29 @@ describe("alerts page: events and rules", () => {
     const urls = backend.fetch.mock.calls.map(([input]) => String(input));
     expect(urls.some((u) => u.includes("state=no_data"))).toBe(true);
     expect(urls.some((u) => u.includes("state=firing"))).toBe(true);
+  });
+
+  it("marks a system alert, shows the series' labels and offers no Close", async () => {
+    const system = {
+      ...FIRING_EVENT,
+      id: 8,
+      rule_id: null,
+      rule_name: "Prometheus unreachable",
+      labels: {},
+      source: "system",
+      system_kind: "prometheus_unreachable",
+    };
+    const labelled = { ...FIRING_EVENT, labels: { vantage_instance: "nas-1", ifname: "eth0" } };
+    const backend = adminBackend({ "GET /alerts/events": () => json([system, labelled]) });
+    renderApp("/alerts", backend);
+    const open = await screen.findByRole("list", { name: "Open alerts" });
+    expect(within(open).getByText("system alert, closes by itself")).toBeVisible();
+    expect(within(open).queryByRole("button", { name: "Close alert 8" })).toBeNull();
+    expect(within(open).getByRole("button", { name: "Close alert 7" })).toBeVisible();
+    const labels = within(open).getByRole("list", { name: "Labels" });
+    expect(within(labels).getByText("ifname=eth0")).toBeVisible();
+    // The device is named in the row, not repeated as a label.
+    expect(within(labels).queryByText(/vantage_instance/)).toBeNull();
   });
 
   it("warns about rules that resolve on an empty result and shows the last error", async () => {

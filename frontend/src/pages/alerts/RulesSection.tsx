@@ -17,11 +17,11 @@ import {
   label,
 } from "../../components/styles";
 import { INSTANCES_KEY } from "../devices/queries";
+import { buttonDanger, panel, row } from "./tone";
+import { SectionHeader } from "./ui";
 
 const RULES_KEY = ["alert-rules"] as const;
 const CHANNELS_KEY = ["channels"] as const;
-const card =
-  "rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900";
 
 function errorText(error: unknown): string {
   if (error instanceof ApiError) {
@@ -247,23 +247,27 @@ function RuleRow({ rule }: { rule: AlertRule }) {
     },
   });
   return (
-    <li className={card}>
+    <li className={row}>
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <div className="flex min-w-0 flex-col gap-1">
-          <span className="font-medium break-all">{rule.name}</span>
-          <code className="text-xs break-all text-slate-600 dark:text-slate-400">{rule.expr}</code>
-          <span className="text-xs text-slate-600 dark:text-slate-400">
-            {rule.severity} · for {rule.for_seconds}s · {rule.enabled ? "enabled" : "disabled"}
-          </span>
+        <div className={`flex min-w-0 flex-col gap-1 ${rule.enabled ? "" : "text-muted"}`}>
+          <div className="flex flex-wrap items-baseline gap-x-2">
+            <span className="font-semibold break-all">{rule.name}</span>
+            <span className="text-sm text-muted tabular-nums">
+              {rule.severity} · for {rule.for_seconds}s{rule.enabled ? "" : " · disabled"}
+            </span>
+          </div>
+          <code className="rounded bg-inset px-2 py-1 font-mono text-xs break-all text-muted">
+            {rule.expr}
+          </code>
           {rule.recovery_mode === "empty_result" && (
-            <span className="text-xs text-amber-700 dark:text-amber-300">
-              ⚠ Resolves when the result is empty: this expression can&apos;t be split into a value
+            <span className="text-xs text-warn">
+              Resolves when the result is empty: this expression can&apos;t be split into a value
               and a threshold, so a missing value can&apos;t be told apart from a recovery (a
               device&apos;s fresh poll is still required).
             </span>
           )}
           {rule.error && (
-            <span role="status" className="text-xs break-words text-red-700 dark:text-red-300">
+            <span role="status" className="text-xs break-words text-crit-text">
               Last query error: {rule.error}
             </span>
           )}
@@ -275,7 +279,7 @@ function RuleRow({ rule }: { rule: AlertRule }) {
                 type="button"
                 disabled={remove.isPending}
                 onClick={() => remove.mutate()}
-                className={buttonSecondary}
+                className={buttonDanger}
                 aria-label={`Confirm deleting ${rule.name}`}
               >
                 Confirm delete
@@ -320,7 +324,7 @@ function RuleRow({ rule }: { rule: AlertRule }) {
         </div>
       </div>
       {mode === "edit" && (
-        <div className="mt-3 border-t border-slate-200 pt-3 dark:border-slate-800">
+        <div className="mt-3 border-t border-line pt-3">
           <RuleForm rule={rule} onDone={() => setMode("idle")} />
         </div>
       )}
@@ -360,7 +364,7 @@ export function RulesSection() {
   let list;
   if (rules.isPending) {
     list = (
-      <p role="status" className="text-sm">
+      <p role="status" className="text-sm text-muted">
         Loading rules…
       </p>
     );
@@ -374,21 +378,19 @@ export function RulesSection() {
     list = <EmptyState>No rules yet. Add one or start from a template.</EmptyState>;
   } else {
     list = (
-      <ul aria-label="Rules" className="space-y-3">
+      <ul aria-label="Rules" className={panel}>
         {rules.data.map((r) => (
           <RuleRow key={r.id} rule={r} />
         ))}
       </ul>
     );
   }
+  const templateList = templates.data ?? [];
 
   return (
     <>
-      <section aria-labelledby="rules-title" className="space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <h2 id="rules-title" className="text-base font-semibold">
-            Rules
-          </h2>
+      <section aria-labelledby="rules-title" className="space-y-2.5">
+        <SectionHeader id="rules-title" title="Rules" count={rules.data?.length}>
           <button
             type="button"
             className={buttonSecondary}
@@ -396,41 +398,41 @@ export function RulesSection() {
           >
             Add a rule
           </button>
-        </div>
+        </SectionHeader>
         {list}
         {adding && (
-          <div className={card}>
+          <div className={`${panel} p-4`}>
             <RuleForm key={adding.key} initial={adding.initial} onDone={() => setAdding(null)} />
           </div>
         )}
       </section>
-      <section aria-labelledby="templates-title" className="space-y-3">
-        <h2 id="templates-title" className="text-base font-semibold">
-          Create from template
-        </h2>
+      <section aria-labelledby="templates-title" className="space-y-2.5">
+        <SectionHeader id="templates-title" title="Create from template" />
         {templates.isError ? (
           <p role="alert" className={alertError}>
             Could not load the templates.
           </p>
         ) : (
-          <ul aria-label="Templates" className="grid gap-3 md:grid-cols-2">
-            {(templates.data ?? []).map((t) => (
-              <li key={t.id} className={`${card} flex items-start justify-between gap-3`}>
-                <div className="min-w-0">
-                  <p className="text-sm font-medium break-words">{t.name}</p>
-                  <p className="text-xs text-slate-600 dark:text-slate-400">{t.description}</p>
-                </div>
-                <button
-                  type="button"
-                  className={buttonSecondary}
-                  aria-label={`Use template ${t.name}`}
-                  onClick={() => fromTemplate(t)}
-                >
-                  Use
-                </button>
-              </li>
-            ))}
-          </ul>
+          templateList.length > 0 && (
+            <ul aria-label="Templates" className={panel}>
+              {templateList.map((t) => (
+                <li key={t.id} className={`${row} flex items-center justify-between gap-3`}>
+                  <div className="min-w-0">
+                    <p className="font-semibold break-words">{t.name}</p>
+                    <p className="text-sm text-muted">{t.description}</p>
+                  </div>
+                  <button
+                    type="button"
+                    className={buttonSecondary}
+                    aria-label={`Use template ${t.name}`}
+                    onClick={() => fromTemplate(t)}
+                  >
+                    Use
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )
         )}
       </section>
     </>

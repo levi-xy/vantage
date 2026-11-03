@@ -11,6 +11,8 @@ import type { Channel, ChannelTestResult } from "../api";
 import { useApiClient, useUser } from "../app/session";
 import { EventsSection } from "./alerts/EventsSection";
 import { RulesSection } from "./alerts/RulesSection";
+import { buttonDanger, panel, row } from "./alerts/tone";
+import { SectionHeader } from "./alerts/ui";
 import { EmptyState, PageHeader } from "../components/PageHeader";
 import {
   alertError,
@@ -23,9 +25,6 @@ import {
 } from "../components/styles";
 
 const CHANNELS_KEY = ["channels"] as const;
-const card =
-  "rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900";
-const buttonDanger = `${buttonSecondary} border-red-400 text-red-700 dark:border-red-700 dark:text-red-300`;
 
 function errorText(error: unknown): string {
   if (error instanceof ApiError) {
@@ -205,13 +204,14 @@ function ChannelRow({ channel }: { channel: Channel }) {
   }
 
   return (
-    <li className={card}>
+    <li className={row}>
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div className="flex min-w-0 flex-col gap-1">
-          <span className="font-medium break-all">{channel.name}</span>
-          <span className="text-xs break-all text-slate-600 dark:text-slate-400">
+          <span className="font-semibold break-all">{channel.name}</span>
+          <span className="text-sm break-all text-muted tabular-nums">
             Telegram · chat {channel.config.chat_id ?? "—"} · bot token{" "}
             {channel.secrets_set.bot_token ? "set" : "not set"}
+            {channel.system_alerts === false ? " · no system alerts" : ""}
           </span>
         </div>
         <div className="flex flex-wrap gap-2 md:justify-end">
@@ -266,7 +266,7 @@ function ChannelRow({ channel }: { channel: Channel }) {
         </div>
       </div>
       {mode === "edit" && (
-        <div className="mt-3 border-t border-slate-200 pt-3 dark:border-slate-800">
+        <div className="mt-3 border-t border-line pt-3">
           <ChannelForm channel={channel} onDone={() => setMode("idle")} />
         </div>
       )}
@@ -291,7 +291,7 @@ function ChannelsSection() {
   let list;
   if (channels.isPending) {
     list = (
-      <p role="status" className="text-sm text-slate-600 dark:text-slate-400">
+      <p role="status" className="text-sm text-muted">
         Loading channels…
       </p>
     );
@@ -308,7 +308,7 @@ function ChannelsSection() {
     list = <EmptyState>No channels yet. Add a Telegram bot below.</EmptyState>;
   } else {
     list = (
-      <ul aria-label="Channels" className="space-y-3">
+      <ul aria-label="Channels" className={panel}>
         {channels.data.map((channel) => (
           <ChannelRow key={channel.id} channel={channel} />
         ))}
@@ -318,17 +318,15 @@ function ChannelsSection() {
 
   return (
     <>
-      <section aria-labelledby="channels-title" className="space-y-4">
-        <h2 id="channels-title" className="text-base font-semibold">
-          Channels
-        </h2>
-        <p className="text-sm text-slate-600 dark:text-slate-400">
+      <section aria-labelledby="channels-title" className="space-y-2.5">
+        <SectionHeader id="channels-title" title="Channels" count={channels.data?.length} />
+        <p className="text-sm text-muted">
           Where alerts are sent. Messages go from the Vantage server to api.telegram.org; the bot
           token stays on the server.
         </p>
         {list}
-        <div className={card}>
-          <h3 className="mb-3 text-sm font-semibold">Add a Telegram channel</h3>
+        <div className={`${panel} p-4`}>
+          <h3 className="mb-3 font-semibold">Add a Telegram channel</h3>
           <ChannelForm onDone={() => undefined} />
         </div>
       </section>
@@ -339,7 +337,7 @@ function ChannelsSection() {
 export function AlertsPage() {
   const isAdmin = useUser().role === "admin";
   return (
-    <div className="space-y-8">
+    <div className="space-y-7">
       <PageHeader title="Alerts" />
       <EventsSection />
       {isAdmin && (
