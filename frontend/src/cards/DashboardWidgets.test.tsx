@@ -142,7 +142,7 @@ describe("dashboard headline and summary tiles", () => {
       "/alerts",
     );
 
-    const internet = screen.getByRole("group", { name: "Internet" });
+    const internet = await screen.findByRole("group", { name: "Internet" });
     expect(await within(internet).findByText("1/2")).toBeInTheDocument();
     // The down gateway is the one named.
     expect(within(internet).getByText("192.0.2.2 · 100% loss")).toBeInTheDocument();

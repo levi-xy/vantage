@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
-import { Link, NavLink, Outlet } from "react-router";
+import { Link, NavLink, Outlet, useLocation } from "react-router";
 import type { Role } from "../api";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { LiveIndicator } from "./LiveIndicator";
@@ -188,8 +188,14 @@ const MENU: readonly MenuItem[] = [
   { to: "/account", label: "My account" },
 ];
 
+/** The Dashboard tab also stands for every other dashboard (`/d/<id>`). */
+function useOnOtherDashboard(): boolean {
+  return useLocation().pathname.startsWith("/d/");
+}
+
 /** Desktop: tabs in the top bar, the current one underlined. */
 function TopNav({ alerts }: { alerts: number }) {
+  const otherDashboard = useOnOtherDashboard();
   return (
     <nav aria-label="Main" className="hidden gap-1 self-stretch md:flex">
       {TABS.map((tab) => (
@@ -199,7 +205,7 @@ function TopNav({ alerts }: { alerts: number }) {
           end={tab.end}
           className={({ isActive }) =>
             `flex items-center gap-2 border-b-2 px-3.5 ${focusRing} ${
-              isActive
+              isActive || (tab.to === "/" && otherDashboard)
                 ? "border-in font-medium text-ink"
                 : "border-transparent text-muted hover:text-ink"
             }`
@@ -225,6 +231,7 @@ function BottomTabs({
   onMore: () => void;
   moreRef: RefObject<HTMLButtonElement>;
 }) {
+  const otherDashboard = useOnOtherDashboard();
   const tabClass = (active: boolean) =>
     `relative flex flex-col items-center justify-center gap-[3px] text-[11px] ${focusRing} ${
       active ? "text-in" : "text-muted"
@@ -239,7 +246,7 @@ function BottomTabs({
           key={tab.to}
           to={tab.to}
           end={tab.end}
-          className={({ isActive }) => tabClass(isActive)}
+          className={({ isActive }) => tabClass(isActive || (tab.to === "/" && otherDashboard))}
         >
           {tab.icon}
           {tab.label}

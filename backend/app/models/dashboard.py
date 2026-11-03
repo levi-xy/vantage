@@ -13,3 +13,5 @@ class Dashboard(Base):
     name: Mapped[str] = mapped_column(String(128))
     # Card positions and per-card settings.
     layout: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    # Tab order, dense from 0; the first dashboard by (position, id) is the main one.
+    position: Mapped[int] = mapped_column(default=0, server_default="0")

@@ -16,7 +16,10 @@ import type {
   ChannelUpdate,
   Credentials,
   Dashboard,
+  DashboardCreate,
   DashboardLayout,
+  DashboardSummary,
+  DashboardUpdate,
   DeliveryStatusSummary,
   DeviceLink,
   DeviceLinkCreate,
@@ -297,14 +300,34 @@ export class ApiClient {
     return this.request("GET", `/instances/${encodeURIComponent(id)}/cards`);
   }
 
-  /** Dashboard 1 ("Default") is created on its first read. */
+  /** Every dashboard in tab order; "Default" is created when there is none. */
+  dashboards(): Promise<DashboardSummary[]> {
+    return this.request("GET", "/dashboards");
+  }
+
+  /** Dashboard 1 ("Default") is created on its first read when there is no dashboard. */
   dashboard(id: number): Promise<Dashboard> {
     return this.request("GET", `/dashboards/${encodeURIComponent(String(id))}`);
   }
 
-  /** Admin only. */
+  /** Any user. At most 50 dashboards (409). */
+  createDashboard(body: DashboardCreate): Promise<Dashboard> {
+    return this.request("POST", "/dashboards", body);
+  }
+
+  /** Any user. */
   saveDashboard(id: number, layout: DashboardLayout): Promise<Dashboard> {
     return this.request("PUT", `/dashboards/${encodeURIComponent(String(id))}`, { layout });
+  }
+
+  /** Any user: rename or move. */
+  updateDashboard(id: number, body: DashboardUpdate): Promise<DashboardSummary> {
+    return this.request("PATCH", `/dashboards/${encodeURIComponent(String(id))}`, body);
+  }
+
+  /** Any user. The last dashboard can't be deleted (409). */
+  deleteDashboard(id: number): Promise<void> {
+    return this.request("DELETE", `/dashboards/${encodeURIComponent(String(id))}`);
   }
 
   links(): Promise<DeviceLink[]> {
