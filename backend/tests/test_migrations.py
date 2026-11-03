@@ -416,10 +416,11 @@ def test_0011_colours_existing_instances_in_created_order(db_url: str) -> None:
                 conn.execute(
                     text(
                         "INSERT INTO instances (id, type_id, name, tags, enabled, config, "
-                        "created_at, updated_at) VALUES (:id, 'ping_check', :name, '[]', 1, "
+                        "created_at, updated_at) VALUES (:id, 'ping_check', :name, '[]', :enabled, "
                         "'{}', :at, :at)"
                     ),
                     {
+                        "enabled": True,
                         "id": f"{n:032x}",  # how SQLite stores a Uuid
                         "name": f"dev-{n:02d}",
                         "at": f"2026-01-01 00:00:{n:02d}",
