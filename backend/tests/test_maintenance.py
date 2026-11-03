@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 from alembic import command
-from sqlalchemy import Engine, select, text
+from sqlalchemy import Engine, delete, select, text
 from sqlalchemy.orm import Session
 
 from app.alerts.selfcheck import HEALTH_PRIORITY, Health, SelfMonitor
@@ -17,6 +17,7 @@ from app.api.deps import CSRF_HEADER
 from app.collectors.hub import EventHub
 from app.core import maintenance
 from app.core.db import make_engine, make_session_factory, utcnow
+from app.core.key_check import KEY_CHECK_KEY
 from app.core.maintenance import HEARTBEAT_KEY, LOCK_KEY
 from app.models import ActorType, AuditLog, Setting
 from tests.conftest import BACKEND_DIR, alembic_config
@@ -222,13 +223,20 @@ def test_a_lock_while_running_pauses_and_refuses_writes(engine: Engine, db_url: 
         assert state.poller._supervisor is None
         assert state.alert_evaluator._task is None
         assert state.delivery._task is None
+        # The key check writes nothing in maintenance mode (here: it would create the row).
+        with Session(engine) as db:
+            db.execute(delete(Setting).where(Setting.key == KEY_CHECK_KEY))
+            db.commit()
+        assert c.portal.call(state.key_monitor.check) is True
+        assert row(engine, KEY_CHECK_KEY) is None
 
-        # The lock goes away: everything resumes.
+        # The lock goes away: the key is checked again, everything resumes.
         assert run_cli(db_url, "maintenance-unlock").code == 0
         assert c.portal.call(state.heartbeat.beat) is False
         assert c.get("/healthz").json() == {"status": "ok"}
         assert state.poller._supervisor is not None
         assert state.alert_evaluator._task is not None
+        assert row(engine, KEY_CHECK_KEY) is not None
         assert c.post(f"{API}/users", json=new_user).status_code == 201
 
 

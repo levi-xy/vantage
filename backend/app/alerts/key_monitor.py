@@ -15,6 +15,11 @@ see what is wrong, but:
   ``error_kind = credentials_unreadable`` (the channels' credentials can't be decrypted
   either), and the UI shows it in the system-alert banner.
 
+While the backend is in maintenance mode (``app.heartbeat``: an offline restore or key
+rotation holds the lock) the check is skipped: it would write (the check value, the
+system alert, outbox rows) next to that command. The first check after maintenance runs
+before anything resumes.
+
 The first check that matches again (the database changed: a restore, a rotation; or the
 backend restarted with the right key file) resolves the system alert and starts polling
 and delivery again. Reporting never depends on a channel working.
@@ -59,6 +64,7 @@ class KeyMonitor:
         resume: Callable[[], Awaitable[None]],
         clock: Callable[[], datetime] = utcnow,
         recheck_seconds: float = RECHECK_SECONDS,
+        suspended: Callable[[], bool] = lambda: False,
     ) -> None:
         self._sessions = session_factory
         self._box = secret_box
@@ -67,6 +73,7 @@ class KeyMonitor:
         self._resume = resume
         self._clock = clock
         self._recheck = recheck_seconds
+        self._suspended = suspended
         self.mismatch: Mismatch | None = None
         self._last_error: datetime | None = None
         # A system alert may be open from before a restart: resolve it on the first match.
@@ -104,7 +111,9 @@ class KeyMonitor:
 
     async def check(self) -> bool:
         """Check once and switch modes when the answer changed. Returns whether the key
-        matches."""
+        matches. Skipped (no read, no write, no mode change) while suspended."""
+        if self._suspended():
+            return self.ok
         # The database read and the decrypts run off the event loop.
         result = await asyncio.to_thread(self._check_db)
         if result.created:

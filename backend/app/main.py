@@ -207,11 +207,20 @@ def create_app(
         monitor=app.state.self_monitor,
         pause=pause_secret_users,
         resume=resume_secret_users,
+        # No key check writes (check value, system alert, outbox) in maintenance mode.
+        suspended=lambda: workers.maintenance,
     )
 
     async def maintenance_changed(active: bool) -> None:
         app.state.self_monitor.maintenance = active
         workers.maintenance = active
+        if not active:
+            # The offline command may have changed the key or the secrets: check before
+            # anything that decrypts them resumes.
+            try:
+                await app.state.key_monitor.check()
+            except Exception as exc:  # re-checked every few seconds
+                log.warning("master key check after maintenance failed (%s)", type(exc).__name__)
         await workers.apply()
 
     app.state.heartbeat = Heartbeat(engine, maintenance_changed, interval=HEARTBEAT_SECONDS)

@@ -300,7 +300,9 @@ rows enforce that (both runtime state: a backup leaves them out, a restore keeps
   ended, whether it succeeded or failed (also on Ctrl-C).
 - **`backend_heartbeat`** `{state, at, host, pid, token}`. The backend rewrites it every
   10 seconds and then reads the lock; a clean shutdown (`docker compose stop`) deletes
-  it, so a command can run at once afterwards.
+  it, so a command can run at once afterwards. The compose file gives the backend 20
+  seconds to shut down (`stop_grace_period`) before Docker kills it; a backend killed
+  before it got there leaves a heartbeat that blocks the commands for up to 30 seconds.
 
 After taking the lock the command reads the heartbeat. One younger than 30 seconds means
 the backend runs: the command releases the lock and refuses ("stop it first"), with
@@ -323,11 +325,20 @@ retries with a growing delay (up to a minute), so a backend that was started by 
 or by a host reboot, during a restore comes up by itself once the lock is gone. A
 database without tables (a fresh install) passes.
 
+Known gap: the gate's `starting` heartbeat goes stale after 30 seconds, and the backend
+writes its own only once the migrations are done and it has started. If an upgrade's
+migrations take longer than that, a command started in that window isn't refused. The
+backend then sees its lock on its first heartbeat and goes into maintenance mode, and
+the database's own locks keep the two from writing at the same time, but don't start a
+restore or rotation while an upgrade is still migrating.
+
 **Maintenance mode.** If a lock appears while the backend runs (for example a command
 started while the backend was hung, so its heartbeat looked stale), the backend notices
 on its next heartbeat (within 10 seconds) and:
 
-- pauses polling, live rates, alert evaluation and notification delivery;
+- pauses polling, live rates, alert evaluation and notification delivery, and skips the
+  master-key check (it would write the check value, a system alert and its messages);
+  the first check after maintenance runs before anything resumes;
 - refuses every state-changing API request with
   `503 {"detail": "<short message>", "reason": "maintenance"}`, nothing written; reads,
   login, logout and PromQL queries keep working;
