@@ -179,4 +179,6 @@ Not open to contributions yet. Guidelines will follow the first release.
 
 ## License
 
-Apache 2.0 (planned).
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+Copyright 2026 levi-xy.
