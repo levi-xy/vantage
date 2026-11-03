@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import { ApiClient } from "../../api";
 import { renderCard, vector } from "../testRender";
 import { ProxmoxGuestsCard } from "../proxmox-guests/ProxmoxGuestsCard";
@@ -24,7 +24,10 @@ function answer(query: string) {
   if (query.includes("guest_cpu_ratio")) return vector([[guest("100"), "12"]]);
   if (query.includes("guest_memory_used")) return vector([[guest("100"), "40"]]);
   if (query.includes("guest_info"))
-    return vector([[{ ...guest("100"), guest_name: "web-1" }, "1"]]);
+    return vector([
+      [{ ...guest("100"), guest_name: "web-1", guest_tags: "a;b;c;prod;web" }, "1"],
+      [{ ...guest("101"), guest_name: "", guest_tags: "" }, "1"],
+    ]);
   return vector([]);
 }
 
@@ -47,6 +50,15 @@ describe("Proxmox cards", () => {
     expect(screen.getAllByRole("listitem")[0]).toHaveTextContent("web-1");
   });
 
+  it("guests show their tags as chips, the rest as +N", async () => {
+    renderCard(client, ProxmoxGuestsCard, answer);
+    const [web, other] = (await screen.findAllByRole("listitem")) as [HTMLElement, HTMLElement];
+    const chips = within(web).getByLabelText("Tags");
+    expect([...chips.children].map((c) => c.textContent)).toEqual(["a", "b", "c", "+2"]);
+    expect(within(chips).getByText("+2")).toHaveAttribute("title", "a, b, c, prod, web");
+    expect(within(other).queryByLabelText("Tags")).not.toBeInTheDocument();
+  });
+
   it("small: the node's CPU and memory; guests running", async () => {
     renderCard(client, ProxmoxNodeCard, answer, undefined, { tier: "small" });
     expect(await screen.findByRole("group", { name: "CPU and memory" })).toHaveTextContent(
@@ -60,6 +72,7 @@ describe("Proxmox cards", () => {
     expect(await screen.findByRole("group", { name: "Guests running" })).toHaveTextContent(
       "1/2 running",
     );
+    expect(screen.queryByLabelText("Tags")).not.toBeInTheDocument();
   });
 
   it("say so when there is no data", async () => {

@@ -86,7 +86,7 @@ METRIC_GUEST_NET_OUT = f"{PREFIX}_guest_network_transmit_bytes"  # counter
 METRIC_GUEST_DISK_READ = f"{PREFIX}_guest_disk_read_bytes"  # counter
 METRIC_GUEST_DISK_WRITE = f"{PREFIX}_guest_disk_written_bytes"  # counter
 METRIC_GUEST_UPTIME = f"{PREFIX}_guest_uptime_seconds"
-# Value 1; the only series that carries the guest's name (label exception, section 9).
+# Value 1; the only series that carries the guest's name and tags (section 9).
 METRIC_GUEST_INFO = f"{PREFIX}_guest_info"
 
 METRIC_STORAGE_ACTIVE = f"{PREFIX}_storage_active"
@@ -128,6 +128,11 @@ _NODE_NAME = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
 _NODE_RE = re.compile(_NODE_NAME)
 _STORAGE_RE = re.compile(r"[A-Za-z][A-Za-z0-9._-]{0,63}")
 MAX_VMID = 999_999_999
+# Guest tags on guest_info: Proxmox's own tag charset, at most this many, this long joined.
+MAX_GUEST_TAGS = 8
+MAX_GUEST_TAGS_CHARS = 120
+_TAG_SEPARATORS_RE = re.compile(r"[;,\s]+")
+_TAG_DROP_RE = re.compile(r"[^a-z0-9_.+-]")
 
 # Every request the integration may send: GET, exactly these paths (with this query).
 ALLOWED_PATHS: tuple[re.Pattern[str], ...] = (
@@ -563,7 +568,8 @@ def parse_guests(data: Any) -> list[Guest]:
     """``GET /cluster/resources?type=vm``: QEMU VMs and LXC containers, sorted by vmid.
 
     Templates are skipped (they never run). Entries without a usable vmid, type or node
-    are skipped. Free-form fields (name, tags, the lock, the HA state) are not read.
+    are skipped. Of the free-form fields only the name and the tags are read (by
+    :func:`guest_samples`, for the info series); the lock and the HA state are not.
     """
     if not isinstance(data, list):
         raise _NotTheApi("resources is not a list")
@@ -582,6 +588,32 @@ def parse_guests(data: Any) -> list[Guest]:
             continue
         guests[vmid] = Guest(vmid=vmid, kind=kind, node=node, entry=entry)
     return [guests[vmid] for vmid in sorted(guests)]
+
+
+def clean_tags(raw: Any) -> str:
+    """A guest's ``tags`` as one label value: ";"-joined, sorted, Proxmox's tag charset.
+
+    Proxmox stores ";"-separated tags; some versions and API clients use "," or spaces, so
+    all three split. Each tag is lowercased and stripped to ``[a-z0-9_.+-]``; empty ones and
+    duplicates are dropped. At most :data:`MAX_GUEST_TAGS` tags (the first ones in sorted
+    order) and :data:`MAX_GUEST_TAGS_CHARS` characters joined: a tag that would not fit is
+    left out. Anything but a string gives "".
+    """
+    if not isinstance(raw, str):
+        return ""
+    parts = _TAG_SEPARATORS_RE.split(raw[:4096])
+    tags = {_TAG_DROP_RE.sub("", part.lower()) for part in parts} - {""}
+    kept: list[str] = []
+    length = 0
+    for tag in sorted(tags):
+        if len(kept) == MAX_GUEST_TAGS:
+            break
+        added = len(tag) + (1 if kept else 0)
+        if length + added > MAX_GUEST_TAGS_CHARS:
+            continue
+        kept.append(tag)
+        length += added
+    return ";".join(kept)
 
 
 def guest_samples(guest: Guest) -> list[Sample]:
@@ -613,13 +645,18 @@ def guest_samples(guest: Guest) -> list[Sample]:
     )
     for metric, key, kind in fields:
         _sample(samples, metric, entry.get(key), labels, kind)
-    # The guest's name is free-form text: only on the info series (value 1), cleaned and
-    # capped like the SNMP labels, under the maintainer's label exception (INTEGRATIONS.md
-    # section 9). Dashboards join it on vmid. Tags and other text are not read.
+    # The guest's name and tags are free-form text: only on the info series (value 1),
+    # cleaned and capped, under the general rule of INTEGRATIONS.md section 9. Both are
+    # display labels (app/alerts/labels.py), so neither changes an alert's fingerprint.
+    # Dashboards join them on vmid. Other text (lock, HA state) is not read.
     samples.append(
         Sample(
             name=METRIC_GUEST_INFO,
-            labels={**labels, "guest_name": clean_text(entry.get("name"), MAX_LABEL_TEXT)},
+            labels={
+                **labels,
+                "guest_name": clean_text(entry.get("name"), MAX_LABEL_TEXT),
+                "guest_tags": clean_tags(entry.get("tags")),
+            },
             value=1.0,
             type="gauge",
         )
