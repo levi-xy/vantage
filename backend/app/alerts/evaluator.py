@@ -436,8 +436,9 @@ class AlertEvaluator:
         now = self._clock()
         if self._started_at is None:
             self._started_at = now
-        probe_ok = await self._probe()
-        self.monitor.record_probe(probe_ok, now)
+        probe_failure = await self._probe()
+        probe_ok = probe_failure is None
+        self.monitor.record_probe(probe_ok, now, probe_failure)
         if not probe_ok:
             # Prometheus is unreachable: no state changes, pending timers pause.
             obs = sm.Observation(now=now, probe_ok=False)
@@ -632,14 +633,17 @@ class AlertEvaluator:
             self.monitor.progress(self._clock())
             return result
 
-    async def _probe(self) -> bool:
+    async def _probe(self) -> str | None:
+        """None when Prometheus answers; otherwise why not (`UnreachableReason`). An error
+        without a transport cause (Prometheus answered, but not as a working API) is a
+        server error: ``vector(1)`` is never refused for its own sake."""
         try:
             await self._prometheus().query(QueryRequest(query=PROBE_QUERY))
-        except QueryError:
+        except QueryError as exc:
             self.monitor.progress(self._clock())
-            return False
+            return exc.unreachable or "server_error"
         self.monitor.progress(self._clock())
-        return True
+        return None
 
     async def _fleet(self) -> _Fleet | None:
         """Every device's last observation; None when either query fails (sources are then

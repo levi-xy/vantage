@@ -82,6 +82,16 @@ export type SystemAlertKind =
   | "key_mismatch"
   | (string & {});
 
+/** Why Prometheus can't be reached (`delivery-status`). Later versions may add reasons. */
+export type PrometheusUnreachableReason =
+  | "name_not_found"
+  | "address_refused"
+  | "connection_refused"
+  | "timeout"
+  | "server_error"
+  | "connection_failed"
+  | (string & {});
+
 export type AlertEndReason =
   "recovered" | "rule_disabled" | "rule_deleted" | "rule_changed" | "closed_by_user";
 
@@ -137,7 +147,12 @@ export interface AlertDelivery {
 export interface DeliveryStatusSummary {
   stuck: number;
   /** Firing system alerts, oldest first. */
-  system_alerts?: { system_kind: SystemAlertKind; since: string }[];
+  system_alerts?: {
+    system_kind: SystemAlertKind;
+    since: string;
+    /** prometheus_unreachable only: why the probe fails. Null when not known. */
+    reason?: PrometheusUnreachableReason | null;
+  }[];
 }
 
 export interface AlertEventQuery {

@@ -119,6 +119,21 @@ describe("health level", () => {
     expect(level({ delivery: undefined, deliveryFailed: true })).toBe("warning");
   });
 
+  it("gives the cause of an unreachable Prometheus as the issue's detail", () => {
+    const since = "2026-11-02T13:00:00Z";
+    const issue = (reason: string | null) =>
+      health({
+        delivery: {
+          stuck: 0,
+          system_alerts: [{ system_kind: "prometheus_unreachable", since, reason }],
+        },
+      }).issues.find((i) => i.tag === "SYSTEM");
+    expect(issue("name_not_found")?.detail).toMatch(/doesn't resolve/);
+    expect(issue("connection_refused")?.detail).toMatch(/docker compose ps/);
+    expect(issue(null)?.detail).toBe("");
+    expect(issue("a_reason_from_a_newer_backend")?.detail).toBe("");
+  });
+
   it("claims nothing until devices, alerts and delivery status have answered", () => {
     expect(health({ alerts: undefined }).known).toBe(false);
     expect(health({ delivery: undefined })).toMatchObject({ level: "healthy", known: false });

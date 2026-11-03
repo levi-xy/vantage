@@ -66,6 +66,27 @@ export function systemAlertText(kind: string): string {
   return SYSTEM_ALERT_TEXT[kind] ?? `System alert: ${kind.replace(/_/g, " ")}.`;
 }
 
+// Why Prometheus can't be reached, and what to do about it. The address itself isn't sent
+// to the browser, so the text names the setting instead.
+const UNREACHABLE_CAUSE: Record<string, string> = {
+  name_not_found:
+    "Its host name doesn't resolve. Is the Prometheus container running? Outside Docker Compose, set VANTAGE_PROMETHEUS_URL to its address.",
+  address_refused:
+    "The network guard refuses its address (loopback and similar addresses are never allowed). Set VANTAGE_PROMETHEUS_URL to a private address, such as the default http://prometheus:9090.",
+  connection_refused:
+    "Nothing answers at its address. Check that Prometheus is running: docker compose ps.",
+  timeout: "It doesn't answer in time; it may be starting up or overloaded.",
+  server_error: "It answers with an error. Check its log: docker compose logs prometheus.",
+  connection_failed:
+    "The connection fails (TLS or reset). Check VANTAGE_PROMETHEUS_URL and the Prometheus log.",
+};
+
+/** The cause and fix for a system alert, "" when there is none to tell. */
+export function systemAlertCause(kind: string, reason: string | null | undefined): string {
+  if (kind !== "prometheus_unreachable" || !reason) return "";
+  return UNREACHABLE_CAUSE[reason] ?? "";
+}
+
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 function parseTime(iso: string | null | undefined): number | null {
@@ -122,7 +143,7 @@ export function computeHealth(input: HealthInput): Health {
       level: CRITICAL_SYSTEM_ALERTS.has(s.system_kind) ? "critical" : "warning",
       tag: "SYSTEM",
       title: systemAlertText(s.system_kind),
-      detail: "",
+      detail: systemAlertCause(s.system_kind, s.reason),
       since: parseTime(s.since),
       href: "/alerts",
     });

@@ -571,7 +571,13 @@ The backend reaches the bundled Prometheus at `VANTAGE_PROMETHEUS_URL` (default
 `http://prometheus:9090`, the compose network) through `net_guard` with the default
 policy, like every outbound connection. The compose network is RFC 1918, so the guard
 allows it; a URL the guard refuses (loopback, for example) makes every query answer 503
-`metrics backend refused by the network guard`, and the guard's reason is logged. On
+`metrics backend refused by the network guard`, and the guard's reason is logged. Running
+the backend outside Compose, the default name `prometheus` doesn't resolve: point
+`VANTAGE_PROMETHEUS_URL` at a private (RFC 1918) address of your Prometheus, never
+`localhost`. When the probe fails, the "Prometheus is unreachable" banner names the cause
+from a fixed list (name not found, address refused by the guard, connection refused,
+timeout, server error, connection failed) and how to fix it; the address itself never
+reaches the browser. On
 top of the guard, the URL comes only from server config (an `http`/`https` URL without
 credentials, checked at startup), the API paths are fixed, a request supplies only the
 PromQL text and numbers (sent as form fields), redirects aren't followed and proxy

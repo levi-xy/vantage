@@ -279,6 +279,30 @@ describe("alerts page: events and rules", () => {
     expect(screen.queryByText(/alert notifications have failed/)).toBeNull();
   });
 
+  it("says why Prometheus is unreachable and how to fix it", async () => {
+    const backend = fakeBackend({
+      session: exampleMe("viewer"),
+      routes: {
+        "GET /alerts/delivery-status": () =>
+          json({
+            stuck: 0,
+            system_alerts: [
+              {
+                system_kind: "prometheus_unreachable",
+                since: "2026-10-30T10:00:00Z",
+                reason: "address_refused",
+              },
+            ],
+          }),
+      },
+    });
+    renderApp("/", backend);
+    const banner = await screen.findByRole("alert");
+    expect(banner).toHaveTextContent("Prometheus is unreachable");
+    expect(banner).toHaveTextContent("The network guard refuses its address");
+    expect(banner).toHaveTextContent("VANTAGE_PROMETHEUS_URL");
+  });
+
   it("shows a NO DATA alert with its reason in plain words, closable by an admin", async () => {
     const noData = {
       ...FIRING_EVENT,
