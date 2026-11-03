@@ -137,43 +137,10 @@ export function useLastDataUpdate(queryClient: QueryClient): number | null {
 /** How often the app refreshes its data: the cards' instant queries and the alert count. */
 export const REFRESH_MS = INSTANT_REFETCH_MS;
 
-export type LiveTone = "connecting" | "live" | "stale" | "offline";
-
-export interface LiveStatus {
-  tone: LiveTone;
-  label: string;
-  /** How far the ring is filled, 0 to 1: the time since the last update over the interval. */
-  progress: number;
-}
-
 const pad = (n: number) => String(n).padStart(2, "0");
 
 /** HH:MM:SS, 24-hour, local time. */
 export function clockTime(at: number): string {
   const d = new Date(at);
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-
-/**
- * What the indicator shows. Offline while `/ws` is down; stale when no data arrived for
- * more than two refresh intervals; live otherwise.
- */
-export function liveStatus(
-  connection: LiveState,
-  lastUpdate: number | null,
-  now: number,
-  intervalMs: number = REFRESH_MS,
-): LiveStatus {
-  if (connection === "reconnecting") return { tone: "offline", label: "Offline", progress: 0 };
-  if (connection === "connecting") return { tone: "connecting", label: "Connecting", progress: 0 };
-  if (lastUpdate === null) return { tone: "live", label: "Live", progress: 0 };
-  const age = Math.max(0, now - lastUpdate);
-  if (age > 2 * intervalMs) {
-    return { tone: "stale", label: `Stale · ${clockTime(lastUpdate)}`, progress: 1 };
-  }
-  return {
-    tone: "live",
-    label: `Live · ${clockTime(lastUpdate)}`,
-    progress: Math.min(1, age / intervalMs),
-  };
 }

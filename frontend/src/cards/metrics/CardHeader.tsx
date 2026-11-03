@@ -2,7 +2,7 @@
 // ("pfSense · up 7h 50m" or "pfSense · no data since 14:02") and a plain-text state on the
 // right. Healthy is muted text; only a problem uses the critical colour. The collector's
 // full error is never printed here (it would overflow small cards): it is the state's
-// tooltip, and the problems strip and the Devices page show it in full.
+// tooltip, and the health popover and the Devices page show it in full.
 
 import { useEffect, useState } from "react";
 import type { Instance } from "../../api";

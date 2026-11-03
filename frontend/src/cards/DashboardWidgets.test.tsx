@@ -3,7 +3,7 @@ import { exampleMe, fakeBackend, json, mockSystemTheme, renderApp } from "../tes
 import { exampleInstance, INSTANCE_ID } from "../pages/devices/testFixtures";
 import type { AlertEvent, Instance } from "../api";
 import { hasWanSource, healthCounts, wanSummary, withoutFreshData } from "./overview";
-import { ageText, clockTime, findProblems, problemSubline, sinceText } from "./problems";
+import { ageText, findProblems, sinceText } from "./problems";
 
 beforeEach(() => mockSystemTheme(false));
 
@@ -88,23 +88,19 @@ describe("problems", () => {
       }),
       event({ id: 3, rule_name: "Ping loss", started_at: "2026-01-02T03:05:00Z" }),
     ];
-    const problems = findProblems([down, other], events, (i) => i.status.state, now);
-    expect(problems.map((p) => [p.tag, p.title, p.detail, p.href])).toEqual([
-      ["FIRING", "Ping loss", "x", "/alerts"],
-      ["DOWN", "router-1 is down", "no answer to SNMP · 1 open alert", "/devices"],
-      ["NO DATA", "Disk full", "device not reporting · nas-2", "/alerts"],
+    const problems = findProblems([down, other], events, (i) => i.status.state);
+    expect(problems.map((p) => [p.tag, p.title, p.detail, p.href, p.critical])).toEqual([
+      ["FIRING", "Ping loss", "x", "/alerts", false],
+      ["DOWN", "router-1 is down", "no answer to SNMP · 1 open alert", "/devices", true],
+      ["NO DATA", "Disk full", "device not reporting · nas-2", "/alerts", false],
     ]);
     expect(sinceText(problems[1]?.since ?? null, now)).toMatch(/^since \d\d:\d\d · 20 min$/);
-    const started = clockTime(Date.parse("2026-01-02T03:05:00Z"), now);
-    expect(problemSubline(problems)).toBe(
-      `Ping loss firing since ${started}. 1 other device down.`,
-    );
     expect(ageText(125 * 60_000)).toBe("2 h 5 min");
   });
 });
 
-describe("dashboard headline and summary tiles", () => {
-  it("shows the problems strip and the tiles, with WAN from a fleet query", async () => {
+describe("dashboard summary tiles", () => {
+  it("shows the tiles, with WAN from a fleet query", async () => {
     const backend = fakeBackend({
       session: exampleMe("admin"),
       routes: {
@@ -133,16 +129,7 @@ describe("dashboard headline and summary tiles", () => {
       },
     });
     renderApp("/", backend);
-    expect(await screen.findByRole("heading", { level: 2, name: "1 problem" })).toBeInTheDocument();
-    const strip = screen.getByRole("region", { name: "Active problems" });
-    expect(within(strip).getByText("FIRING")).toBeInTheDocument();
-    expect(within(strip).getByText("High CPU")).toBeInTheDocument();
-    expect(within(strip).getByRole("link", { name: "Open High CPU" })).toHaveAttribute(
-      "href",
-      "/alerts",
-    );
-
-    const internet = screen.getByRole("group", { name: "Internet" });
+    const internet = await screen.findByRole("group", { name: "Internet" });
     expect(await within(internet).findByText("1/2")).toBeInTheDocument();
     // The down gateway is the one named.
     expect(within(internet).getByText("192.0.2.2 · 100% loss")).toBeInTheDocument();
@@ -155,54 +142,4 @@ describe("dashboard headline and summary tiles", () => {
     expect(within(devices).getByText("1 device without fresh data")).toBeInTheDocument();
     expect(screen.getByText("No port chosen.")).toBeInTheDocument();
   });
-
-  it("says all systems normal when nothing is wrong", async () => {
-    const checked = new Date(Date.now() - 5_000).toISOString();
-    const backend = fakeBackend({
-      session: exampleMe("viewer"),
-      routes: {
-        "GET /instances": () =>
-          json([
-            exampleInstance({
-              status: { state: "up", checked_at: checked, last_success_at: checked, error: null },
-            }),
-          ]),
-      },
-    });
-    renderApp("/", backend);
-    expect(
-      await screen.findByRole("heading", { level: 2, name: "All systems normal" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/^1 device up · no active alerts · checked \d+ s ago$/),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Active problems" })).not.toBeInTheDocument();
-  });
-
-  it("doesn't call scrape-only devices fine when Prometheus can't be reached", async () => {
-    const backend = fakeBackend({
-      session: exampleMe("viewer"),
-      routes: {
-        "GET /instances": () =>
-          json([
-            exampleInstance({
-              type_id: "pfsense",
-              status: { state: "unknown", checked_at: null, last_success_at: null, error: null },
-            }),
-          ]),
-        "POST /query": () => json({ detail: "Prometheus is unreachable" }, 502),
-      },
-    });
-    renderApp("/", backend);
-    expect(
-      // After the client's two retries of a 5xx.
-      await screen.findByRole(
-        "heading",
-        { level: 2, name: "Status unknown for 1 device" },
-        { timeout: 6_000 },
-      ),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/^Prometheus can't be reached · 0 devices up · /)).toBeInTheDocument();
-    expect(screen.queryByText("All systems normal")).not.toBeInTheDocument();
-  }, 10_000);
 });

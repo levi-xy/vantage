@@ -53,7 +53,7 @@ describe("live updates", () => {
     const ws = sock(0);
     expect(ws.url).toMatch(/^wss?:\/\/.+\/api\/v1\/ws$/);
     act(() => ws.open());
-    expect(screen.getByText(/^Live/)).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /^Health: Healthy\b/ })).toBeInTheDocument();
 
     act(() =>
       ws.push({
@@ -76,7 +76,7 @@ describe("live updates", () => {
       await screen.findByText("nas-1");
       act(() => sock(0).open());
       act(() => sock(0).drop());
-      expect(screen.getByText("Offline")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^Health: Warning\b/ })).toBeInTheDocument();
       await act(() => vi.advanceTimersByTimeAsync(1_000));
       expect(FakeWebSocket.instances).toHaveLength(2);
       act(() => sock(1).drop());
