@@ -1,21 +1,19 @@
-import { fireEvent, screen, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import { ApiClient } from "../../api";
+import type { CardProps } from "../registry";
 import { renderCard, testInstance, vector } from "../testRender";
 import { interfaceRows } from "../pfsense-interfaces/interfaceRows";
 import { PfsenseInterfacesCard } from "../pfsense-interfaces/PfsenseInterfacesCard";
 import { PfsenseOverviewCard } from "../pfsense-overview/PfsenseOverviewCard";
-import { PfsenseGatewaysCard } from "./PfsenseGatewaysCard";
+import { PfsenseGatewaysCard, PfsenseGatewaysSettings } from "./PfsenseGatewaysCard";
+import { interfacesFromSettings, settingsWithInterfaces } from "./picked";
 
 const client = new ApiClient({ fetch: vi.fn() });
 vi.mock("../../app/session", () => ({ useApiClient: () => client }));
 
 function answer(query: string) {
-  if (query.includes("ping_percent_packet_loss"))
-    return vector([
-      [{ url: "192.0.2.10" }, "0"],
-      [{ url: "192.0.2.254" }, "100"],
-    ]);
-  if (query.includes("ping_average_response_ms")) return vector([[{ url: "192.0.2.10" }, "0.564"]]);
   if (query.includes("cpu_usage_idle")) return vector([[{}, "87.5"]]);
   if (query.includes("mem_used_percent")) return vector([[{}, "33.7"]]);
   if (query.includes("pf_entries")) return vector([[{}, "13"]]);
@@ -105,25 +103,108 @@ describe("pfSense cards", () => {
     ]);
   });
 
-  it("gateways: friendly names, loss decides down, healthy rows plain", async () => {
-    const instance = { ...pfsense, config: { gateway_names: ["192.0.2.10=WAN_DHCP"] } };
-    renderCard(client, PfsenseGatewaysCard, answer, instance);
-    expect(await screen.findByText("WAN_DHCP")).toBeInTheDocument();
-    expect(screen.getByText("192.0.2.10")).toBeInTheDocument(); // the address, small
-    expect(screen.getByText("192.0.2.254")).toBeInTheDocument(); // no name: the address
-    const healthy = screen.getByText(/0\.6 ms · 0\.0% loss/);
+  it("gateways: one row per picked interface, NO DATA when its counters are gone", async () => {
+    const instance = { ...pfsense, config: { interface_names: ["vtnet0=WAN"] } };
+    // vtnet9 was picked but isn't in the latest scrape.
+    const settings = { interface1: "vtnet0", interface2: "vtnet9", interface3: "vtnet3" };
+    renderCard(client, PfsenseGatewaysCard, answer, instance, { settings });
+    const list = await screen.findByRole("list", { name: "Gateways" });
+    const rows = within(list).getAllByRole("listitem");
+    expect(rows.map((li) => li.firstChild?.textContent)).toEqual(["WAN", "vtnet9", "vtnet3"]);
+    expect(within(rows[0] as HTMLElement).getByText("vtnet0")).toBeInTheDocument(); // OS name
+    const healthy = within(rows[0] as HTMLElement).getByText(/Mbit\/s/);
+    expect(healthy).toHaveTextContent(/↓1(\.0)? Mbit\/s ↑2(\.0)? kbit\/s/);
     expect(healthy.className).toContain("text-muted");
     expect(healthy.className).not.toMatch(/emerald|crit/);
-    expect(screen.getByText(/no reply · 100% loss/).className).toContain("text-crit-text");
-    expect(screen.queryByText("up")).not.toBeInTheDocument(); // no badges
+    expect(within(rows[1] as HTMLElement).getByText("NO DATA").className).toContain(
+      "text-crit-text",
+    );
+    expect(within(rows[2] as HTMLElement).queryByText("NO DATA")).not.toBeInTheDocument();
+    expect(screen.queryByText("vtnet4")).not.toBeInTheDocument(); // not picked
   });
 
-  it("small gateways: the worst one, in red", async () => {
-    renderCard(client, PfsenseGatewaysCard, answer, pfsense, { tier: "small" });
-    const worst = await screen.findByRole("group", { name: "Worst gateway: 192.0.2.254" });
-    expect(worst).toHaveTextContent("no reply · 100%");
-    expect(worst.className).toContain("text-crit-text");
+  it("gateways: every row NO DATA when the device's data is stale", async () => {
+    const old = new Date(Date.now() - 3600_000).toISOString();
+    const instance = { ...pfsense, status: { ...pfsense.status, last_success_at: old } };
+    renderCard(client, PfsenseGatewaysCard, answer, instance, {
+      cached: true,
+      settings: { interface1: "vtnet0", interface2: "vtnet3" },
+    });
+    const list = await screen.findByRole("list", { name: "Gateways" });
+    await waitFor(() => expect(within(list).getAllByText("NO DATA")).toHaveLength(2));
+    expect(within(list).queryByText(/bit\/s/)).not.toBeInTheDocument(); // no past rates
+  });
+
+  it("gateways: asks to pick interfaces when none are chosen", async () => {
+    renderCard(client, PfsenseGatewaysCard, answer, pfsense);
+    expect(await screen.findByText("No interfaces chosen.")).toBeInTheDocument();
+    expect(screen.getByText("Edit dashboard, then ⚙ on this card.")).toBeInTheDocument();
+  });
+
+  it("small gateways: the first picked one, or the one without data", async () => {
+    const settings = { interface1: "vtnet3", interface2: "vtnet0" };
+    renderCard(client, PfsenseGatewaysCard, answer, pfsense, { tier: "small", settings });
+    expect(await screen.findByRole("group", { name: "vtnet3: in and out" })).toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Gateways" })).not.toBeInTheDocument();
+    cleanup();
+
+    renderCard(client, PfsenseGatewaysCard, answer, pfsense, {
+      tier: "small",
+      settings: { interface1: "vtnet3", interface2: "vtnet9" },
+    });
+    const worst = await screen.findByRole("group", { name: "vtnet9: no data" });
+    expect(worst).toHaveTextContent("NO DATA");
+    expect(worst.className).toContain("text-crit-text");
+  });
+
+  it("medium gateways: problems first, then as picked", async () => {
+    const settings = { interface1: "vtnet0", interface2: "vtnet3", interface3: "vtnet9" };
+    renderCard(client, PfsenseGatewaysCard, answer, pfsense, { tier: "medium", settings });
+    const list = await screen.findByRole("list", { name: "Gateways" });
+    expect(
+      within(list)
+        .getAllByRole("listitem")
+        .map((li) => li.firstChild?.textContent),
+    ).toEqual(["vtnet9", "vtnet0", "vtnet3"]);
+  });
+
+  it("gateways settings: picks interfaces by name, at most 8, and unpicks", async () => {
+    const instance = {
+      ...pfsense,
+      config: { interface_names: ["vtnet0=WAN"], hidden_interfaces: ["vtnet2"] },
+    };
+    const changes: Record<string, unknown>[] = [];
+    function Harness() {
+      const [settings, setSettings] = useState<CardProps["settings"]>({ other: 1 });
+      return (
+        <PfsenseGatewaysSettings
+          instanceId="inst-1"
+          instance={instance}
+          settings={settings}
+          onChange={(s) => {
+            changes.push(s);
+            setSettings(s);
+          }}
+        />
+      );
+    }
+    vi.spyOn(client, "query").mockImplementation(async (req) => answer(req.query));
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <Harness />
+      </QueryClientProvider>,
+    );
+    const wan = await screen.findByRole("checkbox", { name: "WAN (vtnet0)" });
+    expect(screen.queryByRole("checkbox", { name: /vtnet2/ })).not.toBeInTheDocument(); // hidden
+    fireEvent.click(screen.getByRole("checkbox", { name: "vtnet3" }));
+    fireEvent.click(wan);
+    expect(changes.at(-1)).toEqual({ other: 1, interface1: "vtnet3", interface2: "vtnet0" });
+    expect(interfacesFromSettings(changes.at(-1) ?? {})).toEqual(["vtnet3", "vtnet0"]);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "vtnet3" }));
+    expect(changes.at(-1)).toEqual({ other: 1, interface1: "vtnet0" });
+    const nine = Array.from({ length: 9 }, (_, i) => `if${i}`);
+    expect(interfacesFromSettings(settingsWithInterfaces({}, nine))).toHaveLength(8);
   });
 
   it("medium interfaces: the top 3, no bars or show all", async () => {
@@ -133,10 +214,5 @@ describe("pfSense cards", () => {
     expect(within(list).getAllByRole("listitem")).toHaveLength(3);
     expect(within(list).getAllByRole("listitem")[0]).toHaveTextContent("WAN");
     expect(screen.queryByRole("button", { name: /Show all/ })).not.toBeInTheDocument();
-  });
-
-  it("say so when there is no data", async () => {
-    renderCard(client, PfsenseGatewaysCard, () => vector([]));
-    expect(await screen.findByText(/No gateway ping data/)).toBeInTheDocument();
   });
 });

@@ -13,6 +13,7 @@ import {
   LAYOUT_VERSION,
   prepareLayout,
 } from "../cards/layout";
+import { cardSettingsEditor } from "../cards/registry";
 import { cardFullSize, widget, WIDGETS } from "../cards/widgets";
 import type { AvailableCard } from "../cards/layout";
 import { EmptyState, PageHeader } from "../components/PageHeader";
@@ -120,32 +121,64 @@ function AddCardPanel({
   );
 }
 
+/** A device card's settings editor (the pfSense Gateways card's interfaces), or null. */
+function deviceCardEditor(
+  card: CardPlacement,
+  instanceId: string,
+  instances: Instance[],
+  onChange: (settings: CardPlacement["settings"]) => void,
+) {
+  const Editor = cardSettingsEditor(card.card_type);
+  if (!Editor) return null;
+  return (
+    <Editor
+      instanceId={instanceId}
+      instance={instances.find((i) => i.id === instanceId)}
+      settings={card.settings}
+      onChange={onChange}
+    />
+  );
+}
+
 function CardSettingsPanel({
   card,
   instances,
+  titles,
   onChange,
   onClose,
 }: {
   card: CardPlacement | undefined;
   instances: Instance[];
+  titles: ReadonlyMap<string, string>;
   onChange: (settings: CardPlacement["settings"]) => void;
   onClose: () => void;
 }) {
-  const spec = card && card.instance_id === null ? widget(card.card_type) : undefined;
-  const Editor = spec?.settingsEditor;
-  if (!card || !spec || !Editor) return null;
+  if (!card) return null;
+  let title: string;
+  let editor;
+  if (card.instance_id === null) {
+    const spec = widget(card.card_type);
+    const Editor = spec?.settingsEditor;
+    if (!spec || !Editor) return null;
+    title = spec.title;
+    editor = <Editor instances={instances} settings={card.settings} onChange={onChange} />;
+  } else {
+    editor = deviceCardEditor(card, card.instance_id, instances, onChange);
+    if (!editor) return null;
+    title = titles.get(cardKey(card)) ?? card.card_type;
+  }
   return (
     <section
-      aria-label={`${spec.title} settings`}
+      aria-label={`${title} settings`}
       className="mb-4 flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"
     >
       <div className="flex items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold">{spec.title} settings</h2>
+        <h2 className="text-sm font-semibold">{title} settings</h2>
         <button type="button" className={buttonSecondary} onClick={onClose}>
           Close
         </button>
       </div>
-      <Editor instances={instances} settings={card.settings} onChange={onChange} />
+      {editor}
     </section>
   );
 }
@@ -352,6 +385,7 @@ function DashboardView({
         <CardSettingsPanel
           card={draft.find((c) => cardKey(c) === configuring)}
           instances={instanceList}
+          titles={titles}
           onChange={(settings) =>
             setDraft(draft.map((c) => (cardKey(c) === configuring ? { ...c, settings } : c)))
           }

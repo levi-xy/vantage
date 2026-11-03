@@ -35,7 +35,11 @@ export function renderCard(
   Card: ComponentType<CardProps>,
   answer: (query: string, request: QueryRequest) => QueryResult,
   instance: Instance = testInstance,
-  { cached = false, tier = "full" }: { cached?: boolean; tier?: CardTier } = {},
+  {
+    cached = false,
+    tier = "full",
+    settings = {},
+  }: { cached?: boolean; tier?: CardTier; settings?: CardProps["settings"] } = {},
 ) {
   const fetchMock = vi.fn<typeof fetch>(async (_url, init) => {
     const request = JSON.parse(String(init?.body)) as QueryRequest;
@@ -49,7 +53,7 @@ export function renderCard(
   render(
     <QueryClientProvider client={queryClient}>
       <CardTierContext.Provider value={{ tier }}>
-        <Card instanceId="inst-1" settings={{}} title="Card" instance={instance} />
+        <Card instanceId="inst-1" settings={settings} title="Card" instance={instance} />
       </CardTierContext.Provider>
     </QueryClientProvider>,
   );
