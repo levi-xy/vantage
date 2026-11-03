@@ -43,7 +43,7 @@ function sfpNumber(id: string): number | undefined {
  *
  * A cage is known by its name or a 10G speed, but an empty cage (no module, no link) may
  * report neither. The cages sit at the end of the panel, so when the first known cage is
- * among the last 8 ports, every port after it is a cage too (SwOS: port25-28 with only
+ * among the last 8 ports, every port after it with the same kind of id is a cage too (SwOS: port25-28 with only
  * some of them linked).
  *
  * Cages are numbered on their own (SFP+ 1-4, not the ifIndex 25-28): by the number in an
@@ -54,8 +54,13 @@ export function faceplate<T extends Pick<Port, "id" | "speed">>(
   ports: T[],
 ): { copper: Placed<T>[][]; sfp: Placed<T>[] } {
   const first = ports.findIndex(isSfp);
-  const trailing = first >= 0 && ports.length - first <= BLOCK_SIZE;
-  const cage = (p: T, i: number) => (trailing ? i >= first : isSfp(p));
+  const trailing = first > 0 && ports.length - first <= BLOCK_SIZE;
+  // Only ports named like that cage (port25 -> port26) follow it into the SFP block, so a
+  // bridge, VLAN or copper port listed after the cages stays out.
+  const shape = (id: string) => id.replace(/\d+/g, "#");
+  const cageShape = first >= 0 ? shape(ports[first]?.id ?? "") : "";
+  const cage = (p: T, i: number) =>
+    isSfp(p) || (trailing && i > first && shape(p.id) === cageShape);
   const cages = ports.filter(cage);
   const numbers = cages.map((p) => sfpNumber(p.id));
   const byId = numbers.every((n) => n !== undefined) && new Set(numbers).size === numbers.length;

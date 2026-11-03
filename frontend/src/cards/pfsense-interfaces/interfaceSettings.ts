@@ -22,7 +22,7 @@ function displayNames(instance: Instance | undefined, key: string): (id: string)
 /**
  * The interface descriptions set on pfSense itself (WAN, LAN, IoT), from the optional
  * `pfsense_interface_info{interface, descr}` series a small script on pfSense feeds to
- * Telegraf (docs/INTEGRATIONS.md). Missing when the script isn't installed.
+ * Telegraf (docs/integrations/pfsense.md). Missing when the script isn't installed.
  */
 export const IF_INFO_METRIC = "pfsense_interface_info";
 

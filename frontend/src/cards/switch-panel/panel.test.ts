@@ -76,4 +76,22 @@ describe("switch front panel", () => {
     expect(sfp.map((p) => p.port.id)).toEqual(["port1"]);
     expect(copper.flat()).toHaveLength(19);
   });
+
+  it("keeps bridges and copper listed after the cages out of the SFP block", () => {
+    const after = [
+      ...Array.from({ length: 24 }, (_, i) => ({ id: `ether${i + 1}` })),
+      { id: "sfp-sfpplus1" },
+      { id: "sfp-sfpplus2" },
+      { id: "bridge1" },
+      { id: "vlan10" },
+    ];
+    expect(faceplate(after).sfp.map((p) => p.port.id)).toEqual(["sfp-sfpplus1", "sfp-sfpplus2"]);
+    const first = [
+      { id: "sfp1" },
+      ...Array.from({ length: 7 }, (_, i) => ({ id: `ether${i + 1}` })),
+    ];
+    const { copper, sfp } = faceplate(first);
+    expect(sfp.map((p) => p.port.id)).toEqual(["sfp1"]);
+    expect(copper.flat()).toHaveLength(7);
+  });
 });

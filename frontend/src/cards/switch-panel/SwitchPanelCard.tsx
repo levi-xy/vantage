@@ -77,7 +77,7 @@ export function SwitchPanelCard({ instanceId, title, instance }: CardProps) {
     );
   }
 
-  const tile = ({ port, column, row, cage: number }: Placed<Port>, cage: boolean) => {
+  const tile = ({ port, column, row, cage: number }: Placed<Port>, isCage: boolean) => {
     const on = selected === port.index;
     const notch = (
       <span
@@ -95,14 +95,14 @@ export function SwitchPanelCard({ instanceId, title, instance }: CardProps) {
         title={describe(port, formatRate)}
         onClick={() => setSelected(on ? null : port.index)}
         className={`flex h-8 flex-col items-center border-[1.5px] text-[11px] tabular-nums ${TILE[port.state]} ${
-          cage
+          isCage
             ? "w-[42px] justify-center rounded-[3px]"
             : `w-[34px] justify-between rounded ${row === 1 ? "pt-0.5" : "pb-0.5"}`
         } ${on ? "outline-2 outline-offset-2 outline-in" : ""}`}
       >
-        {!cage && row === 2 && notch}
+        {!isCage && row === 2 && notch}
         <span>{number ?? port.index}</span>
-        {!cage && row === 1 && notch}
+        {!isCage && row === 1 && notch}
       </button>
     );
   };
