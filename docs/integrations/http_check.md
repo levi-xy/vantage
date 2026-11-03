@@ -9,7 +9,9 @@
 - `verify_tls` defaults to on; turn it off only for a self-signed certificate.
 - `timeout_seconds` bounds the whole request and is capped at the guarded client's 15 s.
 
-**Secrets:** `bearer_token` (optional), sent as `Authorization: Bearer` to the configured URL only.
+**Secrets:** `bearer_token` (optional), sent as `Authorization: Bearer` to the configured URL only, and only to an `https://` URL: a token with an `http://` URL is refused on save, because it would cross the network readable.
+
+**Upgrading (v0.1, M8.3):** an existing check saved with an `http://` URL **and** a bearer token stops working after the upgrade, on purpose: the token is no longer sent in cleartext. The device goes `down` with the error "a bearer token is only sent to an https:// URL: change the URL to https:// or remove the token", and **Test** and **Save** in its edit form show the same reason. Fix it in the edit form: change the URL to `https://` (turn off `verify_tls` only for a self-signed certificate), or clear the token if the endpoint doesn't need it. The token itself is never shown.
 
 **Metrics** (gauges, constants `METRIC_*` in the source): `vantage_http_check_success`, `vantage_http_check_status_code`, `vantage_http_check_duration_seconds` (time to the response headers).
 

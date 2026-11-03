@@ -23,7 +23,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 import httpx
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel, SecretStr, ValidationError
 
 from app.core.audit import secret_fields
 from app.core.crypto import SecretBox, row_context
@@ -31,6 +31,22 @@ from app.core.net_guard import NetGuard, NetGuardError, NetPolicy
 from app.integrations.base import InstanceContext, Integration
 
 INSTANCES_TABLE = "instances"
+
+# Error type of a schema check whose message is fixed, secret-free text telling the admin
+# how to fix a stored config (raise ``PydanticCustomError(CONFIG_HINT, message)``). Only
+# such messages are shown for a stored config that no longer validates; any other error
+# could echo a stored value.
+CONFIG_HINT = "vantage_config_hint"
+INVALID_STORED_CONFIG = "stored config is not valid for this integration"
+
+
+def stored_config_error(exc: ValidationError) -> str:
+    """Why a stored config no longer validates: a config hint's fixed text, else generic."""
+    for err in exc.errors(include_url=False, include_input=False, include_context=False):
+        if err.get("type") == CONFIG_HINT and err.get("msg"):
+            return str(err["msg"])
+    return INVALID_STORED_CONFIG
+
 
 # Builds the SSRF guard for one integration. Tests inject one with a fake resolver.
 NetGuardFactory = Callable[[type[Integration]], NetGuard]

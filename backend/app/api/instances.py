@@ -532,10 +532,13 @@ async def test_instance(
     stored = {**row.config, **_stored_secrets(box, row)}
     try:
         model = cls.config_schema.model_validate(stored)
-    except ValidationError:
+    except ValidationError as exc:
+        hint = ic.stored_config_error(exc)
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            "the stored config no longer matches the integration's schema; edit the instance",
+            hint
+            if hint != ic.INVALID_STORED_CONFIG
+            else "the stored config no longer matches the integration's schema; edit the instance",
         ) from None
     _refuse_empty_secrets(model)  # only rows stored before empty secrets were refused
     return await _run_test(cls, instance_id=row.id, name=row.name, model=model, factory=factory)

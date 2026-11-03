@@ -4,6 +4,7 @@ security assertions: GET only, every request through the guard, the token never 
 No real network: ``fake_net`` keeps the real SSRF guard and fakes only the sockets.
 """
 
+import dataclasses
 import json
 import logging
 import ssl
@@ -16,7 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 from prometheus_client import generate_latest
 from pydantic import ValidationError
-from sqlalchemy import Engine
+from sqlalchemy import Engine, update
 
 from app.collectors.scheduler import PollScheduler, PollSpec
 from app.collectors.store import MetricsStore, make_registry
@@ -26,8 +27,10 @@ from app.core.net_guard import NetGuardError
 from app.integrations import instance_config as ic
 from app.integrations.base import TestResult
 from app.integrations.builtin.http_check import HttpCheck, HttpCheckConfig
+from app.integrations.builtin.http_check.integration import HTTPS_ONLY_HINT
 from app.integrations.registry import Registry
 from app.integrations.schema import config_json_schema
+from app.models import Instance
 from tests.conftest import TEST_MASTER_KEY
 from tests.integrations.netfake import (
     FakeNetwork,
@@ -154,9 +157,8 @@ def test_bearer_token_needs_https() -> None:
     with pytest.raises(ValidationError) as info:
         HttpCheckConfig.model_validate(config(url=plain))
     errors = info.value.errors(include_input=False, include_url=False, include_context=False)
-    assert [e["msg"] for e in errors] == [
-        "Value error, a bearer token is only sent to an https:// URL"
-    ]
+    assert [e["msg"] for e in errors] == [HTTPS_ONLY_HINT]
+    assert "change the URL to https:// or remove the token" in HTTPS_ONLY_HINT
     assert_no_token(json.dumps(errors))
 
 
@@ -464,6 +466,31 @@ async def test_collector_marks_unreachable_check_down(
     assert_no_token(text, status.error, caplog.text)
 
 
+async def test_collector_names_the_fix_for_a_token_over_http(
+    fake_net: FakeNetwork, engine: Engine, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Saved by a version that still allowed a token with an http:// URL: the status says
+    # exactly what to change, without the token, and nothing is sent.
+    caplog.set_level(logging.DEBUG)
+    spec, box = spec_for(config())
+    legacy = dataclasses.replace(spec, config={**spec.config, "url": "http://10.0.0.10/"})
+    store = MetricsStore(down_after_failed_cycles=1)
+    scheduler = PollScheduler(
+        session_factory=make_session_factory(engine),
+        registry=Registry([HttpCheck]),
+        secret_box=box,
+        net_guard_factory=fake_guards,
+        store=store,
+    )
+    store.track(legacy.instance_id, legacy.labels)
+    await scheduler.poll_once(legacy, HttpCheck(), next_start=0.0)
+    status = store.status(legacy.instance_id)
+    assert status is not None and status.state == "down"
+    assert status.error == HTTPS_ONLY_HINT
+    assert fake_net.connects == []
+    assert_no_token(status.error, caplog.text)
+
+
 # --- through the instance API ----------------------------------------------------------
 
 
@@ -512,6 +539,31 @@ def test_api_refuses_url_pointing_at_metadata(admin: TestClient, fake_net: FakeN
     assert r.status_code == 422
     assert fake_net.connects == []
     assert_no_token(r.text)
+
+
+def test_api_names_the_fix_for_a_stored_token_over_http(
+    admin: TestClient, engine: Engine, fake_net: FakeNetwork
+) -> None:
+    created = admin.post("/api/v1/instances", json=instance_body())
+    assert created.status_code == 201, created.text
+    instance_id = created.json()["id"]
+    legacy = {**created.json()["config"], "url": "http://10.0.0.10/health"}
+    with make_session_factory(engine)() as db:  # as stored by an older version
+        db.execute(update(Instance).values(config=legacy))
+        db.commit()
+    tested = admin.post(f"/api/v1/instances/{instance_id}/test")
+    assert tested.status_code == 409
+    assert tested.json()["detail"] == HTTPS_ONLY_HINT
+    # Saving the form unchanged (the token left as is) gives the same reason.
+    saved = admin.patch(f"/api/v1/instances/{instance_id}", json={"config": legacy})
+    assert saved.status_code == 422
+    assert [e["msg"] for e in saved.json()["detail"]] == [HTTPS_ONLY_HINT]
+    # Removing the token fixes it.
+    fixed = admin.patch(
+        f"/api/v1/instances/{instance_id}", json={"config": {**legacy, "bearer_token": None}}
+    )
+    assert fixed.status_code == 200, fixed.text
+    assert_no_token(tested.text, saved.text, fixed.text)
 
 
 def test_api_refuses_url_with_credentials(admin: TestClient) -> None:

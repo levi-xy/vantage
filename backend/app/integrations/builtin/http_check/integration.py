@@ -28,6 +28,7 @@ from typing import ClassVar
 
 import httpx
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
+from pydantic_core import PydanticCustomError
 
 from app.integrations.base import (
     CardSpec,
@@ -44,6 +45,7 @@ from app.integrations.builtin.common import (
     connection_failure,
     host_port,
 )
+from app.integrations.instance_config import CONFIG_HINT
 
 TYPE_ID = "http_check"
 # Metric names: vantage_<type_id>_<metric> (Contract 1).
@@ -54,6 +56,11 @@ METRIC_DURATION = f"vantage_{TYPE_ID}_duration_seconds"
 # The guarded client stops any request after 15 s in total; a longer limit here would
 # never take effect.
 MAX_TIMEOUT_SECONDS = 15
+
+
+HTTPS_ONLY_HINT = (
+    "a bearer token is only sent to an https:// URL: change the URL to https:// or remove the token"
+)
 
 
 class HttpCheckConfig(BaseModel):
@@ -132,8 +139,10 @@ class HttpCheckConfig(BaseModel):
     def _token_needs_https(self) -> "HttpCheckConfig":
         # Over plain HTTP anyone on the path could read the token. The message names the
         # field only, never the token or the URL.
+        # Raised as a config hint: an instance saved before this rule shows the message
+        # as its status error too (app.integrations.instance_config.stored_config_error).
         if self.bearer_token is not None and httpx.URL(self.url).scheme != "https":
-            raise ValueError("a bearer token is only sent to an https:// URL")
+            raise PydanticCustomError(CONFIG_HINT, HTTPS_ONLY_HINT)
         return self
 
     def accepts(self, status: int) -> bool:
