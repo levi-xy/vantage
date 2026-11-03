@@ -948,7 +948,7 @@ async def collect(
         config=stored,
         secrets=ic.encrypt(box, instance_id, secrets),
     )
-    store = MetricsStore()
+    store = MetricsStore(down_after_failed_cycles=1)  # one cycle: these test the error text
     scheduler = PollScheduler(
         session_factory=make_session_factory(engine),
         registry=Registry([SnmpDevice]),
@@ -957,7 +957,7 @@ async def collect(
         store=store,
     )
     store.track(spec.instance_id, spec.labels)
-    await scheduler.poll_once(spec, SnmpDevice())
+    await scheduler.poll_once(spec, SnmpDevice(), next_start=0.0)  # no time left: no retry
     return store, spec
 
 

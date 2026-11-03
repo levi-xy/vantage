@@ -23,16 +23,42 @@ export function scrapeStates(result: QueryResult | undefined): Map<string, State
 const needsScrapeState = (i: Instance | undefined) =>
   i !== undefined && i.enabled && i.status.state === "unknown";
 
+export interface ScrapeStatus {
+  states: Map<string, State>;
+  /** How many of the given instances depend on Prometheus' scrape state. */
+  needed: number;
+  /** Needed, but no answer yet. */
+  pending: boolean;
+  /** Needed, and Prometheus couldn't answer (the states are then unknown). */
+  failed: boolean;
+}
+
 /** One shared query (deduplicated across cards), only run when some instance needs it. */
-export function useScrapeStates(instances: (Instance | undefined)[]): Map<string, State> {
+function useScrapeQuery(needed: number) {
   const client = useApiClient();
-  const query = useQuery<QueryResult>({
+  return useQuery<QueryResult>({
     queryKey: ["query", "fleet", SCRAPE_UP_QUERY],
     queryFn: () => client.query({ query: SCRAPE_UP_QUERY }),
     refetchInterval: REFETCH_MS,
-    enabled: instances.some(needsScrapeState),
+    enabled: needed > 0,
   });
-  return scrapeStates(query.data);
+}
+
+export function useScrapeStates(instances: (Instance | undefined)[]): Map<string, State> {
+  return scrapeStates(useScrapeQuery(instances.filter(needsScrapeState).length).data);
+}
+
+/** For the health status: also says whether Prometheus answered. */
+export function useScrapeStatus(instances: (Instance | undefined)[]): ScrapeStatus {
+  const needed = instances.filter(needsScrapeState).length;
+  const query = useScrapeQuery(needed);
+  return {
+    // A failed refetch keeps the last answer in `data`; it isn't current, so it isn't used.
+    states: query.isError ? new Map() : scrapeStates(query.data),
+    needed,
+    pending: needed > 0 && query.isPending,
+    failed: needed > 0 && query.isError,
+  };
 }
 
 /** The state to show: the backend's, or for an unpolled instance, Prometheus' scrape state. */

@@ -1,5 +1,12 @@
 import { act, fireEvent, screen, within } from "@testing-library/react";
-import { mockSystemTheme, renderApp } from "../test-utils";
+import {
+  exampleMe,
+  fakeBackend,
+  json,
+  mockSystemTheme,
+  openAccountMenu,
+  renderApp,
+} from "../test-utils";
 
 /** Render as a logged-in admin and wait until the session check has finished. */
 async function renderReady(path: string) {
@@ -55,26 +62,45 @@ describe("routing", () => {
 });
 
 describe("layout", () => {
-  it("collapses the menu on phones and closes it after navigating", async () => {
+  it("keeps the admin pages in the account menu, which closes after navigating", async () => {
     await renderReady("/");
-    const nav = screen.getByRole("navigation", { name: "Main" });
-    const button = screen.getByRole("button", { name: "Open menu" });
-    // Hidden below md, always shown from md up.
-    expect(nav).toHaveClass("hidden", "md:block");
+    const button = screen.getByRole("button", { name: "admin (Admin)" });
     expect(button).toHaveAttribute("aria-expanded", "false");
-    expect(button).toHaveClass("md:hidden");
+    expect(screen.queryByRole("navigation", { name: "Account" })).not.toBeInTheDocument();
 
-    fireEvent.click(button);
-    expect(nav).toHaveClass("block");
-    expect(nav).not.toHaveClass("hidden");
-    expect(screen.getByRole("button", { name: "Close menu" })).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
-
-    fireEvent.click(within(nav).getByRole("link", { name: "Audit log" }));
+    const menu = openAccountMenu();
+    expect(button).toHaveAttribute("aria-expanded", "true");
+    expect(within(menu).getByRole("link", { name: "Users" })).toBeInTheDocument();
+    fireEvent.click(within(menu).getByRole("link", { name: "Audit log" }));
     expect(await screen.findByRole("heading", { level: 1, name: "Audit log" })).toBeInTheDocument();
-    expect(nav).toHaveClass("hidden");
+    expect(screen.queryByRole("navigation", { name: "Account" })).not.toBeInTheDocument();
+
+    openAccountMenu();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("navigation", { name: "Account" })).not.toBeInTheDocument();
+  });
+
+  it("swaps the top tabs for a bottom tab bar on phones, More opening the account menu", async () => {
+    await renderReady("/");
+    expect(screen.getByRole("navigation", { name: "Main" })).toHaveClass("hidden", "md:flex");
+    const tabs = screen.getByRole("navigation", { name: "Tabs" });
+    expect(tabs).toHaveClass("md:hidden");
+    expect(within(tabs).getByRole("link", { name: "Dashboard" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    fireEvent.click(within(tabs).getByRole("button", { name: "More" }));
+    expect(screen.getByRole("navigation", { name: "Account" })).toBeInTheDocument();
+  });
+
+  it("badges the Alerts tab with the open alert count", async () => {
+    const backend = fakeBackend({
+      session: exampleMe(),
+      routes: { "GET /alerts/events": () => json([{ id: 1 }, { id: 2 }]) },
+    });
+    renderApp("/account", backend);
+    const nav = await screen.findByRole("navigation", { name: "Main" });
+    expect(await within(nav).findByRole("link", { name: /^Alerts\W+2 open$/ })).toBeInTheDocument();
   });
 });
 

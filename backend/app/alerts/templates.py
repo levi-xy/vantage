@@ -25,7 +25,15 @@ class RuleTemplate(BaseModel):
     severity: Severity
 
 
-_POLLED = ["proxmox", "snmp_device", "mikrotik_swos", "emby", "cloudflare", "http_check"]
+_POLLED = [
+    "proxmox",
+    "snmp_device",
+    "mikrotik_swos",
+    "emby",
+    "cloudflare",
+    "http_check",
+    "ping_check",
+]
 _SCRAPED = ["pfsense", "linux_host", "smart_exporter", "cloudflared"]
 
 
@@ -37,7 +45,10 @@ def _down(type_id: str, scrape_only: bool) -> RuleTemplate:
         description="The instance has not answered for a few minutes.",
         integration_types=[type_id],
         expr=f'{metric}{{vantage_integration="{type_id}"}} == 0',
-        for_seconds=180,
+        # vantage_instance_up only turns 0 after N failed poll cycles in a row
+        # (VANTAGE_DOWN_AFTER_FAILED_CYCLES): the collector has already waited. Prometheus'
+        # own up flips on one failed scrape, so the scrape-only templates still wait 180 s.
+        for_seconds=180 if scrape_only else 0,
         severity="critical",
     )
 
@@ -45,14 +56,17 @@ def _down(type_id: str, scrape_only: bool) -> RuleTemplate:
 TEMPLATES: list[RuleTemplate] = [
     *(_down(t, False) for t in _POLLED),
     *(_down(t, True) for t in _SCRAPED),
+    # A host that answers nothing reports no loss ratio at all (poll() raises NoReply and
+    # vantage_instance_up goes to 0), so "down" is instance-down-ping_check above; this
+    # one catches partial loss. Migration 0005 rewrites rules made from the old ">= 1".
     RuleTemplate(
-        id="ping-check-down",
-        name="ping_check: host not answering",
-        description="Every ping packet was lost.",
+        id="ping-check-loss",
+        name="ping: packet loss above 20% for 5 min",
+        description="More than a fifth of the ping packets are lost.",
         integration_types=["ping_check"],
-        expr='vantage_ping_check_packet_loss_ratio{vantage_integration="ping_check"} >= 1',
-        for_seconds=180,
-        severity="critical",
+        expr='vantage_ping_check_packet_loss_ratio{vantage_integration="ping_check"} > 0.2',
+        for_seconds=300,
+        severity="warning",
     ),
     RuleTemplate(
         id="disk-full-linux-host",

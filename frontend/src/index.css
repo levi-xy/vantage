@@ -2,3 +2,101 @@
 
 /* Dark mode follows the `dark` class that src/app/theme.ts puts on <html>. */
 @custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * The Vantage palette, light and dark. Components use the semantic colours below
+ * (`bg-canvas`, `bg-panel`, `border-line`, `text-ink`, `text-muted`, `text-ok`, ...), which
+ * follow the theme on their own, without a `dark:` variant.
+ */
+:root {
+  --vt-canvas: #f4f6f9;
+  --vt-panel: #ffffff;
+  --vt-inset: #f7f9fb;
+  --vt-line: #e1e6ee;
+  --vt-ink: #0f172a;
+  --vt-muted: #55627a;
+  --vt-chip: #eef2f7;
+  --vt-track: #e8edf3;
+  --vt-in: #1f6feb;
+  --vt-out: #c2620a;
+  --vt-ok: #12a06e;
+  --vt-ok-text: #0b7a54;
+  --vt-crit: #d93f3f;
+  --vt-on-crit: #ffffff;
+  --vt-crit-text: #b42323;
+  --vt-warn: #b7791f;
+  /* The outline of a port with no link or disabled. */
+  --vt-port-off: #a9b4c4;
+}
+
+:root.dark {
+  --vt-canvas: #0a0d12;
+  --vt-panel: #11161d;
+  --vt-inset: #0d1117;
+  --vt-line: #222b37;
+  --vt-ink: #e6ebf2;
+  --vt-muted: #97a3b4;
+  --vt-chip: #1a212b;
+  --vt-track: #1e2733;
+  --vt-in: #4c9eff;
+  --vt-out: #f59e42;
+  --vt-ok: #34d399;
+  --vt-ok-text: #4ade9f;
+  --vt-crit: #f87171;
+  --vt-on-crit: #1a0b0b;
+  --vt-crit-text: #fca5a5;
+  --vt-warn: #fbbf24;
+  --vt-port-off: #4a5566;
+}
+
+@theme inline {
+  --color-canvas: var(--vt-canvas);
+  --color-panel: var(--vt-panel);
+  --color-inset: var(--vt-inset);
+  --color-line: var(--vt-line);
+  --color-ink: var(--vt-ink);
+  --color-muted: var(--vt-muted);
+  --color-chip: var(--vt-chip);
+  --color-track: var(--vt-track);
+  --color-in: var(--vt-in);
+  --color-out: var(--vt-out);
+  --color-ok: var(--vt-ok);
+  --color-ok-text: var(--vt-ok-text);
+  --color-crit: var(--vt-crit);
+  --color-on-crit: var(--vt-on-crit);
+  --color-crit-text: var(--vt-crit-text);
+  --color-warn: var(--vt-warn);
+  --color-port-off: var(--vt-port-off);
+}
+
+@theme {
+  /* Times New Roman everywhere, no web fonts. Code (`font-mono`) keeps a monospace face. */
+  --font-sans: "Times New Roman", Times, serif;
+  --font-serif: "Times New Roman", Times, serif;
+
+  /*
+   * The pages built before the palette use Tailwind's slate scale for surfaces, borders and
+   * text. Its steps are retinted to the palette so those pages match without a rewrite:
+   * 50/white/200/900/500 are the light canvas/panel/border/text/muted, 950/900/800/100/400
+   * the dark ones.
+   */
+  --color-slate-50: #f4f6f9;
+  --color-slate-100: #e6ebf2;
+  --color-slate-200: #e1e6ee;
+  --color-slate-300: #c9d1dc;
+  --color-slate-400: #97a3b4;
+  --color-slate-500: #55627a;
+  --color-slate-600: #45526a;
+  --color-slate-700: #2c3644;
+  --color-slate-800: #222b37;
+  --color-slate-900: #11161d;
+  --color-slate-950: #0a0d12;
+}
+
+@layer base {
+  body {
+    background-color: var(--vt-canvas);
+    color: var(--vt-ink);
+    font-variant-numeric: tabular-nums;
+  }
+}

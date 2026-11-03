@@ -10,10 +10,11 @@ import { CloudflaredCard } from "./cloudflared/CloudflaredCard";
 import { EmbyLibrariesCard } from "./emby-libraries/EmbyLibrariesCard";
 import { EmbyOverviewCard } from "./emby-overview/EmbyOverviewCard";
 import type { CardProps } from "./registry";
+import { CardTierContext } from "./metrics/tier";
+import type { CardTier } from "./metrics/tier";
 
 const client = new ApiClient({ fetch: vi.fn() });
 vi.mock("../app/session", () => ({ useApiClient: () => client }));
-vi.mock("./metrics/TimeSeriesChart", () => ({ TimeSeriesChart: () => null }));
 
 const instance = {
   id: "inst-1",
@@ -31,7 +32,11 @@ function vector(rows: Row[]): QueryResult {
   };
 }
 
-function renderCard(Card: ComponentType<CardProps>, answer: (query: string) => Row[]) {
+function renderCard(
+  Card: ComponentType<CardProps>,
+  answer: (query: string) => Row[],
+  tier: CardTier = "full",
+) {
   const fetchMock = vi.fn<typeof fetch>(async (_url, init) => {
     const { query } = JSON.parse(String(init?.body)) as { query: string };
     return json(vector(answer(query)));
@@ -43,7 +48,9 @@ function renderCard(Card: ComponentType<CardProps>, answer: (query: string) => R
     <QueryClientProvider
       client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
     >
-      <Card instanceId="inst-1" settings={{}} title="Card" instance={instance} />
+      <CardTierContext.Provider value={{ tier }}>
+        <Card instanceId="inst-1" settings={{}} title="Card" instance={instance} />
+      </CardTierContext.Provider>
     </QueryClientProvider>,
   );
 }
@@ -119,6 +126,34 @@ describe("profile cards", () => {
     );
     expect(await screen.findByText("1,234")).toBeInTheDocument();
     expect(screen.getByText(/2 movies/)).toBeInTheDocument();
+  });
+
+  it("small: one figure each; a tunnel down and no edge connection in red", async () => {
+    renderCard(
+      CloudflaredCard,
+      (q) => (q.startsWith("cloudflared_tunnel_ha") ? [[{}, "0"]] : [[{}, "1"]]),
+      "small",
+    );
+    const conns = await screen.findByRole("group", { name: "Edge connections" });
+    expect(conns).toHaveTextContent("0 edge connections");
+    expect(conns.className).toContain("text-crit-text");
+  });
+
+  it("small tunnels: the count not healthy", async () => {
+    renderCard(
+      CloudflareTunnelsCard,
+      (q) =>
+        q.includes("status")
+          ? [[{ tunnel_id: "t1", status: "down" }, "1"]]
+          : [
+              [{ tunnel_id: "t1", tunnel_name: "home" }, "1"],
+              [{ tunnel_id: "t2", tunnel_name: "lab" }, "1"],
+            ],
+      "small",
+    );
+    expect(await screen.findByRole("group", { name: "Tunnels" })).toHaveTextContent(
+      "1 of 2 not healthy",
+    );
   });
 
   it.each([

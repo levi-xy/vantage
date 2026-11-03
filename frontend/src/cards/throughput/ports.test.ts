@@ -1,7 +1,13 @@
 import type { Instance } from "../../api";
 import { formatBytesPerSecond } from "../metrics/format";
 import { testInstance, vector } from "../testRender";
-import { portOptions, portsFromSettings, rateQuery, settingsWithPorts } from "./ports";
+import {
+  historyQuery,
+  portOptions,
+  portsFromSettings,
+  rateQuery,
+  settingsWithPorts,
+} from "./ports";
 
 const pf: Instance = {
   ...testInstance,
@@ -36,6 +42,20 @@ describe("throughput ports", () => {
     expect(rateQuery([], "out")).toBe("vector(0)");
   });
 
+  it("leaves a time with no report empty in the history query, never 0", () => {
+    const q = historyQuery(
+      [
+        { source: "pfsense", instanceId: "pf", iface: "igc0" },
+        { source: "node", instanceId: "h", iface: "eth0" },
+      ],
+      "out",
+    );
+    expect(q).toBe(
+      '8 * sum(rate(net_bytes_sent{vantage_instance_id="pf",interface="igc0"}[2m]) or rate(node_network_transmit_bytes_total{vantage_instance_id="h",device="eth0"}[2m]))',
+    );
+    expect(q).not.toContain("vector(0)");
+  });
+
   it("names ports as the cards do and leaves hidden pfSense interfaces out", () => {
     const groups = portOptions(
       {
@@ -62,6 +82,16 @@ describe("throughput ports", () => {
         ],
       ],
     ]);
+  });
+
+  it("names pfSense ports by the description set on pfSense", () => {
+    const groups = portOptions(
+      { pfsense: vector([[{ vantage_instance_id: "pf", interface: "igc1" }, "1"]]) },
+      undefined,
+      [pf],
+      vector([[{ vantage_instance_id: "pf", interface: "igc1", descr: "LAN" }, "1"]]),
+    );
+    expect(groups[0]?.ports.map((p) => [p.name, p.detail])).toEqual([["LAN", "igc1"]]);
   });
 
   it("formats rates in bytes when asked", () => {

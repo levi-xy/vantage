@@ -16,7 +16,11 @@ import type {
   ChannelUpdate,
   Credentials,
   Dashboard,
+  DashboardCreate,
   DashboardLayout,
+  DashboardSummary,
+  DashboardUpdate,
+  DeliveryStatusSummary,
   DeviceLink,
   DeviceLinkCreate,
   Instance,
@@ -230,7 +234,7 @@ export class ApiClient {
     return this.request("GET", qs ? `/audit?${qs}` : "/audit");
   }
 
-  /** Alert history, newest first; `state` filters to firing or resolved. */
+  /** Alert history, newest first; `state` filters to firing, no data or resolved. */
   alertEvents(query: AlertEventQuery = {}): Promise<AlertEvent[]> {
     const params = new URLSearchParams();
     if (query.limit !== undefined) params.set("limit", String(query.limit));
@@ -238,6 +242,26 @@ export class ApiClient {
     if (query.state !== undefined) params.set("state", query.state);
     const qs = params.toString();
     return this.request("GET", qs ? `/alerts/events?${qs}` : "/alerts/events");
+  }
+
+  /** Open alerts (firing and no data), newest first; at most `limit` of each state. */
+  async openAlertEvents(limit: number): Promise<AlertEvent[]> {
+    const [firing, noData] = await Promise.all([
+      this.alertEvents({ state: "firing", limit }),
+      this.alertEvents({ state: "no_data", limit }),
+    ]);
+    const byId = new Map([...firing, ...noData].map((e) => [e.id, e] as const));
+    return [...byId.values()].sort((a, b) => b.id - a.id);
+  }
+
+  /** Any logged-in user: how many alert messages are stuck (for the banner). */
+  alertDeliveryStatus(): Promise<DeliveryStatusSummary> {
+    return this.request("GET", "/alerts/delivery-status");
+  }
+
+  /** Admin only. Closes an open event by hand; 409 if it is already closed. */
+  closeAlertEvent(id: number): Promise<AlertEvent> {
+    return this.request("POST", `/alerts/events/${encodeURIComponent(String(id))}/close`);
   }
 
   /** Admin only. */
@@ -297,14 +321,34 @@ export class ApiClient {
     return this.request("GET", `/instances/${encodeURIComponent(id)}/cards`);
   }
 
-  /** Dashboard 1 ("Default") is created on its first read. */
+  /** Every dashboard in tab order; "Default" is created when there is none. */
+  dashboards(): Promise<DashboardSummary[]> {
+    return this.request("GET", "/dashboards");
+  }
+
+  /** Dashboard 1 ("Default") is created on its first read when there is no dashboard. */
   dashboard(id: number): Promise<Dashboard> {
     return this.request("GET", `/dashboards/${encodeURIComponent(String(id))}`);
   }
 
-  /** Admin only. */
+  /** Any user. At most 50 dashboards (409). */
+  createDashboard(body: DashboardCreate): Promise<Dashboard> {
+    return this.request("POST", "/dashboards", body);
+  }
+
+  /** Any user. */
   saveDashboard(id: number, layout: DashboardLayout): Promise<Dashboard> {
     return this.request("PUT", `/dashboards/${encodeURIComponent(String(id))}`, { layout });
+  }
+
+  /** Any user: rename or move. */
+  updateDashboard(id: number, body: DashboardUpdate): Promise<DashboardSummary> {
+    return this.request("PATCH", `/dashboards/${encodeURIComponent(String(id))}`, body);
+  }
+
+  /** Any user. The last dashboard can't be deleted (409). */
+  deleteDashboard(id: number): Promise<void> {
+    return this.request("DELETE", `/dashboards/${encodeURIComponent(String(id))}`);
   }
 
   links(): Promise<DeviceLink[]> {

@@ -7,6 +7,8 @@ import {
   fakeBackend,
   json,
   mockSystemTheme,
+  openAccountMenu,
+  clickLogOut,
   renderApp,
 } from "../test-utils";
 import { returnPath } from "./returnPath";
@@ -113,9 +115,9 @@ describe("first-run setup", () => {
     fill("Confirm password", "a-long-example-password");
     fireEvent.click(screen.getByRole("button", { name: "Create admin account" }));
 
-    const nav = await mainNav();
+    await mainNav();
     expect(router.state.location.pathname).toBe("/");
-    expect(within(nav).getByRole("link", { name: "Audit log" })).toBeInTheDocument();
+    expect(within(openAccountMenu()).getByRole("link", { name: "Audit log" })).toBeInTheDocument();
     expect(screen.getByText("example-admin")).toBeInTheDocument();
     expect(client.hasSession).toBe(true);
     const sent = backend.fetch.mock.calls.find(([, init]) => init?.method === "POST");
@@ -240,7 +242,7 @@ describe("logout", () => {
     const { router, backend, client, queryClient } = renderApp("/devices");
     await mainNav();
     queryClient.setQueryData(["instances"], [{ id: "example" }]);
-    fireEvent.click(screen.getByRole("button", { name: "Log out" }));
+    clickLogOut();
 
     expect(await screen.findByRole("heading", { level: 1, name: "Log in" })).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/login");
@@ -259,14 +261,15 @@ describe("logout", () => {
       }),
     );
     await mainNav();
-    fireEvent.click(screen.getByRole("button", { name: "Log out" }));
+    clickLogOut();
     expect(await screen.findByRole("alert")).toHaveTextContent("Logout failed");
     expect(screen.getByRole("navigation", { name: "Main" })).toBeInTheDocument();
     await waitFor(() => expect(client.hasSession).toBe(true));
     const routes = backend
       .requests()
       .map((r) => r.route)
-      .filter((r) => r !== "POST /query" && !r.startsWith("GET /alerts/events"));
+      .filter((r) => r !== "POST /query" && !r.startsWith("GET /alerts/events"))
+      .filter((r) => !r.startsWith("GET /dashboards"));
     expect(routes.at(-1)).toBe("GET /me");
   });
 
@@ -276,7 +279,7 @@ describe("logout", () => {
     await mainNav();
     backend.fetch.mockRejectedValueOnce(new TypeError("example failure"));
     backend.fetch.mockRejectedValueOnce(new TypeError("example failure"));
-    fireEvent.click(screen.getByRole("button", { name: "Log out" }));
+    clickLogOut();
 
     expect(await screen.findByRole("heading", { name: "Can't load Vantage" })).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("Could not reach the Vantage backend.");
@@ -290,7 +293,7 @@ describe("logout", () => {
   it("doesn't send the next user back to the previous user's page", async () => {
     const { router } = renderApp("/devices?x=1");
     await mainNav();
-    fireEvent.click(screen.getByRole("button", { name: "Log out" }));
+    clickLogOut();
     await logIn("viewer");
     await mainNav();
     expect(router.state.location.pathname).toBe("/");
@@ -301,7 +304,7 @@ describe("logout", () => {
     const { queryClient } = renderApp("/");
     await mainNav();
     queryClient.setQueryData(["audit"], [{ id: 1, action: "login", target_type: "user" }]);
-    fireEvent.click(screen.getByRole("button", { name: "Log out" }));
+    clickLogOut();
     await logIn("viewer");
     await mainNav();
     expect(queryClient.getQueryData(["audit"])).toBeUndefined();
@@ -312,7 +315,7 @@ describe("logout", () => {
     const { router } = renderApp("/", backend);
     await mainNav();
     backend.state.session = null;
-    fireEvent.click(screen.getByRole("button", { name: "Log out" }));
+    clickLogOut();
     expect(await screen.findByRole("heading", { level: 1, name: "Log in" })).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/login");
   });
@@ -343,15 +346,18 @@ describe("session expiry", () => {
 describe("role-aware navigation", () => {
   it("shows the audit log to admins", async () => {
     renderApp("/");
-    const nav = await mainNav();
-    expect(within(nav).getByRole("link", { name: "Audit log" })).toBeInTheDocument();
+    await mainNav();
+    expect(within(openAccountMenu()).getByRole("link", { name: "Audit log" })).toBeInTheDocument();
     expect(screen.getByText("(Admin)")).toBeInTheDocument();
   });
 
   it("hides admin-only links from viewers", async () => {
     renderApp("/", fakeBackend({ session: exampleMe("viewer") }));
     const nav = await mainNav();
-    expect(within(nav).queryByRole("link", { name: "Audit log" })).not.toBeInTheDocument();
+    const menu = openAccountMenu();
+    expect(within(menu).queryByRole("link", { name: "Audit log" })).not.toBeInTheDocument();
+    expect(within(menu).queryByRole("link", { name: "Users" })).not.toBeInTheDocument();
+    expect(within(menu).getByRole("link", { name: "My account" })).toBeInTheDocument();
     expect(within(nav).getByRole("link", { name: "Dashboard" })).toBeInTheDocument();
     expect(within(nav).getByRole("link", { name: "Devices" })).toBeInTheDocument();
     expect(screen.getByText("(Viewer)")).toBeInTheDocument();
@@ -367,12 +373,14 @@ describe("role-aware navigation", () => {
 
   it("switches the menu when a viewer logs in after an admin", async () => {
     renderApp("/");
-    const adminNav = await mainNav();
-    expect(within(adminNav).getByRole("link", { name: "Audit log" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Log out" }));
+    await mainNav();
+    expect(within(openAccountMenu()).getByRole("link", { name: "Audit log" })).toBeInTheDocument();
+    clickLogOut();
     await logIn("viewer");
-    const viewerNav = await mainNav();
-    expect(within(viewerNav).queryByRole("link", { name: "Audit log" })).not.toBeInTheDocument();
+    await mainNav();
+    expect(
+      within(openAccountMenu()).queryByRole("link", { name: "Audit log" }),
+    ).not.toBeInTheDocument();
   });
 });
 

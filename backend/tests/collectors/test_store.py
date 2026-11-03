@@ -72,11 +72,14 @@ def test_success_adds_standard_labels_and_up() -> None:
 
 
 def test_failure_marks_down_and_drops_old_samples() -> None:
-    store = MetricsStore()
+    store = MetricsStore(down_after_failed_cycles=2)
     store.track(ID_A, labels(ID_A))
     store.record_success(
         ID_A, "fake_device", [gauge("vantage_fake_device_x")], at=AT, duration_seconds=0.1
     )
+    store.record_failure(ID_A, "poll timed out", at=AT, duration_seconds=5.0)
+    assert getattr(store.status(ID_A), "state", "") == "up"  # 1 of 2 failed cycles
+    assert "vantage_fake_device_x{" not in render(store)  # but samples dropped at once
     store.record_failure(ID_A, "poll timed out", at=AT, duration_seconds=5.0)
     status = store.status(ID_A)
     assert status is not None

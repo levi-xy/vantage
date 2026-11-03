@@ -6,7 +6,6 @@ import { ProxmoxNodeCard } from "./ProxmoxNodeCard";
 
 const client = new ApiClient({ fetch: vi.fn() });
 vi.mock("../../app/session", () => ({ useApiClient: () => client }));
-vi.mock("../metrics/TimeSeriesChart", () => ({ TimeSeriesChart: () => null }));
 
 const node = { node: "pve1" };
 const guest = (vmid: string) => ({ node: "pve1", vmid, guest_type: "qemu" });
@@ -46,6 +45,21 @@ describe("Proxmox cards", () => {
     expect(screen.getByText("Guest 101")).toBeInTheDocument();
     expect(screen.getByText("CPU 12%")).toBeInTheDocument();
     expect(screen.getAllByRole("listitem")[0]).toHaveTextContent("web-1");
+  });
+
+  it("small: the node's CPU and memory; guests running", async () => {
+    renderCard(client, ProxmoxNodeCard, answer, undefined, { tier: "small" });
+    expect(await screen.findByRole("group", { name: "CPU and memory" })).toHaveTextContent(
+      "CPU 25% · Mem 50%",
+    );
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+  });
+
+  it("small guests: how many run", async () => {
+    renderCard(client, ProxmoxGuestsCard, answer, undefined, { tier: "small" });
+    expect(await screen.findByRole("group", { name: "Guests running" })).toHaveTextContent(
+      "1/2 running",
+    );
   });
 
   it("say so when there is no data", async () => {

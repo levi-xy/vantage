@@ -10,6 +10,9 @@ services:
   backend:
     <<: *hardening
     build: ../backend
+    # Time for a clean shutdown before SIGKILL: it ends by deleting the backend heartbeat,
+    # so restore and key rotation can run at once after `docker compose stop backend`.
+    stop_grace_period: 20s
     environment:
       VANTAGE_DATABASE_URL: ${VANTAGE_DATABASE_URL:-sqlite:////data/vantage.db}
       VANTAGE_MASTER_KEY_FILE: /run/secrets/master_key
@@ -17,6 +20,12 @@ services:
       VANTAGE_COOKIE_SECURE: ${VANTAGE_COOKIE_SECURE:-true}
       VANTAGE_SESSION_MAX_HOURS: ${VANTAGE_SESSION_MAX_HOURS:-12}
       VANTAGE_SESSION_IDLE_MINUTES: ${VANTAGE_SESSION_IDLE_MINUTES:-120}
+      # Failed poll cycles in a row before a device is down.
+      VANTAGE_DOWN_AFTER_FAILED_CYCLES: ${VANTAGE_DOWN_AFTER_FAILED_CYCLES:-3}
+      # The backend's own log lines: DEBUG, INFO, WARNING or ERROR.
+      VANTAGE_LOG_LEVEL: ${VANTAGE_LOG_LEVEL:-INFO}
+      # Same value as Prometheus' retention below: seeds last_success_at at startup.
+      VANTAGE_PROMETHEUS_RETENTION: ${VANTAGE_PROMETHEUS_RETENTION:-30d}
       # Only the bundled nginx (frontend, fixed address below) may name the client.
       VANTAGE_TRUSTED_PROXIES: ${VANTAGE_TRUSTED_PROXIES:-192.168.255.242/32}
       # Host names the dashboard is reached by; empty = any (see .env.example).
@@ -59,6 +68,8 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=${VANTAGE_PROMETHEUS_RETENTION:-30d}
+      # Disk cap: whichever limit is hit first wins; the oldest data goes first.
+      - --storage.tsdb.retention.size=${VANTAGE_PROMETHEUS_RETENTION_SIZE:-10GB}
     secrets: [prometheus_token]
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro

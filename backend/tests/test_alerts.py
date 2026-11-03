@@ -1,9 +1,10 @@
-"""Alert rules API, evaluator and templates (M7.1, M7.3)."""
+"""Alert rules API, evaluator and templates (M7.1, M7.3); one alert per series (P0-3a)."""
 
 import logging
 import uuid
 from collections.abc import Iterator
 from datetime import datetime, timedelta
+from urllib.parse import parse_qs
 
 import httpx
 import pytest
@@ -11,12 +12,31 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from app.alerts.evaluator import AlertEvaluator, clean
+from app.alerts.evaluator import (
+    POLLED_QUERY,
+    PROBE_QUERY,
+    SCRAPED_QUERY,
+    AlertEvaluator,
+    clean,
+)
+from app.alerts.selfcheck import METRICS_QUERY
 from app.alerts.templates import TEMPLATES
 from app.api.deps import CSRF_HEADER
 from app.collectors.hub import EventHub, Subscriber
 from app.core.db import make_session_factory, utcnow
-from app.models import AlertEvent, AlertRule, AlertState, AuditLog, Instance, Role
+from app.models import (
+    AlertEvent,
+    AlertNotification,
+    AlertRule,
+    AlertState,
+    AuditLog,
+    Channel,
+    ChannelType,
+    EndReason,
+    Instance,
+    NotificationKind,
+    Role,
+)
 from app.query.proxy import PrometheusClient
 from tests.test_auth import ADMIN, add_user, do_setup, login, make_client
 
@@ -27,17 +47,46 @@ INSTANCE_UUID = uuid.UUID(INSTANCE_ID)
 
 
 class FakeProm:
-    """Answers every instant query with ``vector`` (a list of label dicts) or an error."""
+    """Answers instant queries. ``answers`` maps a query to ``(labels, value)`` pairs; any
+    other query gets ``vector`` (label dicts, value "1"). The probe always answers, the
+    fleet freshness queries are empty unless set, and the self-check sees Vantage scraped
+    5 s ago unless set. ``error`` fails every query, ``failing`` only those listed;
+    ``down`` refuses every connection."""
 
     def __init__(self) -> None:
         self.vector: list[dict[str, str]] = []
+        self.answers: dict[str, list[tuple[dict[str, str], str]]] = {}
         self.error: dict[str, str] | None = None
+        self.failing: set[str] = set()
+        self.down = False
+        self.queries: list[str] = []
+
+    def poll(self, instance_id: str, ts: float, integration: str = "ping_check") -> None:
+        """The device's last successful poll, as Prometheus would report it."""
+        labels = {"vantage_instance_id": instance_id, "vantage_integration": integration}
+        rows = [r for r in self.answers.get(POLLED_QUERY, []) if r[0] != labels]
+        self.answers[POLLED_QUERY] = [*rows, (labels, repr(ts))]
 
     def client(self) -> PrometheusClient:
         def handler(request: httpx.Request) -> httpx.Response:
-            if self.error:
-                return httpx.Response(200, json={"status": "error", **self.error})
-            result = [{"metric": m, "value": [1.0, "1"]} for m in self.vector]
+            query = parse_qs(request.content.decode())["query"][0]
+            self.queries.append(query)
+            if self.down:
+                raise httpx.ConnectError("connection refused")
+            if self.error or query in self.failing:
+                error = self.error or {"errorType": "execution", "error": "boom"}
+                return httpx.Response(200, json={"status": "error", **error})
+            if query == PROBE_QUERY:
+                rows: list[tuple[dict[str, str], str]] = [({}, "1")]
+            elif query in self.answers:
+                rows = self.answers[query]
+            elif query in (POLLED_QUERY, SCRAPED_QUERY):
+                rows = []
+            elif query == METRICS_QUERY:
+                rows = [({}, "5")]
+            else:
+                rows = [(m, "1") for m in self.vector]
+            result = [{"metric": m, "value": [1.0, v]} for m, v in rows]
             return httpx.Response(
                 200, json={"status": "success", "data": {"resultType": "vector", "result": result}}
             )
@@ -57,6 +106,8 @@ def admin(engine: Engine, db_url: str, prom: FakeProm) -> Iterator[TestClient]:
     with make_client(db_url) as c:
         c.app.state.prometheus = prom.client()  # type: ignore[attr-defined]
         c.headers[CSRF_HEADER] = do_setup(c)["csrf_token"]
+        with make_session_factory(engine)() as db:
+            add_channel(db)  # RULE sends to channel 7
         yield c
 
 
@@ -66,7 +117,13 @@ def db(engine: Engine) -> Iterator[Session]:
         yield s
 
 
-RULE = {"name": "Disk full", "expr": "up == 0", "for_seconds": 60, "severity": "critical"}
+RULE = {
+    "name": "Disk full",
+    "expr": "up == 0",
+    "for_seconds": 60,
+    "severity": "critical",
+    "channel_ids": [7],
+}
 
 
 def test_rule_crud_is_audited(admin: TestClient, db: Session) -> None:
@@ -119,7 +176,17 @@ def test_events_newest_first_with_paging(admin: TestClient, db: Session) -> None
     rule_id = admin.post(f"{API}/alerts/rules", json=RULE).json()["id"]
     for i in range(3):
         state = AlertState.FIRING if i == 2 else AlertState.RESOLVED
-        db.add(AlertEvent(rule_id=rule_id, state=state, started_at=utcnow(), summary=f"s{i}"))
+        db.add(
+            AlertEvent(
+                rule_id=rule_id,
+                fingerprint=f"f{i}",
+                rule_name="Disk full",
+                severity="critical",
+                state=state,
+                started_at=utcnow(),
+                summary=f"s{i}",
+            )
+        )
     db.commit()
     page = admin.get(f"{API}/alerts/events?limit=2").json()
     assert [e["summary"] for e in page] == ["s2", "s1"]
@@ -136,18 +203,44 @@ def test_templates_are_sound(admin: TestClient) -> None:
     assert all(t["integration_types"] for t in got)
 
 
+def test_ping_check_has_instance_down_template() -> None:
+    """At 100% loss ping_check reports no loss sample, so "down" must use instance_up."""
+    by_id = {t.id: t for t in TEMPLATES}
+    down = by_id["instance-down-ping_check"]
+    assert down.expr == 'vantage_instance_up{vantage_integration="ping_check"} == 0'
+    assert not any(">= 1" in t.expr and "ping_check" in t.expr for t in TEMPLATES)
+
+
 # --- evaluator ---------------------------------------------------------------------------
 
 
-class Recorder:
-    def __init__(self, fail: bool = False) -> None:
-        self.sent: list[tuple[list[int], str]] = []
-        self.fail = fail
+def add_channel(db: Session, channel_id: int = 7) -> None:
+    """A channel row for the outbox's foreign key (never sent to in these tests)."""
+    if db.get(Channel, channel_id) is None:
+        db.add(Channel(id=channel_id, type=ChannelType.TELEGRAM, name=f"ch{channel_id}"))
+        db.commit()
 
-    async def send(self, channel_ids: list[int], text: str) -> None:
-        if self.fail:
-            raise RuntimeError("example-token leaked in error")
-        self.sent.append((channel_ids, text))
+
+class Recorder:
+    """What was queued in the alert_notifications outbox, in order (P0-5). Only FIRING,
+    RESOLVED and NO DATA messages unless ``rule_changes``."""
+
+    def __init__(self, rule_changes: bool = False) -> None:
+        self.engine: Engine | None = None
+        self.kinds = [NotificationKind.FIRING, NotificationKind.RESOLVED, NotificationKind.NO_DATA]
+        if rule_changes:
+            self.kinds.append(NotificationKind.RULE_CHANGE)
+
+    @property
+    def sent(self) -> list[tuple[list[int], str]]:
+        assert self.engine is not None
+        with make_session_factory(self.engine)() as db:
+            rows = db.scalars(
+                select(AlertNotification)
+                .where(AlertNotification.kind.in_(self.kinds))
+                .order_by(AlertNotification.id)
+            )
+            return [([r.channel_id or 0], r.text) for r in rows]
 
 
 class Clock:
@@ -159,16 +252,18 @@ class Clock:
 
 
 def make_eval(
-    engine: Engine, prom: FakeProm, notifier: Recorder, clock: Clock
+    engine: Engine, prom: FakeProm, outbox: Recorder, clock: Clock
 ) -> tuple[AlertEvaluator, Subscriber]:
     hub = EventHub()
     sub = hub.subscribe()
     assert sub is not None
+    outbox.engine = engine
+    with make_session_factory(engine)() as db:
+        add_channel(db)
     ev = AlertEvaluator(
         session_factory=make_session_factory(engine),
         prometheus=prom.client,
         hub=hub,
-        notifier=lambda: notifier,
         clock=clock,
     )
     return ev, sub
@@ -204,13 +299,39 @@ async def test_fires_after_for_then_resolves(engine: Engine, db: Session, prom: 
     msg = sub.queue.get_nowait()
     assert msg["type"] == "alert_event" and msg["state"] == "firing"
     assert INSTANCE_ID not in str(msg)
+    # Recovery needs two clean checks from two polls: the value seen, condition false.
     prom.vector = []
-    clock.now += timedelta(seconds=30)
-    await ev.tick()
+    prom.answers["up"] = [({"vantage_instance_id": INSTANCE_ID}, "1")]
+    for _ in range(2):
+        clock.now += timedelta(seconds=60)
+        prom.poll(INSTANCE_ID, clock.now.timestamp() - 5)
+        await ev.tick()
     db.expire_all()
     event = db.scalars(select(AlertEvent)).one()
     assert event.state == AlertState.RESOLVED and event.ended_at is not None
+    assert event.end_reason == EndReason.RECOVERED
     assert rec.sent[1][1].startswith("RESOLVED: ")
+
+
+async def test_dead_ping_host_fires_instance_down(
+    engine: Engine, db: Session, prom: FakeProm
+) -> None:
+    tpl = next(t for t in TEMPLATES if t.id == "instance-down-ping_check")
+    add_rule(db, name=tpl.name, expr=tpl.expr, for_seconds=tpl.for_seconds)
+    rec, clock = Recorder(), Clock()
+    ev, _ = make_eval(engine, prom, rec, clock)
+    # What the collector exports once poll() has raised NoReply for N cycles in a row:
+    # vantage_instance_up 0. The collector already waited, so the template fires at once.
+    assert tpl.for_seconds == 0
+    prom.vector = [{"vantage_instance": "nas-ping", "vantage_integration": "ping_check"}]
+    await ev.tick()
+    assert [text for _, text in rec.sent] == [f"FIRING: {tpl.name} (critical): nas-ping"]
+
+
+def test_down_templates_wait_only_for_scrape_only_integrations() -> None:
+    down = {t.id: t.for_seconds for t in TEMPLATES if t.id.startswith("instance-down-")}
+    assert down["instance-down-snmp_device"] == 0  # vantage_instance_up: N cycles already
+    assert down["instance-down-pfsense"] == 180  # Prometheus' up flips on one failed scrape
 
 
 async def test_blip_shorter_than_for_does_not_fire(
@@ -252,18 +373,18 @@ async def test_failing_rule_is_logged_once_without_prometheus_text(
 ) -> None:
     rule = add_rule(db)
     ev, _ = make_eval(engine, prom, Recorder(), Clock())
-    prom.error = {"errorType": "bad_data", "error": "parse error near prometheus.internal"}
+    prom.failing = {rule.expr}
     with caplog.at_level(logging.INFO, logger="app.alerts.evaluator"):
-        await ev.tick()
-        await ev.tick()
-        prom.error = None
+        for _ in range(4):  # shown (and logged) from the third failure in a row, once
+            await ev.tick()
+        prom.failing = set()
         await ev.tick()
     lines = [r.getMessage() for r in caplog.records if r.name == "app.alerts.evaluator"]
     assert lines == [
-        f"alert rule {rule.id} can't be evaluated (HTTP 400: invalid PromQL query); "
-        "keeping its state",
+        f"alert rule {rule.id} can't be evaluated (query could not be executed)",
         f"alert rule {rule.id} is evaluated again",
     ]
+    assert "boom" not in caplog.text
 
 
 async def test_instance_scope_and_disabled_rule(
@@ -290,25 +411,336 @@ async def test_instance_scope_and_disabled_rule(
     prom.vector = [{"vantage_instance_id": INSTANCE_ID}]
     await ev.tick()
     assert len(rec.sent) == 1
+    # Disabled behind the API's back: the evaluator's safety net closes the event.
     rule.enabled = False
     db.commit()
     await ev.tick()
-    assert rec.sent[1][1].startswith("RESOLVED")
-
-
-async def test_failing_notifier_never_breaks_the_loop(
-    engine: Engine, db: Session, prom: FakeProm, caplog: pytest.LogCaptureFixture
-) -> None:
-    add_rule(db, for_seconds=0)
-    prom.vector = [{"a": "b"}]
-    ev, _ = make_eval(engine, prom, Recorder(fail=True), Clock())
-    with caplog.at_level(logging.DEBUG):
-        await ev.tick()
     db.expire_all()
-    assert db.scalars(select(AlertEvent)).one().state == AlertState.FIRING
-    assert "example-token" not in caplog.text
+    event = db.scalars(select(AlertEvent)).one()
+    assert event.state == AlertState.RESOLVED and event.end_reason == EndReason.RULE_DISABLED
+    assert event.instance_id == INSTANCE_UUID
 
 
 def test_clean_strips_control_characters_and_caps() -> None:
     assert clean("a\x00b‮c\n d") == "a b c d"
     assert len(clean("x" * 500)) == 48
+
+
+# --- P0-3a: one alert per series, history kept --------------------------------------------
+
+
+def add_instance(db: Session, instance_id: uuid.UUID, name: str) -> None:
+    db.add(Instance(id=instance_id, type_id="pfsense", name=name, tags=[], config={}))
+    db.commit()
+
+
+def open_event(
+    db: Session, rule_id: int, fp: str, instance_id: uuid.UUID | None = None
+) -> AlertEvent:
+    event = AlertEvent(
+        rule_id=rule_id,
+        fingerprint=fp,
+        instance_id=instance_id,
+        rule_name="Disk full",
+        severity="critical",
+        state=AlertState.FIRING,
+        started_at=utcnow(),
+        summary=fp,
+    )
+    db.add(event)
+    db.commit()
+    return event
+
+
+def events_by_fp(db: Session) -> dict[str, AlertEvent]:
+    db.expire_all()
+    return {e.fingerprint: e for e in db.scalars(select(AlertEvent))}
+
+
+async def test_two_devices_down_under_one_rule_are_two_alerts(
+    engine: Engine, db: Session, prom: FakeProm
+) -> None:
+    add_instance(db, INSTANCE_UUID, "fw-a")
+    add_rule(db, for_seconds=0)
+    rec, clock = Recorder(), Clock()
+    ev, sub = make_eval(engine, prom, rec, clock)
+    prom.vector = [{"vantage_instance": "fw-a", "vantage_instance_id": INSTANCE_ID}]
+    await ev.tick()
+    prom.vector.append({"vantage_instance": "fw-b", "vantage_instance_id": OTHER_ID})
+    await ev.tick()
+    await ev.tick()
+    assert [t for _, t in rec.sent] == [
+        "FIRING: Gateway (critical): fw-a",
+        "FIRING: Gateway (critical): fw-b",
+    ]
+    first = sub.queue.get_nowait()
+    assert first["instance_id"] == INSTANCE_ID and len(first["fingerprint"]) == 32
+    events = db.scalars(select(AlertEvent).order_by(AlertEvent.id)).all()
+    assert [e.instance_id for e in events] == [INSTANCE_UUID, None]  # fw-b isn't an instance
+    assert events[1].labels["vantage_instance"] == "fw-b"
+    assert {e.rule_name for e in events} == {"Gateway"}
+
+    # One recovers (two clean checks from two polls): only its event resolves.
+    prom.vector = prom.vector[:1]
+    prom.answers["up"] = [({"vantage_instance": "fw-b", "vantage_instance_id": OTHER_ID}, "1")]
+    prom.poll(OTHER_ID, clock.now.timestamp() - 5)
+    await ev.tick()
+    clock.now += timedelta(seconds=60)
+    prom.poll(OTHER_ID, clock.now.timestamp() - 5)
+    await ev.tick()
+    db.expire_all()
+    assert [
+        (e.state, e.end_reason) for e in db.scalars(select(AlertEvent).order_by(AlertEvent.id))
+    ] == [
+        (AlertState.FIRING, None),
+        (AlertState.RESOLVED, EndReason.RECOVERED),
+    ]
+    assert rec.sent[-1][1] == "RESOLVED: Gateway (critical): fw-b"
+
+
+async def test_legacy_event_is_adopted_by_a_single_series(
+    engine: Engine, db: Session, prom: FakeProm
+) -> None:
+    rule = add_rule(db, for_seconds=0)
+    open_event(db, rule.id, "legacy")
+    rec = Recorder()
+    ev, _ = make_eval(engine, prom, rec, Clock())
+    prom.vector = [{"vantage_instance": "fw", "if_index": "1"}]
+    await ev.tick()
+    (event,) = events_by_fp(db).values()
+    assert event.fingerprint != "legacy" and event.labels["if_index"] == "1"
+    assert event.state == AlertState.FIRING and rec.sent == []  # no second FIRING message
+
+
+async def test_legacy_event_with_several_series_closes_quietly(
+    engine: Engine, db: Session, prom: FakeProm
+) -> None:
+    """Which device the old event meant is unknown: it must not swallow B's FIRING."""
+    rule = add_rule(db, for_seconds=0)
+    open_event(db, rule.id, "legacy")
+    rec = Recorder()
+    ev, _ = make_eval(engine, prom, rec, Clock())
+    prom.vector = [
+        {"vantage_instance": "fw-a", "vantage_instance_id": INSTANCE_ID},
+        {"vantage_instance": "fw-b", "vantage_instance_id": OTHER_ID},
+    ]
+    await ev.tick()
+    legacy = events_by_fp(db)["legacy"]
+    assert (legacy.state, legacy.end_reason) == (AlertState.RESOLVED, EndReason.RULE_CHANGED)
+    assert sorted(t for _, t in rec.sent) == [
+        "FIRING: Gateway (critical): fw-a",
+        "FIRING: Gateway (critical): fw-b",
+    ]
+
+
+async def test_disable_and_enable_within_one_tick_waits_the_full_for(
+    admin: TestClient,
+    engine: Engine,
+    db: Session,
+    prom: FakeProm,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rule_id = admin.post(f"{API}/alerts/rules", json={**RULE, "for_seconds": 600}).json()["id"]
+    rec, clock = Recorder(), Clock()
+    monkeypatch.setattr("app.api.alerts.utcnow", clock)
+    ev, _ = make_eval(engine, prom, rec, clock)
+    prom.vector = [{"vantage_instance": "fw"}]
+    await ev.tick()
+    clock.now += timedelta(seconds=601)
+    await ev.tick()
+    assert len(rec.sent) == 1  # FIRING
+    url = f"{API}/alerts/rules/{rule_id}"
+    admin.patch(url, json={"enabled": False})
+    admin.patch(url, json={"enabled": True})
+    clock.now += timedelta(seconds=30)
+    await ev.tick()
+    assert len(rec.sent) == 1  # the old timer must not fire it again at once
+    clock.now += timedelta(seconds=571)
+    await ev.tick()
+    assert len(rec.sent) == 2 and rec.sent[1][1].startswith("FIRING")
+
+
+async def test_closing_an_event_counts_for_again_from_the_close(
+    admin: TestClient,
+    engine: Engine,
+    db: Session,
+    prom: FakeProm,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    admin.post(f"{API}/alerts/rules", json=RULE)  # for 60 s
+    rec, clock = Recorder(), Clock()
+    monkeypatch.setattr("app.api.alerts.utcnow", clock)
+    ev, _ = make_eval(engine, prom, rec, clock)
+    prom.vector = [{"vantage_instance": "fw"}]
+    await ev.tick()
+    clock.now += timedelta(seconds=61)
+    await ev.tick()
+    (event,) = events_by_fp(db).values()
+    clock.now += timedelta(seconds=100)
+    assert admin.post(f"{API}/alerts/events/{event.id}/close").status_code == 200
+    clock.now += timedelta(seconds=30)
+    await ev.tick()
+    assert len(rec.sent) == 1
+    clock.now += timedelta(seconds=31)
+    await ev.tick()
+    assert len(rec.sent) == 2
+
+
+async def test_deleting_the_instance_of_a_scoped_rule_closes_its_events(
+    engine: Engine, db: Session, prom: FakeProm
+) -> None:
+    """The rule row goes with its instance (CASCADE), its events stay with rule_id NULL,
+    and the next tick resolves them as rule_deleted (no channel message: the rule is gone)."""
+    add_instance(db, INSTANCE_UUID, "fw-a")
+    rule = add_rule(db, for_seconds=0, instance_id=INSTANCE_UUID)
+    rule_id = rule.id
+    rec = Recorder()
+    ev, _ = make_eval(engine, prom, rec, Clock())
+    prom.vector = [{"vantage_instance_id": INSTANCE_ID}]
+    await ev.tick()
+    assert len(rec.sent) == 1
+    db.execute(Instance.__table__.delete().where(Instance.id == INSTANCE_UUID))
+    db.commit()
+    await ev.tick()
+    db.expire_all()
+    event = db.scalars(select(AlertEvent)).one()
+    assert event.rule_id is None and db.get(AlertRule, rule_id) is None
+    assert (event.state, event.end_reason) == (AlertState.RESOLVED, EndReason.RULE_DELETED)
+    assert len(rec.sent) == 1
+
+
+def test_deleting_a_rule_keeps_its_events(admin: TestClient, db: Session, engine: Engine) -> None:
+    rec = Recorder(rule_changes=True)
+    rec.engine = engine
+    add_channel(db)
+    rule_id = admin.post(f"{API}/alerts/rules", json={**RULE, "channel_ids": [7]}).json()["id"]
+    open_event(db, rule_id, "f1")
+    assert admin.delete(f"{API}/alerts/rules/{rule_id}").status_code == 204
+    assert admin.delete(f"{API}/alerts/rules/{rule_id}").status_code == 404
+    assert admin.get(f"{API}/alerts/rules").json() == []
+    (event,) = admin.get(f"{API}/alerts/events").json()
+    assert event["rule_id"] is None and event["rule_name"] == "Disk full"
+    assert event["state"] == "resolved" and event["end_reason"] == "rule_deleted"
+    assert [t for _, t in rec.sent] == ["Disk full: Rule deleted: 1 open alert closed"]
+
+
+def test_no_rule_operation_loses_an_event(admin: TestClient, db: Session) -> None:
+    add_instance(db, INSTANCE_UUID, "fw-a")
+    rule_id = admin.post(f"{API}/alerts/rules", json=RULE).json()["id"]
+    for i in range(3):
+        open_event(db, rule_id, f"f{i}", INSTANCE_UUID if i else None)
+    url = f"{API}/alerts/rules/{rule_id}"
+    patches = [
+        {"name": "Renamed"},
+        {"for_seconds": 5},
+        {"severity": "info"},
+        {"channel_ids": []},
+        {"instance_id": INSTANCE_ID},
+        {"expr": "up == 2"},
+        {"enabled": False},
+        {"enabled": True},
+    ]
+    for patch in patches:
+        assert admin.patch(url, json=patch).status_code == 200, patch
+        assert admin.get(f"{API}/alerts/events").json().__len__() == 3
+    assert admin.delete(url).status_code == 204
+    assert db.query(AlertEvent).count() == 3
+
+
+def test_rule_edits_close_the_right_events(admin: TestClient, db: Session, engine: Engine) -> None:
+    rec = Recorder(rule_changes=True)
+    rec.engine = engine
+    add_channel(db)
+    add_instance(db, INSTANCE_UUID, "fw-a")
+    add_instance(db, uuid.UUID(OTHER_ID), "fw-b")
+    rule_id = admin.post(f"{API}/alerts/rules", json={**RULE, "channel_ids": [7]}).json()["id"]
+    url = f"{API}/alerts/rules/{rule_id}"
+    open_event(db, rule_id, "a", INSTANCE_UUID)
+    open_event(db, rule_id, "b", uuid.UUID(OTHER_ID))
+
+    # Severity, name, for and whitespace in the expression keep the events (and snapshots).
+    admin.patch(url, json={"severity": "info", "name": "New", "expr": "up  ==\n0"})
+    assert {e.state for e in events_by_fp(db).values()} == {AlertState.FIRING}
+    assert events_by_fp(db)["a"].severity == "critical" and rec.sent == []
+
+    # Scope: only the out-of-scope event closes.
+    admin.patch(url, json={"instance_id": INSTANCE_ID})
+    got = events_by_fp(db)
+    assert got["a"].state == AlertState.FIRING
+    assert (got["b"].state, got["b"].end_reason) == (AlertState.RESOLVED, EndReason.RULE_CHANGED)
+
+    # Expression: everything closes, one message for the rule.
+    admin.patch(url, json={"expr": "up == 1"})
+    assert events_by_fp(db)["a"].end_reason == EndReason.RULE_CHANGED
+    assert [t for _, t in rec.sent] == [
+        "New: Rule changed: 1 open alert closed, re-checking",
+        "New: Rule changed: 1 open alert closed, re-checking",
+    ]
+
+    # Disable.
+    open_event(db, rule_id, "c", INSTANCE_UUID)
+    admin.patch(url, json={"enabled": False})
+    assert events_by_fp(db)["c"].end_reason == EndReason.RULE_DISABLED
+    assert db.get(AlertRule, rule_id).revision == 4  # type: ignore[union-attr]
+
+
+async def test_expression_change_restarts_pending_timers(
+    admin: TestClient, engine: Engine, db: Session, prom: FakeProm
+) -> None:
+    rule_id = admin.post(f"{API}/alerts/rules", json=RULE).json()["id"]  # for 60 s
+    rec, clock = Recorder(), Clock()
+    ev, _ = make_eval(engine, prom, rec, clock)
+    prom.vector = [{"a": "b"}]
+    await ev.tick()
+    clock.now += timedelta(seconds=50)
+    admin.patch(f"{API}/alerts/rules/{rule_id}", json={"expr": "up == 1"})
+    await ev.tick()
+    clock.now += timedelta(seconds=20)  # 70 s since first seen, 20 s under the new expr
+    await ev.tick()
+    assert rec.sent == []
+    clock.now += timedelta(seconds=45)
+    await ev.tick()
+    assert len(rec.sent) == 1
+
+
+def test_close_event_endpoint(admin: TestClient, db: Session) -> None:
+    rule_id = admin.post(f"{API}/alerts/rules", json=RULE).json()["id"]
+    event_id = open_event(db, rule_id, "f1").id
+    url = f"{API}/alerts/events/{event_id}/close"
+
+    add_user(db, "viewer1", Role.VIEWER)
+    viewer = TestClient(admin.app, base_url="https://testserver")
+    viewer.headers[CSRF_HEADER] = login(viewer, "viewer1")["csrf_token"]
+    assert viewer.post(url).status_code == 403
+    no_csrf = TestClient(admin.app, base_url="https://testserver")
+    login(no_csrf, ADMIN)
+    assert no_csrf.post(url).status_code == 403
+
+    r = admin.post(url)
+    assert r.status_code == 200
+    assert r.json()["state"] == "resolved" and r.json()["end_reason"] == "closed_by_user"
+    assert admin.post(url).status_code == 409
+    assert admin.post(f"{API}/alerts/events/999/close").status_code == 404
+    entry = db.scalars(select(AuditLog).where(AuditLog.target_type == "alert_event")).one()
+    assert entry.target_id == str(event_id) and entry.changes["end_reason"] == "closed_by_user"
+
+
+async def test_api_never_returns_a_sensitive_label_value(
+    admin: TestClient, engine: Engine, db: Session, prom: FakeProm
+) -> None:
+    add_rule(db, for_seconds=0)
+    ev, _ = make_eval(engine, prom, Recorder(), Clock())
+    prom.vector = [
+        {
+            "vantage_instance": "fw",
+            "api_token": "example-token",
+            "url": "https://admin:example-password@192.0.2.10/x?auth=example-query",
+        }
+    ]
+    await ev.tick()
+    body = admin.get(f"{API}/alerts/events").text
+    for raw in ("example-token", "example-password", "example-query"):
+        assert raw not in body
+    (event,) = admin.get(f"{API}/alerts/events").json()
+    assert event["labels"]["api_token"] == "<redacted>"
+    assert event["labels"]["url"] == "https://192.0.2.10/x"

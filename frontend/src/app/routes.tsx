@@ -38,6 +38,7 @@ export const routes: RouteObject[] = [
     ),
     children: [
       { index: true, element: <DashboardPage /> },
+      { path: "d/:id", element: <DashboardPage /> },
       { path: "devices", element: <DevicesPage /> },
       {
         path: "devices/new",

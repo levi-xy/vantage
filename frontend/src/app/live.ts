@@ -2,12 +2,14 @@ import type { QueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { API_BASE } from "../api";
 import type { Instance, LiveMessage } from "../api";
+import { INSTANT_REFETCH_MS } from "../cards/metrics/useMetricQuery";
 import { INSTANCES_KEY } from "../pages/devices/queries";
 
 /** Every alert-events query is keyed under this. */
 export const ALERTS_KEY = ["alerts"] as const;
 
-export type LiveState = "connecting" | "live" | "reconnecting";
+/** `closed`: the backend ended the socket because the session ended (4401); no reconnect. */
+export type LiveState = "connecting" | "live" | "reconnecting" | "closed";
 
 const MIN_DELAY_MS = 1_000;
 const MAX_DELAY_MS = 30_000;
@@ -104,6 +106,7 @@ export function connectLive(
       if (stopped) return;
       if (event.code === CLOSE_SESSION_ENDED) {
         stopped = true;
+        onState("closed");
         checkSession();
         return;
       }
@@ -128,4 +131,34 @@ export function useLiveUpdates(queryClient: QueryClient, checkSession?: () => vo
   const [state, setState] = useState<LiveState>("connecting");
   useEffect(() => connectLive(queryClient, setState, checkSession), [queryClient, checkSession]);
   return state;
+}
+
+/**
+ * When data last arrived: the newest successful query or `/ws` push into the query cache
+ * (epoch ms), or null before the first one. Nothing is fetched for it.
+ */
+export function useLastDataUpdate(queryClient: QueryClient): number | null {
+  const [last, setLast] = useState<number | null>(null);
+  useEffect(
+    () =>
+      queryClient.getQueryCache().subscribe((event) => {
+        if (event.type === "updated" && event.action.type === "success") {
+          const at = event.query.state.dataUpdatedAt || Date.now();
+          setLast((prev) => (prev === null || at > prev ? at : prev));
+        }
+      }),
+    [queryClient],
+  );
+  return last;
+}
+
+/** How often the app refreshes its data: the cards' instant queries and the alert count. */
+export const REFRESH_MS = INSTANT_REFETCH_MS;
+
+const pad = (n: number) => String(n).padStart(2, "0");
+
+/** HH:MM:SS, 24-hour, local time. */
+export function clockTime(at: number): string {
+  const d = new Date(at);
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }

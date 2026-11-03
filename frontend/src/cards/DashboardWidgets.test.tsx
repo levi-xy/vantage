@@ -1,7 +1,9 @@
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import { exampleMe, fakeBackend, json, mockSystemTheme, renderApp } from "../test-utils";
 import { exampleInstance, INSTANCE_ID } from "../pages/devices/testFixtures";
-import { hasWanSource, healthCounts, wanSummary } from "./overview";
+import type { AlertEvent, Instance } from "../api";
+import { hasWanSource, healthCounts, wanSummary, withoutFreshData } from "./overview";
+import { ageText, findProblems, sinceText } from "./problems";
 
 beforeEach(() => mockSystemTheme(false));
 
@@ -23,10 +25,82 @@ describe("overview helpers", () => {
     expect(hasWanSource([up])).toBe(false);
     expect(hasWanSource([exampleInstance({ type_id: "pfsense" })])).toBe(true);
   });
+
+  it("counts devices without fresh data", () => {
+    const now = Date.parse("2026-01-02T03:10:00Z");
+    const status = (state: Instance["status"]["state"], last: string | null) => ({
+      state,
+      checked_at: null,
+      last_success_at: last,
+      error: null,
+    });
+    const fresh = exampleInstance({ status: status("up", "2026-01-02T03:09:00Z") });
+    const old = exampleInstance({ status: status("down", "2026-01-02T03:00:00Z") });
+    const pending = exampleInstance({ status: status("pending", null) });
+    const scraped = exampleInstance({ id: "scraped", status: status("unknown", null) });
+    const disabled = exampleInstance({ enabled: false, status: status("unknown", null) });
+    const scrape = new Map([["scraped", "down" as const]]);
+    expect(withoutFreshData([fresh, old, pending, scraped, disabled], scrape, now)).toBe(2);
+  });
 });
 
-describe("dashboard-wide cards", () => {
-  it("shows on an old layout, with WAN from a fleet query", async () => {
+describe("problems", () => {
+  const event = (overrides: Partial<AlertEvent>): AlertEvent => ({
+    id: 1,
+    rule_id: 1,
+    instance_id: null,
+    rule_name: "High CPU",
+    severity: "warning",
+    labels: {},
+    fingerprint: "example",
+    state: "firing",
+    no_data_reason: null,
+    started_at: "2026-01-02T03:00:00Z",
+    state_since: null,
+    ended_at: null,
+    end_reason: null,
+    summary: "x",
+    deliveries: [],
+    ...overrides,
+  });
+
+  it("folds a down device's alerts into its row and sorts oldest first", () => {
+    const now = Date.parse("2026-01-02T03:30:00Z");
+    const down = exampleInstance({
+      name: "router-1",
+      status: {
+        state: "down",
+        checked_at: null,
+        last_success_at: "2026-01-02T03:10:00Z",
+        error: "no answer to SNMP",
+      },
+    });
+    const other = exampleInstance({ id: "other", name: "nas-2" });
+    const events = [
+      event({ id: 1, instance_id: INSTANCE_ID, rule_name: "Router down" }),
+      event({
+        id: 2,
+        instance_id: "other",
+        rule_name: "Disk full",
+        state: "no_data",
+        no_data_reason: "source_stale",
+        state_since: "2026-01-02T03:20:00Z",
+      }),
+      event({ id: 3, rule_name: "Ping loss", started_at: "2026-01-02T03:05:00Z" }),
+    ];
+    const problems = findProblems([down, other], events, (i) => i.status.state);
+    expect(problems.map((p) => [p.tag, p.title, p.detail, p.href, p.critical])).toEqual([
+      ["FIRING", "Ping loss", "x", "/alerts", false],
+      ["DOWN", "router-1 is down", "no answer to SNMP · 1 open alert", "/devices", true],
+      ["NO DATA", "Disk full", "device not reporting · nas-2", "/alerts", false],
+    ]);
+    expect(sinceText(problems[1]?.since ?? null, now)).toMatch(/^since \d\d:\d\d · 20 min$/);
+    expect(ageText(125 * 60_000)).toBe("2 h 5 min");
+  });
+});
+
+describe("dashboard summary tiles", () => {
+  it("shows the tiles, with WAN from a fleet query", async () => {
     const backend = fakeBackend({
       session: exampleMe("admin"),
       routes: {
@@ -38,6 +112,8 @@ describe("dashboard-wide cards", () => {
             {
               id: 2,
               rule_id: 1,
+              instance_id: null,
+              rule_name: "High CPU",
               state: "firing",
               started_at: "2026-01-01T00:00:00Z",
               ended_at: null,
@@ -53,10 +129,17 @@ describe("dashboard-wide cards", () => {
       },
     });
     renderApp("/", backend);
-    expect(await screen.findByText("1 of 2 gateways up")).toBeInTheDocument();
+    const internet = await screen.findByRole("group", { name: "Internet" });
+    expect(await within(internet).findByText("1/2")).toBeInTheDocument();
+    // The down gateway is the one named.
+    expect(within(internet).getByText("192.0.2.2 · 100% loss")).toBeInTheDocument();
+    const alerts = screen.getByRole("group", { name: "Active alerts" });
+    expect(within(alerts).getByText("1")).toBeInTheDocument();
+    expect(within(alerts).getByText("firing")).toBeInTheDocument();
+    const devices = screen.getByRole("group", { name: "Devices" });
+    expect(within(devices).getByText("1/1")).toBeInTheDocument();
+    // The example device is up but has no success on record.
+    expect(within(devices).getByText("1 device without fresh data")).toBeInTheDocument();
     expect(screen.getByText("No port chosen.")).toBeInTheDocument();
-    expect(await screen.findByText("Active alerts")).toBeInTheDocument();
-    expect(await screen.findByText("1")).toBeInTheDocument();
-    expect(screen.getByText("Devices healthy")).toBeInTheDocument();
   });
 });

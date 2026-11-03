@@ -48,7 +48,7 @@ describe("dashboard page", () => {
     const backend = backendWith({ version: 2, cards: [PING] });
     renderApp("/", backend);
     const card = await screen.findByTestId("card");
-    expect(card).toHaveTextContent("Ping");
+    expect(card).toHaveTextContent("DOWN");
     expect(card).toHaveTextContent("nas-1");
     expect(screen.getAllByTestId("card")).toHaveLength(1);
     expect(puts(backend)).toHaveLength(0);
@@ -57,7 +57,7 @@ describe("dashboard page", () => {
   it("puts the dashboard-wide cards on an old layout, without saving it", async () => {
     const backend = backendWith({ cards: [PING] });
     renderApp("/", backend);
-    expect(await screen.findByText("Devices healthy")).toBeInTheDocument();
+    expect(await screen.findByRole("group", { name: "Devices" })).toBeInTheDocument();
     expect(screen.getAllByTestId("card")).toHaveLength(
       WIDGETS.filter((w) => w.card_type !== "network-map").length + 1,
     );
@@ -124,11 +124,14 @@ describe("dashboard page", () => {
     }
   });
 
-  it("offers no editing to a viewer", async () => {
+  it("lets a viewer edit too (dashboards are shared by everyone)", async () => {
     const backend = backendWith({ version: 2, cards: [PING] }, "viewer");
     renderApp("/", backend);
     expect(await screen.findByTestId("card")).toHaveTextContent("nas-1");
-    expect(screen.queryByRole("button", { name: "Edit dashboard" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit dashboard" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove Ping" }));
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(puts(backend)).toHaveLength(1));
   });
 
   it("shows an error when the dashboard can't be loaded", async () => {
@@ -136,7 +139,7 @@ describe("dashboard page", () => {
       session: exampleMe(),
       routes: {
         "GET /instances": () => json([]),
-        "GET /dashboards/1": () => json({ detail: "boom" }, 404),
+        "GET /dashboards/1": () => json({ detail: "boom" }, 422),
       },
     });
     renderApp("/", backend);
@@ -200,5 +203,23 @@ describe("prepareLayout", () => {
       ["dashboard:w1", 0, 0],
       ["a:t", 2, 2],
     ]);
+  });
+
+  it("shows a card saved twice once, and never adds a widget an old layout already has", () => {
+    const widget: CardPlacement = { ...placed, instance_id: null, card_type: "w1", x: 0 };
+    const prepare = (layout: DashboardLayout) =>
+      prepareLayout(
+        layout,
+        widgets,
+        [{ instanceId: "a", spec: spec("t") }],
+        new Set(["a"]),
+        new Set(["a"]),
+      ).map(cardKey);
+
+    expect(prepare({ version: 2, cards: [widget, placed, widget, placed] })).toEqual([
+      "dashboard:w1",
+      "a:t",
+    ]);
+    expect(prepare({ cards: [widget, placed] })).toEqual(["dashboard:w1", "a:t"]);
   });
 });

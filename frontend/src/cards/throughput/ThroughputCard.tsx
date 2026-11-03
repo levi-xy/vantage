@@ -1,11 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { LIVE_RATE_KEY } from "../../app/live";
 import type { LiveRate } from "../../app/live";
 import { useUnits } from "../../app/units";
+import { MainDashboardContext } from "../mainDashboard";
+import { AreaChart } from "../metrics/Charts";
+import { freshFor, POLL_INTERVAL_SECONDS, sourceOf, StaleContext } from "../metrics/freshness";
 import { firstSeries, firstValue } from "../metrics/promql";
-import { StatTile } from "../metrics/StatTile";
+import { shownState, useScrapeStates } from "../metrics/scrapeStatus";
 import { useFleetQuery, useFleetRangeQuery } from "../metrics/useMetricQuery";
+import { KeyFigure } from "../metrics/KeyFigure";
+import { useCardTier } from "../metrics/tier";
 import type { WidgetProps, WidgetSettingsProps } from "../widgets";
 import {
   MAX_PORTS,
@@ -13,10 +18,14 @@ import {
   portKey,
   portOptions,
   portsFromSettings,
+  historyQuery,
+  isWanPort,
   rateQuery,
   settingsWithPorts,
+  PFSENSE_INFO_QUERY,
   SNMP_INFO_QUERY,
 } from "./ports";
+import type { PortRef } from "./ports";
 import type { Instance } from "../../api";
 
 /** Every port Vantage has traffic counters for, named as the cards name them. */
@@ -25,11 +34,13 @@ export function usePortOptions(instances: Instance[]) {
   const snmp = useFleetQuery(PORT_LIST_QUERIES.snmp);
   const node = useFleetQuery(PORT_LIST_QUERIES.node);
   const info = useFleetQuery(SNMP_INFO_QUERY);
+  const pfsenseInfo = useFleetQuery(PFSENSE_INFO_QUERY);
   return {
     groups: portOptions(
       { pfsense: pfsense.data, snmp: snmp.data, node: node.data },
       info.data,
       instances,
+      pfsenseInfo.data,
     ),
     loading: pfsense.isPending || snmp.isPending || node.isPending,
   };
@@ -49,8 +60,7 @@ function useNow(): number {
 }
 
 /** The last live rate pushed on /ws, while it is fresh. */
-function useLiveRate(): LiveRate | undefined {
-  const now = useNow();
+function useLiveRate(now: number): LiveRate | undefined {
   const live = useQuery<LiveRate>({
     queryKey: LIVE_RATE_KEY,
     queryFn: () => Promise.reject(new Error("pushed only")),
@@ -61,26 +71,83 @@ function useLiveRate(): LiveRate | undefined {
   return fresh ? live.data : undefined;
 }
 
+/** The chart's window: the last 6 hours. */
+const CHART_WINDOW_SECONDS = 6 * 3600;
+
 /**
- * In and out traffic of the ports the admin chose (summed), with the last hour. While the
- * backend pushes live rates (every ~2 s), those replace Prometheus' 2-minute average.
+ * The chosen ports' devices without fresh data: a polled device whose last successful poll
+ * is older than 2 x its interval + 30 s, or a scraped one Prometheus can't scrape.
+ */
+function useStaleDevices(ports: PortRef[], instances: Instance[], nowMs: number): Instance[] {
+  const ids = new Set(ports.map((p) => p.instanceId));
+  const chosen = instances.filter((i) => ids.has(i.id));
+  const scrape = useScrapeStates(chosen);
+  return chosen.filter((i) => {
+    const source = sourceOf(i);
+    if (source.kind === "polled") {
+      return (
+        source.lastSuccess !== null &&
+        nowMs / 1000 - source.lastSuccess > freshFor(POLL_INTERVAL_SECONDS)
+      );
+    }
+    return source.kind === "scraped" && shownState(i, scrape) === "down";
+  });
+}
+
+function Current({ label, value, tone }: { label: string; value: string; tone: "in" | "out" }) {
+  return (
+    <div role="group" aria-label={label} className="flex flex-col">
+      <span className="flex items-center gap-1.5 text-xs text-muted">
+        <span className={`h-[3px] w-2.5 rounded-sm ${tone === "in" ? "bg-in" : "bg-out"}`} />
+        {label}
+      </span>
+      <span className="text-xl font-medium tabular-nums">{value}</span>
+    </div>
+  );
+}
+
+/**
+ * In and out traffic of the ports the admin chose (summed): now, and the last 6 hours. While
+ * the backend pushes live rates (every ~2 s), those replace Prometheus' 2-minute average.
  */
 export function ThroughputCard({ instances, settings }: WidgetProps) {
-  const { formatRate } = useUnits();
+  const tier = useCardTier();
+  const { formatRate, unit } = useUnits();
   const ports = portsFromSettings(settings);
   const chosen = ports.length > 0;
   const inExpr = rateQuery(ports, "in");
   const outExpr = rateQuery(ports, "out");
   const rx = useFleetQuery(inExpr);
   const tx = useFleetQuery(outExpr);
-  const rxSpark = useFleetRangeQuery(inExpr, undefined, chosen);
-  const txSpark = useFleetRangeQuery(outExpr, undefined, chosen);
+  // No `or vector(0)` here: a time the device didn't report is a gap, not 0 traffic.
+  const rxHistory = useFleetRangeQuery(
+    historyQuery(ports, "in"),
+    CHART_WINDOW_SECONDS,
+    chosen && tier === "full",
+  );
+  const txHistory = useFleetRangeQuery(
+    historyQuery(ports, "out"),
+    CHART_WINDOW_SECONDS,
+    chosen && tier === "full",
+  );
   const { groups } = usePortOptions(instances);
-  // Live only when every chosen port was read; a partial sum would look like the total.
-  const pushed = useLiveRate();
-  const live = pushed && pushed.ports === ports.length ? pushed : undefined;
+  const now = useNow();
+  // Live only on the main dashboard (the backend reads that card's ports), and only when
+  // every chosen port was read; a partial sum would look like the total.
+  const onMain = useContext(MainDashboardContext);
+  const pushed = useLiveRate(now);
+  const live = onMain && pushed && pushed.ports === ports.length ? pushed : undefined;
+  const staleDevices = useStaleDevices(ports, instances, now);
 
   if (!chosen) {
+    if (tier === "small") {
+      return (
+        <div className="flex h-full min-w-0 flex-col justify-center gap-0.5 px-3 py-2">
+          <span className="truncate text-[13px] leading-[18px] font-semibold">Throughput</span>
+          <span className="truncate text-xs leading-[18px] text-muted">No port chosen.</span>
+        </div>
+      );
+    }
     return (
       <div className="flex h-full flex-col justify-center gap-1 p-4">
         <span className="text-xs text-slate-500 dark:text-slate-400">Throughput</span>
@@ -96,32 +163,114 @@ export function ThroughputCard({ instances, settings }: WidgetProps) {
     groups.flatMap((g) => g.ports.map((o) => [portKey(o.port), o.name] as const)),
   );
   const label = ports.map((p) => names.get(portKey(p)) ?? p.iface).join(", ");
-  return (
-    <div className="flex h-full min-w-0 flex-col gap-0.5 px-4 py-3">
-      <span className="truncate text-xs text-slate-500 dark:text-slate-400" title={label}>
-        {live && (
-          <span
-            className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 align-middle"
-            aria-label="live"
-          />
-        )}
-        Throughput · {label}
-      </span>
-      <div className="grid grid-cols-2 gap-3">
-        <StatTile
-          label="↓ In"
-          value={live ? formatRate(live.inBps) : rx.isError ? "—" : formatRate(firstValue(rx.data))}
-          spark={firstSeries(rxSpark.data)}
-        />
-        <StatTile
-          label="↑ Out"
-          value={
-            live ? formatRate(live.outBps) : tx.isError ? "—" : formatRate(firstValue(tx.data))
-          }
-          spark={firstSeries(txSpark.data)}
-        />
+  // In/out as the port counts it. Only for WAN ports is that the network's download/upload.
+  const wan = ports.every((p) => isWanPort(p.iface, names.get(portKey(p))));
+  const [inName, outName] = wan ? ["Download", "Upload"] : ["In", "Out"];
+  // A missing counter sums as 0 ("or vector(0)"), so with a device not answering "now" would
+  // read 0: it shows a dash instead, and the history is greyed.
+  const stale = !live && staleDevices.length > 0;
+  const current = (pushedBps: number | undefined, q: typeof rx) =>
+    pushedBps !== undefined
+      ? formatRate(pushedBps)
+      : stale || q.isError
+        ? "—"
+        : formatRate(firstValue(q.data));
+  const rxText = current(live?.inBps, rx);
+  const txText = current(live?.outBps, tx);
+
+  if (tier === "small") {
+    // The name, "NO DATA" while a chosen device doesn't answer, and the current rates.
+    return (
+      <section
+        aria-label="Throughput"
+        className="flex h-full min-w-0 flex-col justify-center gap-0.5 overflow-hidden px-3 py-2"
+      >
+        <div className="flex min-w-0 items-baseline gap-2 leading-[18px]">
+          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold" title={label}>
+            Throughput
+          </span>
+          {stale && (
+            <span
+              title={`No recent data from ${staleDevices.map((i) => i.name).join(", ")}`}
+              className="shrink-0 text-xs font-semibold tracking-wide text-crit-text"
+            >
+              NO DATA
+            </span>
+          )}
+        </div>
+        <KeyFigure label={`${inName} and ${outName.toLowerCase()}`}>
+          <span className="text-in">↓</span>
+          {rxText} <span className="text-out">↑</span>
+          {txText}
+        </KeyFigure>
+      </section>
+    );
+  }
+  const historyError = rxHistory.error ?? txHistory.error;
+  // The whole 6 hours up to the last fetch, so a device that stopped reporting shows a gap
+  // up to "now" instead of a chart that ends early.
+  const historyEnd = rxHistory.dataUpdatedAt / 1000;
+  const chart = (
+    <AreaChart
+      window={
+        historyEnd > 0 ? { start: historyEnd - CHART_WINDOW_SECONDS, end: historyEnd } : undefined
+      }
+      label={`${inName} and ${outName.toLowerCase()} over the last 6 hours`}
+      format={formatRate}
+      tickScale={unit === "bytes" ? 8 : 1}
+      series={[
+        { name: inName, points: firstSeries(rxHistory.data), tone: "in", area: true },
+        { name: outName, points: firstSeries(txHistory.data), tone: "out" },
+      ]}
+    />
+  );
+  let history;
+  if (historyError) {
+    history = (
+      <p role="alert" className="line-clamp-2 text-xs text-crit-text" title={historyError.message}>
+        Could not load the history: {historyError.message}
+      </p>
+    );
+  } else if (rxHistory.isPending || txHistory.isPending) {
+    history = <p className="text-xs text-muted">Loading…</p>;
+  } else if (stale) {
+    history = (
+      <div data-stale="true" className="flex min-h-0 flex-1 flex-col opacity-60 grayscale">
+        <StaleContext.Provider value>{chart}</StaleContext.Provider>
       </div>
-    </div>
+    );
+  } else {
+    history = chart;
+  }
+  return (
+    <section aria-label="Throughput" className="flex h-full min-w-0 flex-col gap-3 p-4">
+      <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
+        <div className="min-w-0">
+          <div className="text-[15px] font-semibold">Throughput</div>
+          {stale && tier !== "full" ? (
+            <div className="truncate text-xs font-semibold text-crit-text" title={label}>
+              No recent data from {staleDevices.map((i) => i.name).join(", ")}
+            </div>
+          ) : (
+            <div className="truncate text-xs text-muted" title={label}>
+              {label}
+              {live ? " · live" : ""}
+            </div>
+          )}
+        </div>
+        <div className="ml-auto flex gap-5">
+          <Current label={inName} tone="in" value={rxText} />
+          <Current label={outName} tone="out" value={txText} />
+        </div>
+      </div>
+      {/* Medium: the current rates only, no chart. */}
+      {tier === "full" && <div className="flex min-h-40 flex-1 flex-col">{history}</div>}
+      {stale && tier === "full" && (
+        <p className="text-xs text-muted">
+          No recent data from {staleDevices.map((i) => i.name).join(", ")}; history greyed.
+        </p>
+      )}
+    </section>
   );
 }
 

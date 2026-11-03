@@ -1,6 +1,13 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { UserInfo } from "../api";
-import { exampleMe, fakeBackend, json, mockSystemTheme, renderApp } from "../test-utils";
+import {
+  exampleMe,
+  fakeBackend,
+  json,
+  mockSystemTheme,
+  openAccountMenu,
+  renderApp,
+} from "../test-utils";
 import type { FakeBackendOptions } from "../test-utils";
 
 const NEW_PASSWORD = "example-new-password-456";
@@ -81,14 +88,16 @@ describe("users page", () => {
 
   it("is in the admin's menu and hidden from viewers, who never request it", async () => {
     const admin = renderApp("/", backendWith());
-    const nav = await screen.findByRole("navigation", { name: "Main" });
-    expect(within(nav).getByRole("link", { name: "Users" })).toBeInTheDocument();
+    await screen.findByRole("navigation", { name: "Main" });
+    expect(within(openAccountMenu()).getByRole("link", { name: "Users" })).toBeInTheDocument();
     admin.unmount();
 
     const backend = fakeBackend({ session: exampleMe("viewer") });
     renderApp("/users", backend);
-    const viewerNav = await screen.findByRole("navigation", { name: "Main" });
-    expect(within(viewerNav).queryByRole("link", { name: "Users" })).not.toBeInTheDocument();
+    await screen.findByRole("navigation", { name: "Main" });
+    expect(
+      within(openAccountMenu()).queryByRole("link", { name: "Users" }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 1, name: "Users" })).not.toBeInTheDocument();
     expect(routesSent(backend)).not.toContain("GET /users");
   });
@@ -205,9 +214,11 @@ describe("users page", () => {
     fireEvent.click(within(me).getByRole("button", { name: "Make admin viewer" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/"));
     // The session is loaded again, so the menu follows the new role.
-    const nav = await screen.findByRole("navigation", { name: "Main" });
+    await screen.findByRole("navigation", { name: "Main" });
     await waitFor(() =>
-      expect(within(nav).queryByRole("link", { name: "Users" })).not.toBeInTheDocument(),
+      expect(
+        within(openAccountMenu()).queryByRole("link", { name: "Users" }),
+      ).not.toBeInTheDocument(),
     );
   });
 

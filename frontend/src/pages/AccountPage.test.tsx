@@ -5,6 +5,7 @@ import {
   fakeBackend,
   json,
   mockSystemTheme,
+  openAccountMenu,
   renderApp,
 } from "../test-utils";
 import type { FakeBackendOptions } from "../test-utils";
@@ -45,8 +46,8 @@ const routesSent = (backend: ReturnType<typeof fakeBackend>) =>
 describe("my account", () => {
   it("is in every user's menu", async () => {
     renderApp("/", backendWith());
-    const nav = await screen.findByRole("navigation", { name: "Main" });
-    expect(within(nav).getByRole("link", { name: "My account" })).toHaveAttribute(
+    await screen.findByRole("navigation", { name: "Main" });
+    expect(within(openAccountMenu()).getByRole("link", { name: "My account" })).toHaveAttribute(
       "href",
       "/account",
     );

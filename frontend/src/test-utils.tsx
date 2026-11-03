@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { createMemoryRouter } from "react-router";
 import { ApiClient, API_BASE } from "./api";
 import type { Me, Role } from "./api";
@@ -48,8 +48,8 @@ export interface FakeBackendOptions {
   setupRequired?: boolean;
   /** Users who can log in, by username (password is EXAMPLE_PASSWORD). */
   users?: Me[];
-  /** Override a route: key is "METHOD /path" relative to /api/v1. */
-  routes?: Record<string, (body: unknown) => Response | Promise<Response>>;
+  /** Override a route: key is "METHOD /path" relative to /api/v1; `url` has the query string. */
+  routes?: Record<string, (body: unknown, url: string) => Response | Promise<Response>>;
 }
 
 /**
@@ -71,7 +71,7 @@ export function fakeBackend(options: FakeBackendOptions = {}) {
     const method = init?.method ?? "GET";
     const body: unknown = init?.body ? JSON.parse(String(init.body)) : undefined;
     const override = options.routes?.[`${method} ${path}`];
-    if (override) return override(body);
+    if (override) return override(body, url);
 
     switch (`${method} ${path}`) {
       case "GET /setup/status":
@@ -163,4 +163,19 @@ export function renderApp(
   const queryClient = createQueryClient();
   const result = render(<App router={router} queryClient={queryClient} client={client} />);
   return { ...result, router, client, queryClient, backend };
+}
+
+/**
+ * Open the account menu from the top bar's user button (named "<username> (<Role>)") and
+ * return it: Users and Audit log for admins, My account and Log out for everyone.
+ */
+export function openAccountMenu(): HTMLElement {
+  const button = screen.getByRole("button", { name: /\((Admin|Viewer)\)$/ });
+  if (button.getAttribute("aria-expanded") !== "true") fireEvent.click(button);
+  return screen.getByRole("navigation", { name: "Account" });
+}
+
+/** Log out through the account menu. */
+export function clickLogOut() {
+  fireEvent.click(within(openAccountMenu()).getByRole("button", { name: "Log out" }));
 }

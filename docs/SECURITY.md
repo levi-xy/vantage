@@ -295,9 +295,11 @@ Run from `deploy/`. `-T` matters: it pipes stdin/stdout instead of a terminal.
 docker compose exec -T backend python -m app.cli backup - > vantage-backup.json.gz
 # or inside the data volume: ... python -m app.cli backup /data/backups/vantage.json.gz
 
-# Restore into a freshly started (empty) Vantage, then restart the backend.
-docker compose exec -T backend python -m app.cli restore - < vantage-backup.json.gz
-docker compose restart backend
+# Restore, with the backend stopped, into an empty database (one that was started once,
+# so the tables exist), then start the backend again.
+docker compose stop backend
+docker compose run --rm -T backend python -m app.cli restore - < vantage-backup.json.gz
+docker compose up -d backend
 
 # Rotate the master key, with the backend stopped.
 openssl rand -base64 32 > secrets/master.key.new
@@ -308,20 +310,30 @@ mv secrets/master.key secrets/master.key.old && mv secrets/master.key.new secret
 docker compose up -d --force-recreate backend
 ```
 
+Backup runs while Vantage runs. **Restore and rotation are offline**: they refuse to run
+while the backend runs, and the backend doesn't start while one of them runs (see
+"Maintenance lock" below). `docker compose run --rm` starts a one-off container from the
+backend image with the command given, so the backend itself stays stopped.
+
 - **The master key is never in a backup.** Stored credentials stay encrypted in the file,
   so a backup without its key is useless for them. Back up `deploy/secrets/master.key`
   separately and keep it apart from the backup files; the CLI prints this reminder
   after every backup. The file still holds password hashes and the audit log: treat
   it as sensitive. A backup written to a path is created with mode `0600` and never
   overwrites an existing file; `backup -` refuses to write to a terminal.
-- **Restore is one transaction and doesn't clobber.** It refuses a database that holds
-  any row unless `--overwrite` is given (which deletes everything first). It parses the
+- **Restore is one transaction and doesn't clobber.** It needs the backend stopped (see
+  "Maintenance lock"). It refuses a database that holds any row unless `--overwrite` is
+  given (which deletes everything first). It parses the
   file strictly (only JSON, exactly Vantage's tables and columns, every value
   type-checked, enum columns limited to their allowed values, 1 GiB uncompressed cap)
   and only restores a backup from the same schema revision. A backup from an older
   version is refused in v0.1: restore it with the Vantage version that made it, then
   upgrade. It reports how many stored secrets decrypt with the server's key,
-  and exits 1 (data restored) if some don't. Restore is audited (`target_type`
+  and exits 1 (data restored) if some don't. A restored database carries its own key
+  check value (see "Master key mismatch"), checked against the server's key: a backup
+  whose secrets are on more than one key is refused (nothing changes); one made
+  consistently with another key is restored, and the backend stays in key_mismatch mode
+  until it runs with that key. Restore is audited (`target_type`
   `database`, `actor_type` `cli`). **Login sessions are never restored** (a session
   revoked after the backup, or a stolen cookie, would come back): everyone logs in again
   after a restore. The audit entry records how many were skipped.
@@ -329,11 +341,14 @@ docker compose up -d --force-recreate backend
   backend runs with) and the new one. In one transaction, with the database locked
   against writes, it decrypts every `instances.secrets` and `channels.secrets` blob with
   the current key, re-encrypts it with the new one and reads everything back with the
-  new key before committing. If any blob doesn't decrypt, nothing changes. It refuses
+  new key before committing. The key check value moves to the new key in the same
+  transaction, so a backend still running on the old key goes into key_mismatch mode
+  instead of failing on every secret. If any blob doesn't decrypt, nothing changes. It refuses
   to run if a table gains a binary column it doesn't know about. One audit entry
   (`target_type` `master_key`, `actor_type` `cli`) records only the per-table counts.
-  Stop the backend first (`docker compose stop backend`) and run the command with
-  `docker compose run --rm`, so nothing is written with the old key in between; then
+  Stop the backend first (`docker compose stop backend`; the command refuses while it
+  runs) and run the command with `docker compose run --rm`, so nothing is written with
+  the old key in between; then
   swap the key file (give the new one the same owner and mode as `master.key`) and
   start the backend. Keep the old
   key as long as you keep backups made before the rotation.
@@ -343,6 +358,127 @@ docker compose up -d --force-recreate backend
   restore and rotation under table locks, id sequences reset after a restore). For
   routine Postgres backups, `pg_dump` works as well; it carries the same encrypted
   blobs, and the master key still has to be backed up separately.
+
+### Maintenance lock
+
+Restore and master-key rotation must never run next to a live backend: the backend would
+keep polling and writing with the old data or the old key in between. Two `settings`
+rows enforce that (both runtime state: a backup leaves them out, a restore keeps them):
+
+- **`maintenance_lock`** `{operation, started_at, host, pid, token}`. `restore` and
+  `rotate-master-key` take it with a plain INSERT, which fails while the row exists, so
+  only one command holds it at a time. A second one is refused with the holder's
+  operation, start time, host and pid. The command releases it when its transaction has
+  ended, whether it succeeded or failed (also on Ctrl-C).
+- **`backend_heartbeat`** `{state, at, host, pid, token}`. The backend rewrites it every
+  10 seconds and then reads the lock; a clean shutdown (`docker compose stop`) deletes
+  it, so a command can run at once afterwards. The compose file gives the backend 20
+  seconds to shut down (`stop_grace_period`) before Docker kills it; a backend killed
+  before it got there leaves a heartbeat that blocks the commands for up to 30 seconds.
+
+After taking the lock the command reads the heartbeat. One younger than 30 seconds means
+the backend runs: the command releases the lock and refuses ("stop it first"), with
+nothing changed. There is no `--force`. Each side commits its own row before reading the
+other's, so a backend starting at the same moment as a command never lets both go on.
+A backend killed without a clean shutdown leaves a heartbeat that goes stale after 30
+seconds; wait that long.
+
+**The startup gate.** The backend container's first step, before the migrations, is
+`python -m app.cli startup-gate`. It writes the heartbeat (`starting`), then reads the
+lock. With a lock present it logs
+
+```
+maintenance in progress: restore since 2026-11-02T10:00:00+00:00 (<host>, pid 7). Start
+Vantage again when it finishes, or run app.cli maintenance-unlock if it was interrupted
+```
+
+and exits 1: nothing is migrated or started. Docker's restart policy (`unless-stopped`)
+retries with a growing delay (up to a minute), so a backend that was started by mistake,
+or by a host reboot, during a restore comes up by itself once the lock is gone. A
+database without tables (a fresh install) passes.
+
+Known gap: the gate's `starting` heartbeat goes stale after 30 seconds, and the backend
+writes its own only once the migrations are done and it has started. If an upgrade's
+migrations take longer than that, a command started in that window isn't refused. The
+backend then sees its lock on its first heartbeat and goes into maintenance mode, and
+the database's own locks keep the two from writing at the same time, but don't start a
+restore or rotation while an upgrade is still migrating.
+
+**Maintenance mode.** If a lock appears while the backend runs (for example a command
+started while the backend was hung, so its heartbeat looked stale), the backend notices
+on its next heartbeat (within 10 seconds) and:
+
+- pauses polling, live rates, alert evaluation and notification delivery, and skips the
+  master-key check (it would write the check value, a system alert and its messages);
+  the first check after maintenance runs before anything resumes;
+- refuses every state-changing API request with
+  `503 {"detail": "<short message>", "reason": "maintenance"}`, nothing written; reads,
+  login, logout and PromQL queries keep working;
+- answers `/healthz` with `503 {"reason": "maintenance"}`, first in its order.
+
+The first heartbeat without a lock resumes everything.
+
+**A stuck lock.** A command that was killed (`kill -9`, the container removed, the host
+lost power) can't release its lock, and the lock never expires on its own: the backend
+then refuses to start, and its log shows the message above. Its transaction was rolled
+back by the database, so nothing half-done is left. Make sure the command really is gone
+(`docker compose ps -a`, `docker ps`), then remove the lock:
+
+```bash
+docker compose run --rm backend python -m app.cli maintenance-unlock
+# Removed the maintenance lock held by restore since ... (<host>, pid 7).
+docker compose up -d backend
+```
+
+`maintenance-unlock` prints which command held the lock and records an audit entry
+(`target_type` `maintenance_lock`, `actor_type` `cli`). Run the interrupted command again
+if it didn't finish.
+
+### Master key mismatch (`key_mismatch`)
+
+The database holds a key check value: a `settings` row `key_check` with a fixed, known
+value encrypted with the master key under its own context, so no other blob can stand
+in for it. The backend decrypts it at startup and every 15 seconds. When that fails, the
+key in `deploy/secrets/master.key` (or `VANTAGE_MASTER_KEY`) isn't the one the stored
+device and channel credentials were encrypted with: the key file was replaced, lost, or
+belongs to another installation, or a backup was restored with a different key.
+
+The backend then runs in **key_mismatch mode** instead of refusing to start, so you can
+still log in and see what's wrong:
+
+- reads, logins and the UI keep working; a banner on every page says the master key
+  doesn't match;
+- polling, live rates and notification delivery stop (queued messages wait; they are
+  sent once the key matches);
+- every secret write (an instance or channel created or edited with credentials) is
+  refused with `503 {"detail": "<short message>", "reason": "key_mismatch"}` and nothing
+  is written; it is checked again inside each write's own transaction, so a database can
+  never hold secrets under two keys;
+- `/healthz` answers `503 {"reason": "key_mismatch"}` (first in its order), so an
+  external monitor sees it even though no channel can send;
+- the log repeats an ERROR line every 5 minutes, with per-table counts of the blobs that
+  decrypt (never values);
+- a system alert "Master key mismatch" is stored; its messages are recorded `failed`
+  with `error_kind` `credentials_unreadable` (the channel credentials can't be decrypted
+  either), never silently dropped. Once the alert resolves, its RESOLVED message stands
+  in for them: they no longer count for `notifications_stuck` or the delivery banner.
+
+On an upgrade from a version without the check value, it is created when every stored
+secret decrypts with the current key (or none is stored). If none decrypt, the mode is
+`wrong_key`; if only some do, `mixed_key` (the log names the per-table counts).
+
+**To fix it**, put the right key back and restart: copy the key that belongs to this
+database to `deploy/secrets/master.key` (same owner and mode as before) and run
+`docker compose up -d --force-recreate backend`. The next check passes, the system alert
+resolves and polling resumes. If the right key is lost, the stored credentials can't be
+recovered: restore a backup together with its key, or **delete the affected devices and
+channels** (deleting needs no key) and re-add them. Once no stored secret is left, the
+next check (within 15 s) seals the check value again with the running key (logged at
+WARNING), the mode ends, and the devices and channels can be re-added with their
+credentials. The same applies to a `mixed_key` database: delete the devices and channels
+whose credentials don't decrypt, or run with the key most of them were written with and
+re-enter the rest. A restore of a backup holding no secrets takes the server's key the
+same way.
 
 ## User management
 
@@ -499,6 +635,12 @@ Telegram puts the token in the URL path, so extra care keeps it out of logs and 
   `httpcore` loggers to WARNING when it starts, so those lines aren't written at all;
   a log filter on both loggers still rewrites `/bot<token>` to `/bot<redacted>` if
   their level is ever lowered.
+- Alert messages wait in the `alert_notifications` outbox until delivered
+  (`backend/app/alerts/delivery.py`). A failed attempt stores only a fixed `error_kind`
+  code (`timeout`, `rate_limited`, `unauthorized`, ...), never Telegram's answer or the
+  token; log lines carry the channel id, row ids, attempt count and that code. The stored
+  message text is built from the alert's filtered labels and holds no secret. Delivery is
+  at least once: a crash right after Telegram accepted a message can send it twice.
 
 Recommended: give the bot only what it needs (a bot that can post to one chat), and allow
 outbound HTTPS to `api.telegram.org` in your firewall only if you use Telegram alerts.
@@ -527,8 +669,10 @@ Set `VANTAGE_PUBLIC_HOSTS` to the names the dashboard is reached by (comma-separ
 backend then answers 400 to any `/api/*` request, and refuses the WebSocket handshake,
 when the `Host` header isn't listed. Unset, any `Host` is accepted, so existing installs
 keep working. Strongly recommended with `VANTAGE_HTTPS=false`: `setup.sh` warns when
-HTTPS is off and the list is empty. `/healthz`, `/sd/targets` and `/metrics` aren't
-affected (Prometheus reaches them by their compose name).
+HTTPS is off and the list is empty. `/healthz`, `/healthz/live`, `/sd/targets` and
+`/metrics` aren't affected (monitors and Prometheus reach them by other names). The check
+runs before everything else, so a request with an unknown `Host` gets the 400 even in
+maintenance mode, never the maintenance 503.
 
 ## Prometheus scrape limits
 
@@ -581,3 +725,63 @@ Known and deliberately accepted; listed so nobody rediscovers them as bugs.
   can't enter the directories, but members of the `docker` group can read the files
   (they can read everything in the containers anyway). Run `setup.sh` as root for
   owner-only modes.
+
+## Self-monitoring and /healthz
+
+**The limitation first: if the Vantage backend or its host is down, Vantage can't tell
+you.** Nothing below runs then. The same goes for the notification dispatcher itself being
+stuck: its messages never leave, so only `/healthz` (`notifications_stuck`) shows it. Point an external monitor on another machine (Uptime
+Kuma, cron + curl, a hosted dead-man's switch) at `https://<vantage>/healthz` and alert on
+anything but 200. For example, every 5 minutes from another host:
+
+```sh
+curl -fsS -o /dev/null --max-time 10 https://vantage.example.com:8443/healthz \
+    || echo "Vantage unhealthy" | mail -s "Vantage" admin@example.com
+```
+
+(Add `--cacert` with your certificate if it's self-signed, rather than `-k`.)
+
+### What Vantage checks itself (`backend/app/alerts/selfcheck.py`)
+
+| Failure | Detected by | After | Result |
+|---|---|---|---|
+| Prometheus unreachable (refused, timeout, HTTP 5xx) | the evaluator's per-tick probe | 2 min of failed probes | system alert "Prometheus unreachable" |
+| Prometheus up but not scraping Vantage | age of the newest `up{job="vantage-backend"} == 1` | older than 2 min, or none for 2 min | system alert "Metrics not being collected" |
+| Alert evaluation hung or crashed | a watchdog task: the evaluator's last progress (a query answered or failed, a tick finished), so a slow but working tick isn't a stall | 90 s (3 intervals) | system alert "Alert evaluation stopped"; the evaluator is restarted once |
+| One rule's query keeps failing | per-rule counter | 3 ticks in a row | the rule shows the error on the Alerts page; no message (a configuration problem) |
+
+A rule's own bad PromQL or too-many-series never counts as "Prometheus unreachable".
+System alerts have no rule, open and resolve by themselves (they can't be closed by
+hand), go through the same outbox to every channel with **Send Vantage's own alerts**
+(`system_alerts`, on by default), and show as a banner in the UI while firing.
+
+Shared failures send one message instead of a storm. While Prometheus is unreachable (or
+not collecting, for alerts on polled devices) every affected alert records NO DATA with
+that reason, but its message is stored *folded* into the system alert's message; when
+Prometheus returns, still-true alerts go back to FIRING silently and the RESOLVED
+message counts them ("5 alerts still firing, 2 recovering"). A device's other alerts are
+folded into its instance-down message the same way ("3 other alerts on this device can't
+be checked"), and while a device is failing but not yet marked down, its alerts' NO DATA
+messages are held.
+Outages shorter than 2 minutes change nothing. An intermittent Prometheus (down 2 minutes,
+back for a tick, down again) gives a FIRING/RESOLVED pair about every 2.5 minutes; the
+restart happens at most once until a tick really finishes again.
+
+### `/healthz` and `/healthz/live`
+
+Both are unauthenticated and carry nothing but a fixed code.
+
+- `GET /healthz`: `200 {"status": "ok"}`, or `503 {"reason": "<code>"}` with exactly one
+  code. When several apply, the first in this order wins: `maintenance` (a restore or
+  key rotation holds the maintenance lock, see "Maintenance lock"), `key_mismatch` (the
+  master key doesn't match the stored secrets, see "Master key mismatch"),
+  `evaluator_stalled`
+  (nothing else is being checked then), `prometheus_unreachable`, `metrics_not_collected`,
+  `notifications_stuck` (an alert message undelivered for more than 15 minutes, or failed
+  within 24 hours: the UI banner's rule). The conditions are kept in memory, so they start
+  over when the backend restarts.
+- `GET /healthz/live`: `200` whenever the web server runs. `setup.sh` waits on this one,
+  so a fresh install whose Prometheus isn't up yet still finishes. The compose file has
+  no container healthcheck; if you add one, use `/healthz/live`: a 503 from `/healthz`
+  means "something Vantage depends on is down", and restarting the backend wouldn't fix
+  it.

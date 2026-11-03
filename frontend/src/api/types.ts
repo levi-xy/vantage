@@ -61,16 +61,83 @@ export interface AuditEntry {
   changes: Record<string, unknown>;
 }
 
-export type AlertState = "firing" | "resolved";
+/** `no_data`: still open, but no fresh value to tell whether the condition holds. */
+export type AlertState = "firing" | "no_data" | "resolved";
 
-/** `GET /alerts/events`, newest first. */
+/** Why an open event has no data. Later versions may add reasons. */
+export type AlertNoDataReason =
+  | "source_stale"
+  | "source_down"
+  | "metric_missing"
+  | "query_failed"
+  | "prometheus_unreachable"
+  | "metrics_not_collected"
+  | (string & {});
+
+/** Vantage's own alerts (no rule). Later versions may add kinds. */
+export type SystemAlertKind =
+  | "prometheus_unreachable"
+  | "metrics_not_collected"
+  | "evaluator_stalled"
+  | "key_mismatch"
+  | (string & {});
+
+export type AlertEndReason =
+  "recovered" | "rule_disabled" | "rule_deleted" | "rule_changed" | "closed_by_user";
+
+/** `GET /alerts/events`, newest first. One event per (rule, series) episode. */
 export interface AlertEvent {
   id: number;
-  rule_id: number;
+  /** null once the rule is deleted. */
+  rule_id: number | null;
+  /** The device, when the series named an existing instance. */
+  instance_id: string | null;
+  /** Snapshots taken when the event opened. */
+  rule_name: string;
+  severity: string;
+  /** Filtered by the backend: sensitive values are "<redacted>". */
+  labels: Record<string, string>;
+  fingerprint: string;
   state: AlertState;
+  /** Set while `state` is `no_data`. */
+  no_data_reason?: AlertNoDataReason | null;
   started_at: string;
+  /** When the event entered its current state (null for old events). */
+  state_since?: string | null;
   ended_at: string | null;
+  end_reason: AlertEndReason | null;
   summary: string;
+  /** The messages queued about this event, one per channel and change. */
+  deliveries: AlertDelivery[];
+  /** `system`: one of Vantage's own alerts; it has no rule and closes by itself. */
+  source?: "rule" | "system";
+  system_kind?: SystemAlertKind | null;
+}
+
+export type DeliveryKind = "firing" | "resolved" | "rule_change" | "summary" | "no_data";
+
+export type DeliveryStatus =
+  "pending" | "sending" | "delivered" | "failed" | "folded" | "cancelled";
+
+/** One message about an event to one channel. Never the text or a channel setting. */
+export interface AlertDelivery {
+  /** null once the channel is deleted. */
+  channel_id: number | null;
+  channel_name: string | null;
+  kind: DeliveryKind;
+  status: DeliveryStatus;
+  attempts: number;
+  /** A fixed code such as "timeout" or "unauthorized". */
+  error_kind: string | null;
+  created_at: string;
+  finished_at: string | null;
+}
+
+/** `GET /alerts/delivery-status`: messages waiting 15+ minutes or failed in the last 24 h. */
+export interface DeliveryStatusSummary {
+  stuck: number;
+  /** Firing system alerts, oldest first. */
+  system_alerts?: { system_kind: SystemAlertKind; since: string }[];
 }
 
 export interface AlertEventQuery {
@@ -93,10 +160,15 @@ export interface AlertRule {
   instance_id: string | null;
   channel_ids: number[];
   enabled: boolean;
+  /** How the rule's alerts resolve: the value seen failing the condition, or an empty
+   * result (when the expression can't be split into a value and a condition). */
+  recovery_mode?: "value" | "empty_result";
+  /** The last query error the backend saw for the rule; short, no secrets. */
+  error?: string | null;
 }
 
 /** Body of `POST /alerts/rules`; `PATCH` takes any subset. */
-export type AlertRuleInput = Omit<AlertRule, "id">;
+export type AlertRuleInput = Omit<AlertRule, "id" | "recovery_mode" | "error">;
 
 /** `GET /alerts/templates` (admin only): a suggested rule. */
 export interface AlertTemplate {
@@ -242,6 +314,25 @@ export interface Dashboard {
   layout: DashboardLayout;
 }
 
+/** `GET /dashboards`: every dashboard, in tab order. The first one is the main one. */
+export interface DashboardSummary {
+  id: number;
+  name: string;
+  position: number;
+}
+
+/** `POST /dashboards`: an empty layout, or a copy of `copy_from`'s. */
+export interface DashboardCreate {
+  name: string;
+  copy_from?: number;
+}
+
+/** `PATCH /dashboards/{id}`: rename or move. */
+export interface DashboardUpdate {
+  name?: string;
+  position?: number;
+}
+
 /** `GET/POST /links`: a connection between two instances, drawn on the network map. */
 export interface DeviceLink {
   id: number;
@@ -263,7 +354,9 @@ export type LiveMessage =
   | {
       type: "alert_event";
       event_id: number;
-      rule_id: number;
+      rule_id: number | null;
+      instance_id: string | null;
+      fingerprint: string;
       severity: string;
       state: AlertState;
       started_at: string;
@@ -304,6 +397,8 @@ export interface Channel {
   config: { chat_id?: string };
   /** Whether each secret is stored (`{bot_token: true}`). Never the value. */
   secrets_set: Record<string, boolean>;
+  /** Receives Vantage's own alerts (Prometheus unreachable, ...). */
+  system_alerts?: boolean;
 }
 
 /** Body of `POST /channels`. */
@@ -311,12 +406,14 @@ export interface ChannelCreate {
   type: "telegram";
   name: string;
   config: { chat_id: string; bot_token: string };
+  system_alerts?: boolean;
 }
 
 /** Body of `PATCH /channels/{id}`. An omitted `bot_token` keeps the stored one. */
 export interface ChannelUpdate {
   name?: string;
   config?: { chat_id?: string; bot_token?: string };
+  system_alerts?: boolean;
 }
 
 /** Result of `POST /channels/{id}/test`. */

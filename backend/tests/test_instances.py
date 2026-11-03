@@ -490,7 +490,8 @@ def test_status_comes_from_the_collector(admin: TestClient) -> None:
     assert r.json()["status"]["last_success_at"] == "2026-01-02T03:04:05Z"
 
     failed_at = datetime(2026, 1, 2, 3, 5, 5, tzinfo=UTC)
-    store.record_failure(instance_id, "ConnectTimeout", at=failed_at, duration_seconds=5)
+    for _ in range(3):  # down after 3 failed cycles in a row (the default)
+        store.record_failure(instance_id, "ConnectTimeout", at=failed_at, duration_seconds=5)
     for status in (
         admin.get(f"{API}/instances").json()[0]["status"],
         admin.get(f"{API}/instances/{data['id']}").json()["status"],

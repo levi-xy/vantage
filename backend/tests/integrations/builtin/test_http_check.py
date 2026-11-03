@@ -416,7 +416,7 @@ def spec_for(cfg: dict[str, Any]) -> tuple[PollSpec, SecretBox]:
 
 async def collect(engine: Engine, cfg: dict[str, Any]) -> tuple[MetricsStore, PollSpec]:
     spec, box = spec_for(cfg)
-    store = MetricsStore()
+    store = MetricsStore(down_after_failed_cycles=1)  # one cycle: these test the error text
     scheduler = PollScheduler(
         session_factory=make_session_factory(engine),
         registry=Registry([HttpCheck]),
@@ -425,7 +425,7 @@ async def collect(engine: Engine, cfg: dict[str, Any]) -> tuple[MetricsStore, Po
         store=store,
     )
     store.track(spec.instance_id, spec.labels)
-    await scheduler.poll_once(spec, HttpCheck())
+    await scheduler.poll_once(spec, HttpCheck(), next_start=0.0)  # no time left: no retry
     return store, spec
 
 

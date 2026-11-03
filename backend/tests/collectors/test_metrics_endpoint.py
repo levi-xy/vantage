@@ -27,7 +27,7 @@ REGISTRY = Registry([Poller, Raiser])
 
 def build(db_url: str, prometheus_token: str | None = PROM_TOKEN) -> TestClient:
     app = create_app(
-        Settings(database_url=normalize_database_url(db_url)),
+        Settings(database_url=normalize_database_url(db_url), down_after_failed_cycles=1),
         secret_box=SecretBox(TEST_MASTER_KEY),
         passwords=Passwords(FAST_HASHER),
         registry=REGISTRY,

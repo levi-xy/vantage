@@ -1,7 +1,8 @@
 """Live traffic rates for the dashboard's throughput card (maintainer-approved 2026-10-30).
 
 While at least one browser is connected to ``/ws``, every :data:`TICK_SECONDS` this reads
-the traffic counters of the ports chosen on the dashboard's throughput card, and
+the traffic counters of the ports chosen on the main dashboard's throughput card (the
+first dashboard by position; maintainer-approved 2026-11-02), and
 publishes their summed rate as a ``live_rate`` message. Nothing is stored: history stays
 in Prometheus at its normal resolution.
 
@@ -14,11 +15,15 @@ Reads go through each instance's guarded clients (``InstanceContext``), like a p
   interval, so between updates the last rate is kept (for at most
   :data:`SCRAPED_STALE_SECONDS`). The rate is measured from when Vantage saw the new
   value, not when the exporter collected it, so it can be off by up to about one tick:
-  fine for a live hint, and the history in Prometheus is exact.
+  fine for a live hint, and the history in Prometheus is exact. The first value read
+  may already be old, so a rate is only measured between two *changes* seen: measured
+  from the first read, the counters' growth over a whole exporter interval would be
+  divided by the few seconds since that read, and the rate would read several times too
+  high.
 
 SNMP counters are read live, so unchanged counters there mean no traffic (rate 0).
 
-Ports come only from the saved layout (admin-written), at most :data:`MAX_PORTS`; the
+Ports come only from the saved layout (written by a logged-in user), at most :data:`MAX_PORTS`; the
 interface name is only compared with label values, never sent anywhere.
 """
 
@@ -55,7 +60,6 @@ SCRAPED_STALE_SECONDS = 30.0
 READ_TIMEOUT_SECONDS = 1.5
 MAX_PORTS = 8
 MAX_BODY_BYTES = 8 * 1024 * 1024
-DASHBOARD_ID = 1
 THROUGHPUT_CARD = "throughput"
 USER_AGENT = "Vantage live rates"
 
@@ -116,6 +120,8 @@ class _Last:
     at: float
     in_bps: float | None = None
     out_bps: float | None = None
+    # ``at`` is when these counters were first seen changed (not just first read).
+    changed: bool = False
 
 
 class LiveRates:
@@ -217,17 +223,25 @@ class LiveRates:
             if now - last.at > SCRAPED_STALE_SECONDS:
                 return None
             return last.in_bps, last.out_bps
+        if not live and not last.changed:
+            # The first read's value may be from long ago: start measuring at this change.
+            self._last[port] = _Last(in_octets, out_octets, now, changed=True)
+            return None
         elapsed = now - last.at
         if elapsed <= 0:
             return None
         in_bps = (in_octets - last.in_octets) * 8 / elapsed
         out_bps = (out_octets - last.out_octets) * 8 / elapsed
-        self._last[port] = _Last(in_octets, out_octets, now, in_bps, out_bps)
+        self._last[port] = _Last(in_octets, out_octets, now, in_bps, out_bps, changed=True)
         return in_bps, out_bps
 
     def _load(self) -> tuple[list[Port], dict[uuid.UUID, PollSpec]]:
         with self._session_factory() as db:
-            dashboard = db.get(Dashboard, DASHBOARD_ID)
+            # The main dashboard (first by position, then id), looked up every time: it
+            # changes when dashboards are moved or deleted.
+            dashboard = db.scalars(
+                select(Dashboard).order_by(Dashboard.position, Dashboard.id).limit(1)
+            ).first()
             ports = ports_from_layout(dashboard.layout if dashboard else None)
             if not ports:
                 return [], {}

@@ -63,23 +63,72 @@ describe("device list", () => {
         exampleInstance({
           id: "00000000-0000-4000-8000-000000000002",
           name: "fw-1",
-          site: null,
+          site: "", // an empty site is no site
           enabled: false,
           status: { state: "unknown", checked_at: null, last_success_at: null, error: null },
         }),
       ]),
     );
-    const list = await screen.findByRole("list", { name: "Devices" });
-    const [nas, fw] = within(list).getAllByRole("listitem");
-    if (!nas || !fw) throw new Error("expected two devices");
-    expect(nas).toHaveTextContent("Fake device · lab");
-    expect(nas).toHaveTextContent("Status: Down");
-    expect(nas).toHaveTextContent("ConnectTimeout");
-    expect(nas).toHaveTextContent("storage");
-    expect(fw).toHaveTextContent("Fake device · No site");
-    expect(fw).toHaveTextContent("Status: Unknown");
-    expect(fw).toHaveTextContent("Disabled");
+    const lab = await screen.findByRole("list", { name: "Devices, lab" });
+    const nas = within(lab).getByRole("listitem");
+    expect(screen.getByRole("heading", { level: 2, name: "lab" })).toBeInTheDocument();
+    expect(nas).toHaveTextContent("Fake device · storage");
+    expect(nas).toHaveTextContent("Status: DOWN");
+    expect(within(nas).getByText("DOWN")).toHaveClass("text-crit-text");
+    expect(within(nas).getByText("ConnectTimeout")).toHaveAttribute("title", "ConnectTimeout");
+    expect(nas).toHaveTextContent("Last success never");
+    const fw = within(screen.getByRole("list", { name: "Devices, No site" })).getByRole("listitem");
+    expect(fw).toHaveTextContent("Status: DISABLED");
     expect(within(fw).getByRole("button", { name: "Enable fw-1" })).toBeInTheDocument();
+  });
+
+  it("puts problems first, by site, and shows healthy devices in plain text", async () => {
+    const id = (n: number) => `00000000-0000-4000-8000-00000000000${n}`;
+    const up = { state: "up" as const, checked_at: null, last_success_at: null, error: null };
+    renderApp(
+      "/devices",
+      backendWith(
+        [
+          exampleInstance({ id: id(1), name: "a-ok", site: "alpha", status: up }),
+          exampleInstance({
+            id: id(2),
+            name: "b-failing",
+            site: "beta",
+            status: { ...up, error: "timed out" },
+          }),
+          exampleInstance({ id: id(3), name: "b-ok", site: "beta", status: up }),
+          exampleInstance({
+            id: id(4),
+            name: "b-scraped",
+            site: "beta",
+            status: { ...up, state: "unknown" },
+          }),
+        ],
+        {
+          // Prometheus' scrape `up` for the scrape-only device: 0, so it is down.
+          "POST /query": () =>
+            json({
+              result_type: "vector",
+              series: [{ labels: { vantage_instance_id: id(4) }, values: [[1, "0"]] }],
+              warnings: [],
+            }),
+        },
+      ),
+    );
+    await screen.findByText("DOWN");
+    const sites = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
+    expect(sites).toEqual(["beta", "alpha"]);
+    const beta = within(screen.getByRole("list", { name: "Devices, beta" }));
+    const names = beta
+      .getAllByRole("listitem")
+      .map((li) => li.querySelector("[title]")?.textContent);
+    expect(names).toEqual(["b-scraped", "b-failing", "b-ok"]);
+    const [scraped, failing, ok] = beta.getAllByRole("listitem");
+    expect(scraped).toHaveTextContent("scraped by Prometheus");
+    expect(within(failing as HTMLElement).getByText("timed out")).toHaveClass("text-warn");
+    const okState = within(ok as HTMLElement).getByText("UP");
+    expect(okState).toHaveClass("text-muted");
+    expect(okState.className).not.toMatch(/ok|green|emerald/);
   });
 
   it("says when there are no devices", async () => {
@@ -97,7 +146,7 @@ describe("device list", () => {
 
   it("is read-only for viewers", async () => {
     renderApp("/devices", backendWith([exampleInstance()], {}, "viewer"));
-    await screen.findByRole("list", { name: "Devices" });
+    await screen.findByRole("list", { name: "Devices, lab" });
     expect(screen.queryByRole("link", { name: "Add device" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Delete|Disable|Test/ })).not.toBeInTheDocument();
   });

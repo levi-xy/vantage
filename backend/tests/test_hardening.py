@@ -40,6 +40,7 @@ def test_public_hosts_refuse_other_hosts(guarded: TestClient) -> None:
         assert r.json() == {"detail": "unknown host"}
     # Outside /api the allowlist doesn't apply (Prometheus uses the compose name).
     assert guarded.get("/healthz", headers={"host": "backend:8000"}).status_code == 200
+    assert guarded.get("/healthz/live", headers={"host": "backend:8000"}).status_code == 200
     # A logged-in browser whose Origin matches the rebound Host: still refused.
     cookie = "; ".join(f"{c.name}={c.value}" for c in guarded.cookies.jar)
     with guarded.websocket_connect(

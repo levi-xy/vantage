@@ -171,12 +171,14 @@ class PrometheusClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def query(self, req: QueryRequest) -> QueryResult:
+    async def query(self, req: QueryRequest, *, max_series: int = MAX_SERIES) -> QueryResult:
+        """Run ``req`` within the budget. ``max_series`` may be raised for the backend's
+        own queries only (e.g. seeding at startup), never from a request."""
         form = check_budget(req)
         path = "/api/v1/query_range" if "start" in form else "/api/v1/query"
         form["timeout"] = f"{QUERY_TIMEOUT_SECONDS}s"
         # One more than allowed, so "too many" is detectable without a huge answer.
-        form["limit"] = str(MAX_SERIES + 1)
+        form["limit"] = str(max_series + 1)
         try:
             async with asyncio.timeout(TOTAL_TIMEOUT_SECONDS):
                 status_code, body = await self._post(path, form)
@@ -191,7 +193,7 @@ class PrometheusClient:
             # Class name only: the exception text names Prometheus' address.
             log.warning("Prometheus unreachable: %s", type(exc).__name__)
             raise QueryError(503, "metrics backend unavailable") from None
-        return _parse(status_code, body)
+        return _parse(status_code, body, max_series)
 
     async def _post(self, path: str, form: dict[str, str]) -> tuple[int, bytes]:
         async with self._client.stream("POST", path, data=form) as response:
@@ -205,7 +207,7 @@ class PrometheusClient:
             return response.status_code, b"".join(chunks)
 
 
-def _parse(status_code: int, body: bytes) -> QueryResult:
+def _parse(status_code: int, body: bytes, max_series: int = MAX_SERIES) -> QueryResult:
     try:
         payload: Any = json.loads(body)
     except ValueError:
@@ -256,8 +258,8 @@ def _parse(status_code: int, body: bytes) -> QueryResult:
         log.warning("Prometheus answered with an unexpected shape")
         raise QueryError(502, "metrics backend error") from None
 
-    if len(series) > MAX_SERIES:
-        raise QueryError(422, f"more than {MAX_SERIES} series; narrow the query")
+    if len(series) > max_series:
+        raise QueryError(422, f"more than {max_series} series; narrow the query")
     warnings = [
         str(w)[:MAX_WARNING_LENGTH]
         for w in (payload.get("warnings") or [])[:MAX_WARNINGS]

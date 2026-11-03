@@ -242,9 +242,31 @@ ctx.ping_client(host, *, count=3, reply_timeout=1.0) -> GuardedPingClient
 1. Every 30 s a supervisor re-reads the instance list and starts, restarts (after an edit) or stops tasks.
 2. Each poll loads the stored config, decrypts the secrets and validates `{**config, **secrets}` against your `config_schema`, then builds a context with the standard labels.
 3. It calls `poll(ctx)` under `asyncio.timeout(min(interval, 60))`: at most 60 s, and never longer than the interval. `poll_interval_seconds()` is clamped to 10 s to 86 400 s.
-4. It checks the result is a `list[Sample]`, validates and stores the samples (section 9) and marks the instance `up`; or records a failure and marks it `down`.
+4. It checks the result is a `list[Sample]`, validates and stores the samples (section 9) and marks the instance `up`; or records a failed cycle (see below).
 
-A poll that raises, hangs or returns garbage affects only its own instance. Old samples of a failed instance are dropped, not served stale.
+A poll that raises, hangs or returns garbage affects only its own instance. Old samples of a failed instance are dropped at once, not served stale.
+
+### Poll cycles, the retry and `down`
+
+One timeout must not flip a device to `down`, so the collector counts **poll cycles**, not single calls:
+
+- **Cycle:** one scheduled poll. Cycles start every interval on a fixed schedule; a retry never shifts it. A cycle that runs past the next start is followed by the next one as soon as it ends.
+- **Attempt:** one call of `poll()`, cut off at `min(interval, 60 s)`.
+- **Retry:** at most one second attempt in the same cycle, 10 s after a failed first attempt, cut off 1 s before the next cycle starts. There is no retry after a whole-attempt timeout (the device hung), a `net_guard` refusal or an unreadable stored config (decrypt or validation failure), nor when less than 20 s remain before the next cycle. A timeout raised inside `poll()` (one request got no reply) is retried.
+- **Result:** a cycle succeeds if any attempt succeeded, and fails if its last attempt failed.
+- The instance goes `down` after **N failed cycles in a row** (`VANTAGE_DOWN_AFTER_FAILED_CYCLES`, default 3, 1 to 10), and `up` again after one good cycle.
+
+Until then the state stays `up` (or `pending`, for an instance that has never answered), `error` shows the latest failure, and `vantage_instance_up` stays 1 (not emitted while `pending`). It turns 0 at the end of cycle N. `vantage_poll_consecutive_failed_cycles` counts the failed cycles in a row.
+
+Time from a device failing to `down` at the default N = 3 (the spread is where in the cycle it failed):
+
+| Interval | Refused (fast failure, retried) | No reply (request timeouts inside `poll()`, retried) | Hung (whole attempt cut off, not retried) |
+|---|---|---|---|
+| 60 s | 130–190 s | 160–220 s | 180–240 s |
+| 60 s, worst case (one extra cycle, e.g. a retry that still got through as the device went down) | 250 s | 280 s | 300 s |
+| 5 min | about 10–16 min | | |
+
+Fewer cycles detect sooner and flap more; one cycle restores the old behaviour (`down` on the first failed cycle). Editing an instance restarts its poll task but keeps its failed-cycle count and state (the collector keeps the instance's entry), so an edit neither resets a device that is going down nor makes it `pending` again.
 
 ### Choosing the poll interval
 
@@ -252,7 +274,7 @@ A poll that raises, hangs or returns garbage affects only its own instance. Old 
 
 ### Raise on failure, return on a result
 
-- **No usable answer** (timeout, refused, TLS failure, guard refusal, the host is silent): **raise**. The instance goes `down` and `vantage_instance_up` is 0. `http_check` lets the exception from `_check` propagate; `ping_check` raises its own `NoReply` (a `PollFailure`, see below) when no echo was answered.
+- **No usable answer** (timeout, refused, TLS failure, guard refusal, the host is silent): **raise**. The cycle fails; after N failed cycles in a row the instance goes `down` and `vantage_instance_up` is 0. `http_check` lets the exception from `_check` propagate; `ping_check` raises its own `NoReply` (a `PollFailure`, see below) when no echo was answered.
 - **A real answer that says "bad"**: **return samples**. A wrong HTTP status is a result (`vantage_http_check_success 0`, plus the status code); partial packet loss is a result. This is what lets an alert rule say what the device answered.
 - Do not catch broad `Exception` in `poll()` to return an empty list: that reports `up` with no data.
 
@@ -262,18 +284,18 @@ Instance responses carry `status: {state, checked_at, last_success_at, error}` (
 
 | State | Meaning |
 |---|---|
-| `pending` | Enabled and polled by the collector, not polled yet (new, just enabled, or just after a restart). |
-| `up` | The last poll returned a valid list of samples. |
-| `down` | The last poll failed. `error` says why, briefly. |
+| `pending` | Enabled and polled by the collector, not polled yet (new, just enabled, or just after a restart), or every cycle so far failed but fewer than N (then `error` is set). |
+| `up` | The last poll cycle succeeded, or fewer than N cycles in a row have failed since (then `error` shows the latest failure). |
+| `down` | N poll cycles in a row failed (`VANTAGE_DOWN_AFTER_FAILED_CYCLES`, default 3). `error` says why, briefly. |
 | `unknown` | The collector does not poll this instance: disabled, or a scrape-only integration. |
 
-The status is in memory: it resets on restart.
+The status is in memory: `state`, `checked_at` and `error` reset on restart. `last_success_at` is seeded once at startup from Prometheus (`max_over_time(vantage_poll_last_success_timestamp_seconds[<retention>])`, retention from `VANTAGE_PROMETHEUS_RETENTION`, default `30d`), in the background; it stays empty if Prometheus can't answer.
 
 `error` is built so it cannot leak. The scheduler does not store an exception's own text, because it can carry URLs, headers or response bodies; it stores the exception type, a fixed text, the guard's or ping client's message for `NetGuardError` and `PingError` (just the host as configured or the checked address, and a fixed reason), or the message of a `PollFailure` (`app.integrations.errors`), which the integration writes to be shown. Today:
 
 | What happened | `error` |
 |---|---|
-| `TimeoutError` or `httpx.TimeoutException` (including the 60 s limit) | `poll timed out` |
+| `TimeoutError` or `httpx.TimeoutException` (including the 60 s limit, which is not retried) | `poll timed out` |
 | `NetGuardError` | `refused by the network guard: <the guard's message>` |
 | `PingError` (from `ctx.ping_client()`) | `ping failed: <the client's message>`, for example `ping failed: the system refused to ping 10.0.0.255 (is it a broadcast address?)` |
 | `PollFailure` (raised by the integration) | its message, cut to 200 characters, for example `no reply from 10.0.0.30 (3 packets sent, ICMP may be blocked)`; `poll failed (<ExceptionType>)` if the message is empty |
@@ -311,7 +333,7 @@ return [
 ]
 ```
 
-The collector also emits, per polled instance, `vantage_instance_up`, `vantage_poll_duration_seconds`, `vantage_poll_last_success_timestamp_seconds` and `vantage_poll_dropped_samples`; you do not.
+The collector also emits, per polled instance, `vantage_instance_up`, `vantage_poll_duration_seconds`, `vantage_poll_last_success_timestamp_seconds`, `vantage_poll_dropped_samples` and `vantage_poll_consecutive_failed_cycles`; you do not.
 
 ---
 
@@ -397,8 +419,8 @@ Cards live in `frontend/src/cards/<card_type>/`, one folder per `card_type`, and
 - `useInstantQuery(instanceId, (sel) => ...)` for current values and `useRangeQuery(...)` for sparklines and charts (last hour by default). The `sel` helper builds the selector and always includes `vantage_instance_id`, so a card can only read its own instance: write `` `${METRIC}${sel('mode="idle"')}` ``. Polled metrics are `vantage_<type_id>_*`; scraped exporter metrics keep their native names and carry the same label.
 - Read results with `firstValue`, `byLabel` and `firstSeries` (`cards/metrics/promql.ts`) and show them with the formatters in `cards/metrics/format.ts` (bytes, bit/s, %, ms, durations). Values are strings in the API; the helpers turn `NaN` into "no value", which formatters show as "–".
 - Wrap the body in `CardFrame`: it draws the title, instance name and status badge, and the shared loading, error and no-data states. Pass `empty` only when the card's main metric is absent. Sections for optional metrics (RAID, ZFS, sensors) render only when their query returns series.
-- Use `StatTile` (value, label, optional sparkline), `UsageBar` and `TimeSeriesChart` (ECharts line/area; follows light/dark mode and resizes with its grid cell) instead of drawing your own. The card must work in a single column at phone width.
-- Tests: mock `../../app/session` (`useApiClient`) and `../metrics/TimeSeriesChart` (ECharts needs a canvas), then check one card with data and one without. See `ping-check/PingCheckCard.test.tsx`.
+- Use `StatTile` (value, label, optional sparkline), `UsageBar` and the inline-SVG `Sparkline` / `AreaChart` (`metrics/Charts.tsx`: palette colours, so they follow light/dark mode, and they stretch to their box) instead of drawing your own. The card must work in a single column at phone width.
+- Tests: mock `../../app/session` (`useApiClient`), then check one card with data and one without. See `ping-check/PingCheckCard.test.tsx`.
 
 ---
 

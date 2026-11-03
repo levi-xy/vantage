@@ -1,7 +1,11 @@
 // Ports the throughput card can watch, how a choice is stored in the card's settings, and
 // the PromQL for their traffic. Pure functions, so they're easy to test.
 import type { Instance, QueryResult } from "../../api";
-import { interfaceSettings } from "../pfsense-interfaces/interfaceSettings";
+import {
+  IF_INFO_METRIC,
+  interfaceDescriptions,
+  interfaceSettings,
+} from "../pfsense-interfaces/interfaceSettings";
 
 /** Where a port's counters come from. */
 export type PortSource = "pfsense" | "snmp" | "node";
@@ -40,6 +44,9 @@ export const PORT_LIST_QUERIES: Record<PortSource, string> = {
 };
 /** The SNMP info series, for the names set on the device (if_label) and descriptions. */
 export const SNMP_INFO_QUERY = '{__name__=~"vantage_(snmp_device|mikrotik_swos)_if_info"}';
+
+/** The pfSense interface descriptions, when the script on pfSense feeds them. */
+export const PFSENSE_INFO_QUERY = IF_INFO_METRIC;
 
 export const portKey = (p: PortRef) => `${p.source}:${p.instanceId}:${p.iface}`;
 
@@ -97,6 +104,32 @@ export function rateQuery(ports: PortRef[], dir: "in" | "out"): string {
   return `8 * (${parts.join(" + ")})`;
 }
 
+/**
+ * Like `rateQuery`, for the history: without `or vector(0)`, so a time when no chosen port
+ * reported has no value (a gap in the chart), never a fake 0. The ports' series differ in
+ * their instance or interface label, so `or` keeps every one and `sum` adds them up.
+ */
+export function historyQuery(ports: PortRef[], dir: "in" | "out"): string {
+  if (ports.length === 0) return "vector(0)";
+  const parts = ports.map((p) => {
+    const m = SOURCE_METRICS[p.source];
+    const sel = selector(m[dir], [
+      `vantage_instance_id=${promqlString(p.instanceId)}`,
+      `${m.label}=${promqlString(p.iface)}`,
+    ]);
+    return `rate(${sel}[2m])`;
+  });
+  return `8 * sum(${parts.join(" or ")})`;
+}
+
+/**
+ * A WAN port: named, or mapped in the device settings to, "WAN" (as the pfSense Interfaces
+ * card pins it). Its in/out is the network's download/upload; on other ports, just in/out.
+ */
+export function isWanPort(iface: string, name: string | undefined): boolean {
+  return iface.toLowerCase() === "wan" || name?.toLowerCase() === "wan";
+}
+
 export interface PortOption {
   port: PortRef;
   name: string;
@@ -109,7 +142,9 @@ export function portOptions(
   lists: Partial<Record<PortSource, QueryResult | undefined>>,
   snmpInfo: QueryResult | undefined,
   instances: Instance[],
+  pfsenseInfo?: QueryResult,
 ): { instance: Instance; ports: PortOption[] }[] {
+  const descriptions = interfaceDescriptions(pfsenseInfo);
   const byId = new Map(instances.map((i) => [i.id, i]));
   const snmpNames = new Map<string, string>();
   for (const s of snmpInfo?.series ?? []) {
@@ -126,7 +161,7 @@ export function portOptions(
       if (!instanceId || !instance || !iface) continue;
       let name = iface;
       if (source === "pfsense") {
-        const settings = interfaceSettings(instance);
+        const settings = interfaceSettings(instance, descriptions);
         if (settings.hidden(iface)) continue;
         name = settings.label(iface);
       } else if (source === "snmp") {

@@ -1,4 +1,4 @@
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { exampleMe, fakeBackend, json, mockSystemTheme, renderApp } from "../../test-utils";
 import { exampleInstance, INSTANCE_ID } from "../../pages/devices/testFixtures";
 import { vector } from "../testRender";
@@ -71,6 +71,39 @@ describe("network map card", () => {
     expect(await screen.findByText("nas-1")).toBeInTheDocument();
     expect(screen.getByText("fw-1")).toBeInTheDocument();
     expect(await screen.findByText(/uplink.*↓.*↑/)).toBeInTheDocument();
+  });
+
+  it("at 2 x 1 the map and the devices tile show their small tiers, a down node in red", async () => {
+    const down = exampleInstance({
+      id: OTHER_ID,
+      name: "fw-1",
+      status: { ...nas.status, state: "down" },
+    });
+    const small = {
+      version: 2,
+      cards: [
+        { instance_id: null, card_type: "network-map", x: 0, y: 0, w: 2, h: 1, settings: {} },
+        { instance_id: null, card_type: "devices-health", x: 2, y: 0, w: 2, h: 1, settings: {} },
+      ],
+    };
+    const backend = fakeBackend({
+      session: exampleMe("admin"),
+      routes: {
+        "GET /instances": () => json([nas, down]),
+        "GET /links": () => json([link]),
+        "GET /dashboards/1": () => json({ id: 1, name: "Default", layout: small }),
+        "POST /query": () => json(vector([])),
+      },
+    });
+    renderApp("/", backend);
+    const figure = await screen.findByRole("group", { name: "Nodes and nodes down" });
+    expect(figure).toHaveTextContent("2 nodes · 1 down");
+    expect(figure.className).toContain("text-crit-text");
+    expect(screen.queryByRole("img", { name: "Network map" })).not.toBeInTheDocument();
+    // The devices tile: label and value, no note (the note would not fit one row).
+    const devices = screen.getByRole("group", { name: "Devices" });
+    expect(devices).toHaveTextContent("1/2");
+    expect(within(devices).queryByText(/1 down: fw-1/)).not.toBeInTheDocument();
   });
 
   it("lets an admin add a link, sending the CSRF token", async () => {

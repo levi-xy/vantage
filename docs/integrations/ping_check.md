@@ -12,6 +12,8 @@
 
 **Status and failures:** no reply at all raises `NoReply` (`poll failed (NoReply)`). A `PingError` shows its own message: missing ICMP permission is `ping failed: ICMP is not permitted for this process (check the net.ipv4.ping_group_range sysctl)`, and a broadcast address is `ping failed: the system refused to ping <address> (is it a broadcast address?)`. A guard refusal shows `refused by the network guard: ...`. Partial loss is a result and the instance stays `up`.
 
+**Alert templates:** `instance-down-ping_check` (`vantage_instance_up == 0`) is the "host not answering" alert: a host that answers nothing reports no loss ratio, so a loss rule can't catch it. `ping-check-loss` fires on packet loss above 20% for 5 min. Migration `0005` rewrote rules made from the earlier `packet_loss_ratio >= 1` template, which could never fire.
+
 **Firewall:** `icmp`, port `None`: allow echo requests from the backend to the host and the replies back. The backend container needs the `net.ipv4.ping_group_range` sysctl, which `deploy/docker-compose.yml` sets.
 
 **Cards:** `ping-check`, "Ping check", 2 by 2.
