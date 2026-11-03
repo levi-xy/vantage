@@ -40,6 +40,8 @@ from app.integrations.base import (
     Integration,
     TestResult,
 )
+from app.integrations.builtin.emby.integration import NOW_PLAYING
+from app.integrations.builtin.emby.integration import TYPE_ID as EMBY_TYPE_ID
 from app.models import Instance
 from app.models.instance import DeviceColor, next_color
 
@@ -534,6 +536,7 @@ def delete_instance(
     )
     db.delete(row)
     db.commit()
+    NOW_PLAYING.forget(instance_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -561,6 +564,34 @@ async def test_instance(
         ) from None
     _refuse_empty_secrets(model)  # only rows stored before empty secrets were refused
     return await _run_test(cls, instance_id=row.id, name=row.name, model=model, factory=factory)
+
+
+class PlayingOut(BaseModel):
+    user: str
+    title: str
+
+
+class NowPlayingOut(BaseModel):
+    # When Vantage last read the sessions; null before the first successful poll (and
+    # after a restart). Older than a couple of poll intervals = the list may be out of date.
+    checked_at: datetime | None
+    sessions: list[PlayingOut]
+
+
+@router.get("/instances/{instance_id}/now-playing")
+def now_playing(instance_id: uuid.UUID, _auth: AuthDep, db: DbDep) -> NowPlayingOut:
+    """Emby only: who is playing what, from the latest poll (maintainer-approved
+    2026-11-03). In memory, never stored; any logged-in user may read it."""
+    row = _get_row(db, instance_id)
+    if row.type_id != EMBY_TYPE_ID:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "this device has no now-playing list")
+    latest = NOW_PLAYING.latest(instance_id) if row.enabled else None
+    if latest is None:
+        return NowPlayingOut(checked_at=None, sessions=[])
+    return NowPlayingOut(
+        checked_at=latest.checked_at,
+        sessions=[PlayingOut(user=r.user, title=r.title) for r in latest.rows],
+    )
 
 
 @router.get("/instances/{instance_id}/cards")

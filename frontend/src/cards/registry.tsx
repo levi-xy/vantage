@@ -4,6 +4,7 @@ import { CloudflareTunnelsCard } from "./cloudflare-tunnels/CloudflareTunnelsCar
 import { CloudflareZonesCard } from "./cloudflare-zones/CloudflareZonesCard";
 import { CloudflaredCard } from "./cloudflared/CloudflaredCard";
 import { EmbyLibrariesCard } from "./emby-libraries/EmbyLibrariesCard";
+import { EmbyNowPlayingCard } from "./emby-now-playing/EmbyNowPlayingCard";
 import { EmbyOverviewCard } from "./emby-overview/EmbyOverviewCard";
 import { HttpCheckCard } from "./http-check/HttpCheckCard";
 import { LinuxHostCard } from "./linux-host/LinuxHostCard";
@@ -54,6 +55,7 @@ const CARD_COMPONENTS: Readonly<Record<string, ComponentType<CardProps>>> = {
   "cloudflare-tunnels": CloudflareTunnelsCard,
   "cloudflare-zones": CloudflareZonesCard,
   "emby-libraries": EmbyLibrariesCard,
+  "emby-now-playing": EmbyNowPlayingCard,
   "emby-overview": EmbyOverviewCard,
   "http-check": HttpCheckCard,
   "linux-host": LinuxHostCard,
@@ -91,6 +93,7 @@ const FULL_SIZES: Readonly<Record<string, [number, number]>> = {
   "cloudflare-tunnels": [4, 3],
   "cloudflare-zones": [4, 3],
   "emby-libraries": [4, 3],
+  "emby-now-playing": [4, 3],
   "emby-overview": [4, 3],
   "http-check": [3, 3],
   "linux-host": [4, 4],

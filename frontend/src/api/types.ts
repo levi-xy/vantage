@@ -441,3 +441,10 @@ export interface ChannelTestResult {
   ok: boolean;
   message: string;
 }
+
+/** `GET /instances/{id}/now-playing` (Emby only): live, from the latest poll, never stored. */
+export interface NowPlaying {
+  /** When Vantage last read the sessions; null before the first poll. */
+  checked_at: string | null;
+  sessions: { user: string; title: string }[];
+}

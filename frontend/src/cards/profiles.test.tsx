@@ -8,6 +8,7 @@ import { CloudflareTunnelsCard } from "./cloudflare-tunnels/CloudflareTunnelsCar
 import { CloudflareZonesCard } from "./cloudflare-zones/CloudflareZonesCard";
 import { CloudflaredCard } from "./cloudflared/CloudflaredCard";
 import { EmbyLibrariesCard } from "./emby-libraries/EmbyLibrariesCard";
+import { EmbyNowPlayingCard } from "./emby-now-playing/EmbyNowPlayingCard";
 import { EmbyOverviewCard } from "./emby-overview/EmbyOverviewCard";
 import type { CardProps } from "./registry";
 import { CardTierContext } from "./metrics/tier";
@@ -98,6 +99,43 @@ describe("profile cards", () => {
     expect(await screen.findByText("example-tunnel")).toBeInTheDocument();
     expect(screen.getByText("degraded")).toBeInTheDocument();
     expect(screen.getByText("2 connections")).toBeInTheDocument();
+  });
+
+  it("emby now playing lists who plays what, up to 4 rows", async () => {
+    const sessions = ["alice", "bob", "carol", "dave", "erin"].map((u) => ({
+      user: `example-${u}`,
+      title: `Title of ${u}`,
+    }));
+    vi.spyOn(client, "nowPlaying").mockResolvedValue({
+      checked_at: new Date().toISOString(),
+      sessions,
+    });
+    renderCard(EmbyNowPlayingCard, () => []);
+    const list = await screen.findByRole("list", { name: "Now playing" });
+    expect(list).toHaveTextContent("example-alice");
+    expect(list).toHaveTextContent("Title of dave");
+    expect(list).not.toHaveTextContent("example-erin");
+    expect(list).toHaveTextContent("and 1 more");
+  });
+
+  it("emby now playing: nothing playing, and one session at small size", async () => {
+    vi.spyOn(client, "nowPlaying").mockResolvedValue({
+      checked_at: new Date().toISOString(),
+      sessions: [],
+    });
+    renderCard(EmbyNowPlayingCard, () => []);
+    expect(await screen.findByText("Nothing playing.")).toBeInTheDocument();
+  });
+
+  it("emby now playing small: the one session in a line", async () => {
+    vi.spyOn(client, "nowPlaying").mockResolvedValue({
+      checked_at: new Date().toISOString(),
+      sessions: [{ user: "example-alice", title: "Example Movie" }],
+    });
+    renderCard(EmbyNowPlayingCard, () => [], "small");
+    expect(await screen.findByRole("group", { name: "Now playing" })).toHaveTextContent(
+      "example-alice: Example Movie",
+    );
   });
 
   it("emby overview shows server details and counts", async () => {

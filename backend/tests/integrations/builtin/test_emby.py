@@ -580,7 +580,11 @@ def test_firewall_hints_cards_and_interval() -> None:
     assert [h.model_dump() for h in Emby().firewall_hints(ctx)] == [HINT]
     [hint] = Emby().firewall_hints(make_ctx(Emby, cfg(host="fd00::60", port=8920)))
     assert (hint.destination, hint.port) == ("fd00::60", 8920)
-    assert [c.card_type for c in Emby().cards()] == ["emby-overview", "emby-libraries"]
+    assert [c.card_type for c in Emby().cards()] == [
+        "emby-overview",
+        "emby-libraries",
+        "emby-now-playing",
+    ]
     assert Emby().poll_interval_seconds() == 30
     assert Emby.category == "media" and Emby.cloud_hosts == ()
 
@@ -625,7 +629,11 @@ def test_api_create_test_read_and_update(admin: TestClient, fake_net: FakeNetwor
     assert tested.json()["ok"] is True, tested.text
     bodies.append(tested.text)
     cards = admin.get(f"/api/v1/instances/{iid}/cards")
-    assert [c["card_type"] for c in cards.json()] == ["emby-overview", "emby-libraries"]
+    assert [c["card_type"] for c in cards.json()] == [
+        "emby-overview",
+        "emby-libraries",
+        "emby-now-playing",
+    ]
     patched = admin.patch(
         f"/api/v1/instances/{iid}", json={"config": {"host": HOST, "timeout_seconds": 5}}
     )
@@ -673,3 +681,66 @@ async def test_server_name_is_cleaned_capped_and_only_on_the_info_series(
     shown = info.labels["server_name"]
     assert shown.startswith("Ex ample ") and len(shown) == 128 and "\n" not in shown
     assert [s.name for s in samples if "server_name" in s.labels] == [emby.METRIC_INFO]
+
+
+# --- now playing (live only, never a metric) ---------------------------------------------
+
+
+def test_now_playing_rows_show_user_and_title_only() -> None:
+    rows = emby.now_playing_rows(fixture("sessions"))
+    assert [(r.user, r.title) for r in rows] == [
+        ("example-alice", "Example Movie"),
+        ("example-bob", "Example Episode"),
+        ("example-carol", "Example Song"),
+    ]  # example-dave plays nothing
+    text = repr(rows)
+    for other in ("192.0.2.", "example-laptop", "Example Web", "s1"):
+        assert other not in text
+
+
+@pytest.mark.parametrize(
+    ("item", "title"),
+    [
+        (
+            {
+                "Type": "Episode",
+                "Name": "Pilot",
+                "SeriesName": "Example Show",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 2,
+            },
+            "Example Show · S01E02 · Pilot",
+        ),
+        (
+            {"Type": "Episode", "Name": "Pilot", "SeriesName": "Example Show"},
+            "Example Show · Pilot",
+        ),
+        ({"Type": "Audio", "Name": "Track", "AlbumArtist": "Example Band"}, "Example Band · Track"),
+        ({"Type": "Audio", "Name": "Track", "Artists": ["Solo"]}, "Solo · Track"),
+        ({"Type": "Movie", "Name": "Line\nbreak‮"}, "Line break"),
+        ({"Type": "Movie"}, "Unknown item"),
+        ({"Type": "Movie", "Name": "x" * 1000}, "x" * emby.MAX_LABEL_TEXT),
+    ],
+)
+def test_playing_title(item: dict[str, Any], title: str) -> None:
+    assert emby.playing_title(item) == title
+
+
+def test_now_playing_rows_are_capped_and_tolerate_junk() -> None:
+    many = [{"UserName": f"u{i}", "NowPlayingItem": {"Name": "x"}} for i in range(80)]
+    assert len(emby.now_playing_rows([None, "junk", *many])) == emby.MAX_NOW_PLAYING
+    assert emby.now_playing_rows([{"NowPlayingItem": {"Name": "x"}, "UserName": 5}])[0].user == ""
+    with pytest.raises(emby._NotTheApi):
+        emby.now_playing_rows({"not": "a list"})
+
+
+async def test_poll_keeps_now_playing_in_memory_not_as_metrics(fake_net: FakeNetwork) -> None:
+    serve(fake_net)
+    ctx = make_ctx(Emby, cfg())
+    samples = await Emby().poll(ctx)
+    latest = emby.NOW_PLAYING.latest(ctx.instance_id)
+    assert latest is not None
+    assert [r.user for r in latest.rows] == ["example-alice", "example-bob", "example-carol"]
+    for s in samples:  # no user or title ever reaches a metric
+        assert "example-alice" not in repr(s) and "Example Movie" not in repr(s)
+    emby.NOW_PLAYING.forget(ctx.instance_id)

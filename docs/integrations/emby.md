@@ -26,7 +26,7 @@ The two optional requests are left out of the poll, silently, if the server refu
 
 Emby API keys (Dashboard, Advanced, API Keys) cannot be limited to read-only: Emby gives a key the rights of a server administrator. So the safety comes from two things: Vantage sends only the four `GET`s above (enforced in code, tested), and you give it a key of its own. Create a key named "Vantage" used by nothing else, so you can revoke it without touching other apps, rotate it when you like, and see in Emby's activity which calls it makes. Keep the server on a private network, and prefer HTTPS so the key is not readable on the wire.
 
-**Privacy:** the metrics are counts. User names, device and client names, client addresses and media titles are never read into a label or a message, and neither are library and path names. The one device text exported is the server's name, only as `server_name` on `server_info`.
+**Privacy:** the metrics are counts. User names, device and client names, client addresses and media titles are never read into a label or a message, and neither are library and path names. User names and titles are read only for the live, in-memory now-playing list (below), which is never stored. The one device text exported is the server's name, only as `server_name` on `server_info`.
 
 **Metrics:** prefix `vantage_emby_`. A server that is down or refuses the key marks the instance `down` (`vantage_instance_up` 0); there is no separate `up` series.
 
@@ -47,6 +47,8 @@ All other label values come from fixed lists in the code (or the validated versi
 
 **Firewall:** `tcp` to the configured port on the Emby server, from the Vantage backend, for polls and connection tests.
 
-**Cards:** `emby-overview`, "Emby", 4 by 3: `now_playing`, `sessions`, `streams` by method, `server_info`, `update_available`. `emby-libraries`, "Emby libraries", 4 by 2: `items` and `libraries`. The card components are frontend work (M5.5).
+**Cards:** `emby-overview`, "Emby", 4 by 3: `now_playing`, `sessions`, `streams` by method, `server_info`, `update_available`. `emby-libraries`, "Emby libraries", 4 by 2: `items` and `libraries`. `emby-now-playing`, "Now playing", 4 by 3: who is playing what (see below).
+
+**Now playing (live only):** from the same `GET /Sessions` answer, each playing session's Emby user name (cleaned, at most 64 characters) and a title (cleaned: the movie's name, "Series · S01E02 · Episode", or "Artist · Track"), at most 50 rows. This is never a metric: the backend keeps only the latest successful poll's list in memory, so no viewing history is stored and it is gone after a restart. `GET /api/v1/instances/{id}/now-playing` serves it to any logged-in user (`{checked_at, sessions: [{user, title}]}`; empty for a disabled device). Device, client, address and item ids are not read. The card refreshes every 15 s, shows up to 4 rows ("and N more"), and greys the list when the last poll is over 3.5 minutes old.
 
 **Caveats:** `now_playing` counts sessions with a `NowPlayingItem`, including paused ones. Field names come from the Emby API documentation and hand-written fixtures; not yet verified against a live server. Fixtures: `backend/tests/integrations/builtin/fixtures/emby_*.json`, example values only.
