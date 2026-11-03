@@ -8,11 +8,14 @@ import { INSTANCES_KEY } from "../pages/devices/queries";
 /** Every alert-events query is keyed under this. */
 export const ALERTS_KEY = ["alerts"] as const;
 
-export type LiveState = "connecting" | "live" | "reconnecting";
+/** `closed`: the backend ended the socket because the session ended (4401); no reconnect. */
+export type LiveState = "connecting" | "live" | "reconnecting" | "closed";
 
 const MIN_DELAY_MS = 1_000;
 const MAX_DELAY_MS = 30_000;
 const PING_MS = 25_000;
+/** Close code the backend sends when the session ended or expired (api/ws.py). */
+export const CLOSE_SESSION_ENDED = 4401;
 
 export function liveUrl(loc: Pick<Location, "protocol" | "host"> = window.location): string {
   return `${loc.protocol === "https:" ? "wss" : "ws"}://${loc.host}${API_BASE}/ws`;
@@ -66,10 +69,16 @@ export function applyMessage(queryClient: QueryClient, raw: unknown): void {
 /**
  * One WebSocket for the whole app: updates the query cache from pushes and reconnects
  * with exponential backoff. The session is the httpOnly cookie; nothing is stored.
+ *
+ * `checkSession` asks the backend whether the session still holds (`GET /me`; a 401
+ * sends the app to the login page). It runs when the backend closes with 4401 (then no
+ * reconnect follows) and when a connection closes without ever opening: a refused
+ * handshake looks exactly like an unreachable backend to the browser.
  */
 export function connectLive(
   queryClient: QueryClient,
   onState: (state: LiveState) => void,
+  checkSession: () => void = () => {},
 ): () => void {
   let socket: WebSocket | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -81,7 +90,9 @@ export function connectLive(
   const open = () => {
     const ws = new WebSocket(liveUrl());
     socket = ws;
+    let wasOpen = false;
     ws.onopen = () => {
+      wasOpen = true;
       delay = MIN_DELAY_MS;
       onState("live");
       // Pushes were missed while disconnected: refetch instead of trusting the cache.
@@ -90,9 +101,16 @@ export function connectLive(
       ping = setInterval(() => ws.send("ping"), PING_MS);
     };
     ws.onmessage = (event) => applyMessage(queryClient, event.data);
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       clearInterval(ping);
       if (stopped) return;
+      if (event.code === CLOSE_SESSION_ENDED) {
+        stopped = true;
+        onState("closed");
+        checkSession();
+        return;
+      }
+      if (!wasOpen) checkSession();
       onState("reconnecting");
       timer = setTimeout(open, delay);
       delay = Math.min(delay * 2, MAX_DELAY_MS);
@@ -109,9 +127,9 @@ export function connectLive(
   };
 }
 
-export function useLiveUpdates(queryClient: QueryClient): LiveState {
+export function useLiveUpdates(queryClient: QueryClient, checkSession?: () => void): LiveState {
   const [state, setState] = useState<LiveState>("connecting");
-  useEffect(() => connectLive(queryClient, setState), [queryClient]);
+  useEffect(() => connectLive(queryClient, setState, checkSession), [queryClient, checkSession]);
   return state;
 }
 

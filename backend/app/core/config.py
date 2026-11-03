@@ -51,6 +51,10 @@ class Settings:
     # Where the /query proxy reaches Prometheus (VANTAGE_PROMETHEUS_URL). Server config only:
     # no request can change it.
     prometheus_url: str = DEFAULT_PROMETHEUS_URL
+    # Host names (optionally host:port) the dashboard is reached by (VANTAGE_PUBLIC_HOSTS).
+    # Empty = any Host. When set, /api/* and /ws requests with another Host are refused,
+    # which stops DNS-rebinding attacks from a web page the admin visits.
+    public_hosts: tuple[str, ...] = ()
     # How far back Prometheus keeps history (VANTAGE_PROMETHEUS_RETENTION, the same variable
     # compose passes to Prometheus). Used once at startup to seed last_success_at.
     prometheus_retention: str = DEFAULT_PROMETHEUS_RETENTION
@@ -119,6 +123,51 @@ def _validate_prometheus_url(raw: str) -> str:
     return url
 
 
+def _split_host(value: str) -> tuple[str, str | None]:
+    """``host`` or ``host:port`` (IPv6 in brackets) -> (lowercase host, port or None)."""
+    value = value.strip().lower()
+    if value.startswith("["):
+        host, sep, rest = value.partition("]")
+        host += sep
+        port = rest[1:] if rest.startswith(":") else None
+        if rest and port is None:
+            return "", None
+    else:
+        host, sep, port_text = value.rpartition(":")
+        if not sep:
+            host, port = value, None
+        else:
+            port = port_text
+        if ":" in host:  # an IPv6 address without brackets: ambiguous, refused
+            return "", None
+    return host, port
+
+
+def host_allowed(header: str, allowed: tuple[str, ...]) -> bool:
+    """Whether a Host header names an allowed host. An entry without a port allows any port."""
+    host, port = _split_host(header)
+    if not host:
+        return False
+    for entry in allowed:
+        want_host, want_port = _split_host(entry)
+        if host == want_host and (want_port is None or want_port == port):
+            return True
+    return False
+
+
+def _parse_public_hosts(raw: str) -> tuple[str, ...]:
+    entries = tuple(e.strip().lower() for e in raw.split(",") if e.strip())
+    for entry in entries:
+        host, port = _split_host(entry)
+        if (
+            not host
+            or any(c in host for c in "/@ ")
+            or (port is not None and not (port.isdigit() and 0 < int(port) < 65536))
+        ):
+            raise ConfigError("VANTAGE_PUBLIC_HOSTS must list host or host:port entries")
+    return entries
+
+
 def _validate_retention(raw: str) -> str:
     value = raw.strip() or DEFAULT_PROMETHEUS_RETENTION
     if not _DURATION.fullmatch(value):
@@ -153,6 +202,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     except TrustedProxiesError as exc:
         raise ConfigError(str(exc)) from None
     prometheus_url = _validate_prometheus_url(env.get("VANTAGE_PROMETHEUS_URL", ""))
+    public_hosts = _parse_public_hosts(env.get("VANTAGE_PUBLIC_HOSTS", ""))
     prometheus_retention = _validate_retention(env.get("VANTAGE_PROMETHEUS_RETENTION", ""))
     down_after_failed_cycles = _parse_int(
         "VANTAGE_DOWN_AFTER_FAILED_CYCLES",
@@ -170,6 +220,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         session_idle_minutes=session_idle_minutes,
         trusted_proxies=trusted_proxies,
         prometheus_url=prometheus_url,
+        public_hosts=public_hosts,
         prometheus_retention=prometheus_retention,
         down_after_failed_cycles=down_after_failed_cycles,
         log_level=log_level,

@@ -9,14 +9,23 @@ import httpcore
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine
+from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import CSRF_HEADER
-from app.core.config import ConfigError, load_settings
+from app.core.config import ConfigError, Settings, load_settings
+from app.core.crypto import SecretBox
 from app.core.net_guard import NetGuard, NetPolicy
-from app.models import Role
-from app.query.proxy import MAX_SERIES, PrometheusClient
+from app.main import create_app
+from app.models import Role, UserSession
+from app.query.proxy import (
+    MAX_CONCURRENT_QUERIES,
+    MAX_POINTS_PER_SERIES,
+    MAX_QUERIES_PER_SESSION,
+    MAX_SERIES,
+    PrometheusClient,
+    QueryGate,
+)
 from tests.test_auth import add_user, do_setup, login, make_client
 
 QUERY = "/api/v1/query"
@@ -150,6 +159,59 @@ def test_too_many_series(admin: TestClient, prom: FakePrometheus) -> None:
     assert "series" in r.json()["detail"]
 
 
+def test_instant_matrix_is_capped_per_series(admin: TestClient, prom: FakePrometheus) -> None:
+    # up[30d] as an instant query answers a matrix the step budget never bounded.
+    points = [[NOW + i, "1"] for i in range(MAX_POINTS_PER_SERIES + 1)]
+    prom.handler = lambda _r: httpx.Response(
+        200,
+        json={
+            "status": "success",
+            "data": {"resultType": "matrix", "result": [{"metric": {}, "values": points}]},
+        },
+    )
+    r = admin.post(QUERY, json={"query": "up[30d]"})
+    assert r.status_code == 422
+    assert "points per series" in r.json()["detail"]
+
+
+def test_concurrency_caps_answer_429(
+    admin: TestClient, session: Session, prom: FakePrometheus
+) -> None:
+    gate: QueryGate = admin.app.state.query_gate  # type: ignore[attr-defined]
+    mine = session.scalars(select(UserSession.id)).one()
+    assert (MAX_QUERIES_PER_SESSION, MAX_CONCURRENT_QUERIES) == (4, 12)
+    # This session already has its four queries running: refused at once, nothing sent.
+    for _ in range(MAX_QUERIES_PER_SESSION - 1):
+        assert gate.acquire(mine)
+    assert admin.post(QUERY, json={"query": "up"}).status_code == 200  # the fourth fits
+    assert gate.acquire(mine)
+    prom.requests.clear()
+    r = admin.post(QUERY, json={"query": "up"})
+    assert r.status_code == 429
+    assert r.headers["retry-after"] == "1"
+    assert prom.requests == []
+    for _ in range(MAX_QUERIES_PER_SESSION):
+        gate.release(mine)
+    # Everyone together at the global cap: refused too.
+    others = [f"other-{i}" for i in range(MAX_CONCURRENT_QUERIES)]
+    for key in others:
+        assert gate.acquire(key)
+    assert admin.post(QUERY, json={"query": "up"}).status_code == 429
+    for key in others:
+        gate.release(key)
+    # Slots come back after success and after failure alike.
+    assert admin.post(QUERY, json={"query": "up"}).status_code == 200
+    prom.handler = _raise_connect
+    assert admin.post(QUERY, json={"query": "up"}).status_code == 503
+    assert all(gate.acquire(mine) for _ in range(MAX_QUERIES_PER_SESSION))
+
+
+def test_alert_evaluator_has_its_own_prometheus_client(admin: TestClient) -> None:
+    state = admin.app.state  # type: ignore[attr-defined]
+    assert state.alert_prometheus is not state.prometheus
+    assert state.alert_prometheus._client is not state.prometheus._client
+
+
 def _raise_connect(request: httpx.Request) -> httpx.Response:
     raise httpx.ConnectError(f"connection refused to {PROM_URL}", request=request)
 
@@ -253,3 +315,16 @@ def test_prometheus_url_setting() -> None:
     assert "example-password" not in str(err.value)
     with pytest.raises(ConfigError):
         load_settings({"VANTAGE_PROMETHEUS_URL": "file:///etc/passwd"})
+
+
+def test_alert_prometheus_client_can_be_injected(db_url: str) -> None:
+    browser = PrometheusClient(httpx.AsyncClient(base_url="http://prom.test"))
+    alerts = PrometheusClient(httpx.AsyncClient(base_url="http://prom.test"))
+    app = create_app(
+        Settings(database_url=db_url),
+        secret_box=SecretBox(b"vantage-test-key-not-a-secret-00"),
+        prometheus_client=browser,
+        alert_prometheus_client=alerts,
+    )
+    assert app.state.prometheus is browser
+    assert app.state.alert_prometheus is alerts

@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router";
 import type { Role } from "../api";
@@ -9,7 +9,7 @@ import { systemAlertText } from "./health";
 import { useDeliveryStatus } from "./deliveryStatus";
 import { HealthStatus } from "./HealthStatus";
 import { useLastDataUpdate, useLiveUpdates } from "./live";
-import { useSession, useUser } from "./session";
+import { useApiClient, useSession, useUser } from "./session";
 
 /** Shown to every logged-in user while a system alert fires (Prometheus unreachable, ...)
  * or alert messages wait 15+ minutes or recently failed. One poll for both. */
@@ -319,7 +319,12 @@ export function Layout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const user = useUser();
   const queryClient = useQueryClient();
-  const live = useLiveUpdates(queryClient);
+  const client = useApiClient();
+  // A 401 here reaches the session's unauthorized listener, which shows the login page.
+  const checkSession = useCallback(() => {
+    client.me().catch(() => undefined);
+  }, [client]);
+  const live = useLiveUpdates(queryClient, checkSession);
   const lastUpdate = useLastDataUpdate(queryClient);
   const alerts = useOpenAlertCount();
   const panelRef = useRef<HTMLDivElement>(null);

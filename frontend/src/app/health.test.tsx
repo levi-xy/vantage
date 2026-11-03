@@ -93,6 +93,11 @@ describe("health level", () => {
     expect(stale).toMatchObject({ level: "warning", progress: 1 });
     expect(stale.issues[0]).toMatchObject({ tag: "STALE", detail: "no update since 14:15:32" });
     expect(level({ connection: "reconnecting" })).toBe("warning");
+    // The backend ended the socket (4401): no reconnect, so say so instead of "reconnecting".
+    expect(health({ connection: "closed" }).issues[0]).toMatchObject({
+      tag: "OFFLINE",
+      title: "Live connection closed",
+    });
     expect(level({ delivery: { stuck: 2 } })).toBe("warning");
     expect(
       level({

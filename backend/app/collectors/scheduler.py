@@ -81,9 +81,10 @@ def instance_context(
         ) from None
     try:
         config: BaseModel = cls.config_schema.model_validate({**spec.config, **secrets})
-    except ValidationError:
-        # The error would echo the input, secrets included: say only that it's invalid.
-        raise _PollError("stored config is not valid for this integration", retry=False) from None
+    except ValidationError as exc:
+        # The error would echo the input, secrets included: only a config hint's fixed
+        # text is shown, else that it's invalid.
+        raise _PollError(ic.stored_config_error(exc), retry=False) from None
     try:
         guard = guards(cls)
     except Exception as exc:

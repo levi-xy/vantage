@@ -200,6 +200,11 @@ if [ "$(env_value VANTAGE_HTTPS)" != false ] && [ "$(env_value VANTAGE_COOKIE_SE
     echo "Warning: HTTPS is on but VANTAGE_COOKIE_SECURE=false in .env, so the session cookie"
     echo "can still be sent over plain HTTP. Remove that line (or set it to true)."
 fi
+# Plain HTTP without a Host allowlist: a web page could reach the API by DNS rebinding.
+if [ "$(env_value VANTAGE_HTTPS)" = false ] && [ -z "$(env_value VANTAGE_PUBLIC_HOSTS)" ]; then
+    echo "Warning: HTTPS is off and VANTAGE_PUBLIC_HOSTS is empty. Set it in .env to the"
+    echo "names you open the dashboard by (see .env.example)."
+fi
 
 if [ "$start" -eq 0 ]; then
     echo "Files ready. Start Vantage with: docker compose up -d"

@@ -1,7 +1,8 @@
 """Alert rule evaluator (M7.1; one alert per series since P0-3a; state machine P0-3b).
 
-Every ``interval`` seconds the evaluator runs, through the guarded Prometheus client
-(``app.query.proxy``, same budget as the browser's queries):
+Every ``interval`` seconds the evaluator runs, through a guarded Prometheus client of its
+own (``app.query.proxy``, same budget as the browser's queries, but a separate connection
+pool and outside the ``/query`` concurrency caps, so browser queries can't starve it):
 
 1. a probe (``vector(1)``). If it fails, the tick changes no state: open alerts stay as
    they are, pending timers pause, nothing counts (after 2 minutes of failures, see
@@ -802,12 +803,17 @@ class AlertEvaluator:
             witness_failed = error is not None
         # A config problem, not an outage: shown from the third failure in a row, and
         # never sent to a channel.
+        # Logged once when the error starts to show and once when it clears (M1), with the
+        # proxy's short, fixed text (never Prometheus' own error).
         if error is None:
-            self._fails.pop(rule.id, None)
+            if self._fails.pop(rule.id, 0) >= sm.QUERY_FAILED_TICKS:
+                log.info("alert rule %d is evaluated again", rule.id)
             self.set_rule_error(rule.id, None)
         else:
             self._fails[rule.id] = self._fails.get(rule.id, 0) + 1
             if self._fails[rule.id] >= sm.QUERY_FAILED_TICKS:
+                if self._fails[rule.id] == sm.QUERY_FAILED_TICKS:
+                    log.warning("alert rule %d can't be evaluated (%s)", rule.id, error)
                 self.set_rule_error(rule.id, error)
 
         def observe(fp: str, labels: dict[str, str]) -> sm.Observation:

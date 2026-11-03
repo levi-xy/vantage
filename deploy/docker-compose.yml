@@ -28,6 +28,8 @@ services:
       VANTAGE_PROMETHEUS_RETENTION: ${VANTAGE_PROMETHEUS_RETENTION:-30d}
       # Only the bundled nginx (frontend, fixed address below) may name the client.
       VANTAGE_TRUSTED_PROXIES: ${VANTAGE_TRUSTED_PROXIES:-192.168.255.242/32}
+      # Host names the dashboard is reached by; empty = any (see .env.example).
+      VANTAGE_PUBLIC_HOSTS: ${VANTAGE_PUBLIC_HOSTS:-}
     secrets: [master_key, prometheus_token]
     volumes:
       - backend-data:/data
@@ -61,7 +63,7 @@ services:
 
   prometheus:
     <<: *hardening
-    image: prom/prometheus:v3.0.1
+    image: prom/prometheus:v3.2.1
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus

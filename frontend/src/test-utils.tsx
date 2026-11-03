@@ -127,7 +127,7 @@ export class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: unknown }) => void) | null = null;
-  onclose: (() => void) | null = null;
+  onclose: ((event: { code: number }) => void) | null = null;
   sent: string[] = [];
   closed = false;
   constructor(public url: string) {
@@ -145,8 +145,9 @@ export class FakeWebSocket {
   push(message: unknown) {
     this.onmessage?.({ data: JSON.stringify(message) });
   }
-  drop() {
-    this.onclose?.();
+  /** The connection closes; 1006 = abnormal (dropped, or a refused handshake). */
+  drop(code = 1006) {
+    this.onclose?.({ code });
   }
 }
 

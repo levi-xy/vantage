@@ -1,5 +1,6 @@
 """Alert rules API, evaluator and templates (M7.1, M7.3); one alert per series (P0-3a)."""
 
+import logging
 import uuid
 from collections.abc import Iterator
 from datetime import datetime, timedelta
@@ -365,6 +366,25 @@ async def test_restart_keeps_open_event_and_prometheus_errors_change_nothing(
     await ev2.tick()
     db.expire_all()
     assert db.scalars(select(AlertEvent)).one().state == AlertState.FIRING
+
+
+async def test_failing_rule_is_logged_once_without_prometheus_text(
+    engine: Engine, db: Session, prom: FakeProm, caplog: pytest.LogCaptureFixture
+) -> None:
+    rule = add_rule(db)
+    ev, _ = make_eval(engine, prom, Recorder(), Clock())
+    prom.failing = {rule.expr}
+    with caplog.at_level(logging.INFO, logger="app.alerts.evaluator"):
+        for _ in range(4):  # shown (and logged) from the third failure in a row, once
+            await ev.tick()
+        prom.failing = set()
+        await ev.tick()
+    lines = [r.getMessage() for r in caplog.records if r.name == "app.alerts.evaluator"]
+    assert lines == [
+        f"alert rule {rule.id} can't be evaluated (query could not be executed)",
+        f"alert rule {rule.id} is evaluated again",
+    ]
+    assert "boom" not in caplog.text
 
 
 async def test_instance_scope_and_disabled_rule(

@@ -165,6 +165,18 @@ export function computeHealth(input: HealthInput): Health {
     });
   }
 
+  if (connection === "closed") {
+    issues.push({
+      key: "offline",
+      level: "warning",
+      tag: "OFFLINE",
+      title: "Live connection closed",
+      detail: "the session ended: log in again",
+      since: null,
+      href: null,
+    });
+  }
+
   // Stable: critical first, each level in the order added.
   issues.sort((a, b) => Number(b.level === "critical") - Number(a.level === "critical"));
   const level: HealthLevel = issues.some((i) => i.level === "critical")
