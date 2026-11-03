@@ -20,6 +20,9 @@ import { InternalToggle, PortLegend } from "../snmp-ports/PortParts";
 import { faceplate, MIN_SCALE, PLATE, plateScale, plateSize } from "./panel";
 import type { Placed } from "./panel";
 
+/** Smallest scale of the tappable full-size panel; narrower than that, the blocks wrap. */
+const FULL_MIN_SCALE = 0.75;
+
 function Box({ label, children, wide }: { label: string; children: ReactNode; wide?: boolean }) {
   return (
     <div
@@ -76,7 +79,12 @@ export function SwitchPanelCard({ instanceId, title, instance }: CardProps) {
     sfp.length,
   );
   // Full size grows downwards, so only the width limits it; smaller cards fit both ways.
-  const scale = room ? plateScale(natural, full ? { width: room.width } : room) : 1;
+  // At full size it never goes below FULL_MIN_SCALE (tappable on a phone); it wraps instead.
+  const scale = room
+    ? full
+      ? Math.max(FULL_MIN_SCALE, plateScale(natural, { width: room.width }))
+      : plateScale(natural, room)
+    : 1;
   const tooSmall = tier === "small" || (room !== undefined && !full && scale <= MIN_SCALE);
   const px = (n: number) => `${n * scale}px`;
   const labels = scale >= 0.6;
@@ -144,7 +152,7 @@ export function SwitchPanelCard({ instanceId, title, instance }: CardProps) {
     <div
       role="group"
       aria-label="Front panel"
-      className="flex w-fit flex-nowrap items-center rounded-[10px] border border-line bg-inset"
+      className={`flex w-fit max-w-full items-center rounded-[10px] border border-line bg-inset ${full ? "flex-wrap" : "flex-nowrap"}`}
       style={{ gap: px(PLATE.blockGap), padding: px(PLATE.pad) }}
     >
       {copper.map((block, b) => (
