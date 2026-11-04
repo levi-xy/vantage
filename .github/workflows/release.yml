@@ -1,0 +1,75 @@
+name: Release images
+
+# Publishes the backend and frontend images to GitHub Container Registry, only when a
+# version tag (v0.1.0, v0.1.0-rc.1) is pushed. Nothing here runs on pull requests or main.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io
+      id-token: write # keyless cosign signing (Sigstore OIDC)
+    strategy:
+      fail-fast: true
+      matrix:
+        image: [backend, frontend]
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/vantage-${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3 # arm64 builds on an amd64 runner
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Tags: the full version (0.1.0), major.minor (0.1) for releases only, and "latest"
+      # for releases only (a pre-release like 0.1.0-rc.1 gets just its own tag).
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          flavor: |
+            latest=auto
+          labels: |
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.image }}
+          # LICENSE and NOTICE from the repository root (its .dockerignore sends only those).
+          build-contexts: license=.
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # SBOM and build provenance, attached to the image as attestations.
+          sbom: true
+          provenance: mode=max
+
+      - uses: sigstore/cosign-installer@v3
+
+      # Keyless: the signature ties the image digest to this workflow run.
+      - name: Sign the image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"

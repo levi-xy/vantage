@@ -6,6 +6,13 @@ COPY . .
 RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine
+LABEL org.opencontainers.image.title="Vantage frontend" \
+      org.opencontainers.image.description="Vantage web UI (nginx, HTTPS)" \
+      org.opencontainers.image.url="https://github.com/levi-xy/vantage" \
+      org.opencontainers.image.source="https://github.com/levi-xy/vantage" \
+      org.opencontainers.image.licenses="Apache-2.0"
+# The license and notice (the repository root, passed as the "license" build context).
+COPY --from=license LICENSE NOTICE /usr/share/doc/vantage/
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY docker/tls.conf /etc/nginx/vantage/tls.conf
 COPY docker/40-vantage-tls.sh /docker-entrypoint.d/

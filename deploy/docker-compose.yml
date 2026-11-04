@@ -9,7 +9,11 @@ x-hardening: &hardening
 services:
   backend:
     <<: *hardening
-    build: ../backend
+    build:
+      context: ../backend
+      # LICENSE and NOTICE from the repository root (its .dockerignore sends only those).
+      additional_contexts:
+        license: ..
     # Time for a clean shutdown before SIGKILL: it ends by deleting the backend heartbeat,
     # so restore and key rotation can run at once after `docker compose stop backend`.
     stop_grace_period: 20s
@@ -42,7 +46,11 @@ services:
 
   frontend:
     <<: *hardening
-    build: ../frontend
+    build:
+      context: ../frontend
+      # LICENSE and NOTICE from the repository root (its .dockerignore sends only those).
+      additional_contexts:
+        license: ..
     depends_on: [backend]
     # HTTPS (plain HTTP to the same port is redirected), unless VANTAGE_HTTPS=false.
     # VANTAGE_HTTP_PORT is the name used before HTTPS, still honoured so an existing .env

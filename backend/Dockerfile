@@ -1,5 +1,11 @@
 FROM python:3.12-slim
 
+LABEL org.opencontainers.image.title="Vantage backend" \
+      org.opencontainers.image.description="Vantage API, pollers and alerting" \
+      org.opencontainers.image.url="https://github.com/levi-xy/vantage" \
+      org.opencontainers.image.source="https://github.com/levi-xy/vantage" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -10,6 +16,8 @@ COPY pyproject.toml ./
 COPY app ./app
 COPY alembic.ini ./
 COPY migrations ./migrations
+# The license and notice (the repository root, passed as the "license" build context).
+COPY --from=license LICENSE NOTICE /usr/share/doc/vantage/
 RUN pip install ".[postgres]" && useradd --system --uid 10001 --no-create-home vantage \
     && mkdir /data && chown vantage /data
 

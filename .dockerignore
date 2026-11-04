@@ -1,0 +1,6 @@
+# The repository root is a build context only for the images' "license" context
+# (deploy/docker-compose.yml additional_contexts, the release workflow's build-contexts):
+# send nothing but the license files.
+*
+!LICENSE
+!NOTICE
