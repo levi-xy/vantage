@@ -4,7 +4,7 @@ How Vantage gets built by coding agents, milestone by milestone. Every agent rea
 
 **Direction (maintainer, 2026-10-28):** Vantage is meant for anyone to clone and run, not only the maintainer's network. Generic integrations come first (SNMP device, Linux host, SMART, ping and HTTP checks, the NAS exporter bundle); vendor-specific integrations are optional **profiles**, documented for any user. License: Apache 2.0, copyright levi-xy (maintainer's decision, 2026-11-03; `LICENSE` and `NOTICE` at the repository root).
 
-**Progress (2026-10-29):** done: M0, M1.1–M1.9, M2.1–M2.7, M3.1–M3.5, M4a–M4g, M4i. In review: M4h. Next: M5. No new integrations until the dashboard shows real data.
+**Progress (2026-11-04):** done: M0–M7, M8.1–M8.3, M8.5, the Trustworthy v0.1 work (alert state machine, outbox, self-monitoring, key check, maintenance lock) and the dashboard redesign. M8.4: release images, install bundle and docs done; the first tag (`v0.1.0-rc.1`, then `v0.1.0`) waits for the maintainer's go. Open: hardware checks of the fixture-only integrations (see the README's support table).
 
 **Lean build phase (maintainer, 2026-10-29):** visible progress first; thorough testing happens once the whole stack runs, against real devices in the lab. Until then:
 - Task specs give the goal and the hard limits, not every edge case. Builders and reviewers decide the details and note them in the PR.

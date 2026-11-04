@@ -77,3 +77,31 @@ jobs:
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
+  # The install bundle (deploy/ with a compose file that pulls the images just pushed) and
+  # its checksum, attached to a DRAFT release: the owner reviews the notes and publishes.
+  bundle:
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # create the draft release
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Build the install bundle
+        run: python3 deploy/make_bundle.py "$GITHUB_REF_NAME" dist
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum -- *.tar.gz > SHA256SUMS
+
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          prerelease=""
+          case "$TAG" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$TAG" dist/* --draft $prerelease --verify-tag \
+            --title "Vantage ${TAG#v}" --generate-notes

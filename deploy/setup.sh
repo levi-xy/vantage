@@ -220,7 +220,7 @@ command -v docker >/dev/null 2>&1 || die "docker is not installed"
 docker compose version >/dev/null 2>&1 || die "Docker Compose v2 ('docker compose') is not available"
 docker info >/dev/null 2>&1 || die "can't reach the Docker daemon (is it running, and may this user use it?)"
 
-echo "Starting Vantage (the first run builds the images and takes a few minutes)..."
+echo "Starting Vantage (the first run downloads or builds the images and takes a few minutes)..."
 docker compose up -d
 
 bind=$(setting VANTAGE_BIND_ADDRESS); bind=${bind:-127.0.0.1}

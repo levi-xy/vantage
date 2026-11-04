@@ -2,7 +2,7 @@
 
 > Working name. A self-hosted, security-first dashboard for homelabs and small infrastructure.
 
-**Status: pre-alpha, in design and early development.** Nothing here is ready to run yet.
+**Status: v0.1, first release.** It runs, and its alerting, delivery and recovery paths have been drilled on a test stack and lab devices. Most integrations are tested only against recorded or hand-written answers so far; the table below says which ones have met real equipment. Expect rough edges and report them.
 
 Vantage puts your firewall, hypervisor, NAS, switches, tunnels and services on one live dashboard, designed around your real hardware instead of generic graphs. Every device is added from the UI. No config files to edit, and as many instances of each type as you need.
 
@@ -20,32 +20,35 @@ Vantage puts your firewall, hypervisor, NAS, switches, tunnels and services on o
 
 ---
 
-## Features (planned for v0.1)
+## Features
 
 - **Add anything from the UI:** pick a device type, fill a form, test the connection, save. Run as many instances of each type as you need.
 - **Integrations as plugins:** each device type is a self-contained module with its form, collection logic and cards. The community can add more.
 - **Live, hardware-shaped cards:** network topology map, switch port faceplate, NAS drive bays, VM lists, tunnel and site traffic, media streams.
 - **Network map:** a dashboard card draws your devices with live status and the links you add in edit mode (device, optional port, label); a link shows its throughput when both ends name a port with traffic counters.
-- **Editable layout:** cards appear automatically for each new device; drag them into place.
+- **Dashboards you arrange:** a new device's cards land on the main dashboard; drag, resize (cards show less when small), add more dashboards as tabs.
 - **History and alerts:** Prometheus underneath, alert rules managed in the UI, Telegram delivery (more channels later). Telegram channels are set up on the **Alerts** page, with a "Send test message" button; the bot token is stored encrypted and never shown again.
-- **"What changed":** a timeline that links events across devices (later: AI-assisted summaries).
+- **Self-monitoring:** Vantage alerts when Prometheus is unreachable, isn't collecting, or alert evaluation stops, and says why; `/healthz` for an external watchdog.
+- **Security first:** read-only toward devices, secrets encrypted and never returned, every outbound call through an SSRF guard, HTTPS by default. See [docs/SECURITY.md](docs/SECURITY.md).
 
 ---
 
-## Supported integrations (planned)
+## Supported integrations
 
-| Integration | Collects via | Examples |
-|---|---|---|
-| Linux host | node_exporter scrape | Any Linux server, many NAS devices |
-| SMART add-on | smartctl_exporter scrape | Disk health and temperatures |
-| Proxmox VE | API (read-only token) | Hosts, VMs, LXCs, storage |
-| pfSense | Telegraf scrape | Interfaces, gateways, firewall states |
-| SNMP device | SNMP poll | Switches, UPSes, printers |
-| MikroTik SwOS | SNMP profile | CRS/CSS switches on SwOS |
-| cloudflared | Metrics scrape | Tunnel connections, requests, errors |
-| Cloudflare account | API (read-only token) | Site traffic, cache, threats, tunnel health |
-| Emby | API | Now playing, transcoding, libraries |
-| HTTP / ping check | Backend probe | Anything with an IP or URL |
+| Integration | Collects via | Examples | Tested against |
+|---|---|---|---|
+| Linux host | node_exporter scrape | Any Linux server, many NAS devices | Fixtures |
+| SMART add-on | smartctl_exporter scrape | Disk health and temperatures | Fixtures |
+| Proxmox VE | API (read-only token) | Hosts, VMs, LXCs, storage, guest tags | Fixtures |
+| pfSense | Telegraf scrape | Interfaces, gateways, firewall states | Lab pfSense |
+| SNMP device | SNMP poll (v1, v2c, v3) | Switches, routers, UPSes, printers | Lab VyOS (v2c) |
+| MikroTik SwOS | SNMP profile | CRS/CSS switches on SwOS | A real switch, observed |
+| cloudflared | Metrics scrape | Tunnel connections, requests, errors | Fixtures |
+| Cloudflare account | API (read-only token) | Site traffic, cache, threats, tunnel health | Fixtures |
+| Emby | API | Now playing (who is watching what), transcoding, libraries | Fixtures |
+| HTTP / ping check | Backend probe | Anything with an IP or URL | Lab (ping); fixtures (HTTP) |
+
+"Fixtures" means recorded or hand-written device answers in the test suite: the parsing is tested, but the integration hasn't met that product's real API yet. Field names that differ on real gear show up as missing values, not errors; please report them.
 
 Don't see your device? The generic integrations (Linux host, SNMP, HTTP/ping) cover most gear, and new types can be added as plugins.
 
@@ -96,15 +99,37 @@ Vantage holds a map of your network and credentials to your devices, so it's bui
 
 ## Quick start
 
-Needs Docker Engine with Compose v2, and `openssl`.
+Needs Docker Engine with Compose v2 (2.17 or newer), and `openssl`. Images are published for amd64 and arm64.
+
+**From a release** (no source checkout; Docker pulls the published images). Take the bundle from the [latest release](https://github.com/levi-xy/vantage/releases/latest), replacing `0.1.0` with its version:
 
 ```bash
-git clone https://github.com/<owner>/vantage.git
+V=0.1.0
+curl -fLO https://github.com/levi-xy/vantage/releases/download/v$V/vantage-deploy-$V.tar.gz
+curl -fLO https://github.com/levi-xy/vantage/releases/download/v$V/SHA256SUMS
+sha256sum -c SHA256SUMS
+tar -xzf vantage-deploy-$V.tar.gz
+cd vantage-deploy-$V
+./setup.sh
+```
+
+The images are signed. To check one before running it (needs [cosign](https://docs.sigstore.dev/cosign/system_config/installation/)):
+
+```bash
+cosign verify ghcr.io/levi-xy/vantage-backend:$V \
+  --certificate-identity-regexp '^https://github.com/levi-xy/vantage/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+**From source** (builds the images on your machine):
+
+```bash
+git clone https://github.com/levi-xy/vantage.git
 cd vantage/deploy
 ./setup.sh
 ```
 
-`setup.sh` creates the master key, the Prometheus token, a self-signed HTTPS certificate and `.env` (keeping any that already exist), starts the stack and prints the address. Back up `deploy/secrets/master.key` somewhere off the server: without it, stored device credentials can't be decrypted. The dashboard listens on `https://127.0.0.1:8443` by default; set `VANTAGE_BIND_ADDRESS` in `.env` to reach it from other machines (add any other names you use in `VANTAGE_TLS_NAMES` before the first run), then run `docker compose up -d`.
+Either way, `setup.sh` creates the master key, the Prometheus token, a self-signed HTTPS certificate and `.env` (keeping any that already exist), starts the stack and prints the address. Back up `secrets/master.key` (in the folder you ran `setup.sh` from) somewhere off the server: without it, stored device credentials can't be decrypted. The dashboard listens on `https://127.0.0.1:8443` by default; set `VANTAGE_BIND_ADDRESS` in `.env` to reach it from other machines (add any other names you use in `VANTAGE_TLS_NAMES` before the first run), then run `docker compose up -d`.
 
 **Vantage can't tell you when Vantage itself is down.** It sends its own alerts when Prometheus is unreachable, isn't collecting metrics, or alert evaluation stops, but if the backend or its host is down, or the notification dispatcher itself is stuck, no message is sent. Point an external monitor (Uptime Kuma, cron + curl, a hosted dead-man's switch) on another machine at `https://<vantage>/healthz` and alert on anything but 200. See [Self-monitoring](docs/SECURITY.md#self-monitoring-and-healthz).
 
@@ -128,6 +153,15 @@ Device down detection: a polled device is marked down after 3 failed poll cycles
 How alerts resolve: an alert resolves only after two clean checks on two different polls, where the device's value was seen and the condition was false. A missing value (device down, metric gone, query failing, removed from service discovery) never counts as recovery: the alert moves to **No data** and stays open until the value returns or an admin closes it. A "NO DATA" message goes out once an alert has been in No data for 5 minutes, and one reminder after 24 hours. Rules whose expression can't be split into a value and a threshold (for example `a and b`, or `absent(...)`) resolve when their result is empty and the device has polled again; the rule list warns about them.
 
 **Upgrade note (alert states, migration 0008):** events gain a `no_data` state, `no_data_reason`, `state_since` and `reminder_sent_at`; the migration is additive and runs on start. Older Vantage versions don't know `no_data`: to roll back, run `docker compose exec backend alembic downgrade 0007` before starting the older image, which turns every `no_data` event back into `firing`.
+
+### Upgrading
+
+Back up first (see Backups below), then:
+
+- **From a release:** download the new bundle and unpack it next to the old one, then copy over your `secrets/`, `certs/` and `.env` from the old folder (never the other files: the new compose file belongs to the new release). In the new folder run `docker compose down`, then `./setup.sh`. Or, if the release notes say the compose file didn't change, set `VANTAGE_VERSION=<new version>` in `.env` and run `docker compose pull && docker compose up -d`.
+- **From source:** `git pull`, then `docker compose up -d --build` in `deploy/`.
+
+Database migrations run by themselves when the backend starts. When a release changes the compose network (the release notes say so), run `docker compose down` before `up -d`: a plain `up -d` leaves the frontend without its fixed address and the dashboard down. The [CHANGELOG](CHANGELOG.md) lists each version's upgrade notes.
 
 Logs: the backend logs at INFO by default (for example each delivered alert message). Change it with `VANTAGE_LOG_LEVEL` (`DEBUG`, `INFO`, `WARNING` or `ERROR`) in `.env`.
 
@@ -166,8 +200,8 @@ See [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) for the full interface, the r
 
 ## Roadmap
 
-- **v0.1:** core platform, UI-managed devices, built-in integrations, editable dashboard, alerts to Telegram
-- **v0.2:** network topology map, more alert channels, backup and restore
+- **v0.1:** core platform, UI-managed devices, built-in integrations, multiple dashboards, network map, alerts to Telegram with self-monitoring, backup, restore and key rotation
+- **v0.2:** more alert channels, a "what changed" timeline across devices, hardware checks of the fixture-only integrations
 - **v0.3:** security visibility: firewall logs, IDS alerts, failed logins, new-device detection
 - **Later:** anomaly detection and AI-assisted "what changed" summaries, OIDC/SSO, multiple sites
 
