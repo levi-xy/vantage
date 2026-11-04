@@ -2,6 +2,8 @@ name: Release images
 
 # Publishes the backend and frontend images to GitHub Container Registry, only when a
 # version tag (v0.1.0, v0.1.0-rc.1) is pushed. Nothing here runs on pull requests or main.
+# Actions are pinned to commit SHAs (the job can push and sign images); the comment names
+# the major version each SHA was taken from.
 on:
   push:
     tags: ["v*.*.*"]
@@ -16,6 +18,8 @@ concurrency:
 jobs:
   image:
     runs-on: ubuntu-latest
+    # arm64 builds run under QEMU; a stuck build must not hold the runner for 6 hours.
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write # push to ghcr.io
@@ -27,12 +31,12 @@ jobs:
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/vantage-${{ matrix.image }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: docker/setup-qemu-action@v3 # arm64 builds on an amd64 runner
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3 (arm64 builds on an amd64 runner)
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -41,7 +45,7 @@ jobs:
       # Tags: the full version (0.1.0), major.minor (0.1) for releases only, and "latest"
       # for releases only (a pre-release like 0.1.0-rc.1 gets just its own tag).
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.IMAGE }}
           tags: |
@@ -53,7 +57,7 @@ jobs:
             org.opencontainers.image.licenses=Apache-2.0
 
       - id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ${{ matrix.image }}
           # LICENSE and NOTICE from the repository root (its .dockerignore sends only those).
@@ -66,7 +70,7 @@ jobs:
           sbom: true
           provenance: mode=max
 
-      - uses: sigstore/cosign-installer@v3
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
 
       # Keyless: the signature ties the image digest to this workflow run.
       - name: Sign the image
