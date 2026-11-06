@@ -7,12 +7,12 @@ import { Link, useLocation, useParams } from "react-router";
 import { ApiError } from "../../api";
 import type { AlertEvent, CardSpec, Instance } from "../../api";
 import { deviceColor } from "../../app/deviceColors";
-import { ALERTS_KEY } from "../../app/live";
 import { useApiClient, useUser } from "../../app/session";
 import { DeviceColorIcon, deviceTypeLabel } from "../../cards/metrics/CardHeader";
 import { shownState, useScrapeStates } from "../../cards/metrics/scrapeStatus";
 import { DESKTOP_MIN_WIDTH, gridHeightPx } from "../../cards/layout";
 import { ageText } from "../../cards/problems";
+import { useOpenAlerts } from "../../cards/openAlerts";
 import { cardComponent, fullSize } from "../../cards/registry";
 import { buttonSecondary } from "../../components/styles";
 import { alertError } from "../../components/styles";
@@ -29,8 +29,6 @@ function subscribeResize(onChange: () => void) {
 function useIsDesktop() {
   return useSyncExternalStore(subscribeResize, () => window.innerWidth >= DESKTOP_MIN_WIDTH);
 }
-
-const OPEN_ALERTS_LIMIT = 200;
 
 function BackLink() {
   const location = useLocation();
@@ -123,12 +121,9 @@ function Header({ instance }: { instance: Instance }) {
 }
 
 function OpenAlerts({ instanceId }: { instanceId: string }) {
-  const api = useApiClient();
   const now = useNow();
-  const alerts = useQuery({
-    queryKey: [...ALERTS_KEY, "open", OPEN_ALERTS_LIMIT],
-    queryFn: () => api.openAlertEvents(OPEN_ALERTS_LIMIT),
-  });
+  // The query the dashboard shares: kept fresh by /ws pushes and a refetch interval.
+  const alerts = useOpenAlerts();
   const mine: AlertEvent[] = (alerts.data ?? []).filter((e) => e.instance_id === instanceId);
   return (
     <section aria-label="Open alerts" className="mb-4">
