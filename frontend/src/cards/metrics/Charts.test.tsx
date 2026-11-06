@@ -50,6 +50,19 @@ describe("AreaChart hover", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
+  it("keeps the readout after a finger lifts", () => {
+    chart([
+      [T0, 1],
+      [T0 + 60, 2],
+      [T0 + 120, 3],
+    ]);
+    const svg = hoverAt(0.5);
+    const leave = createEvent.pointerLeave(svg);
+    Object.defineProperty(leave, "pointerType", { value: "touch" });
+    fireEvent(svg, leave);
+    expect(screen.getByRole("status")).toBeInTheDocument();
+  });
+
   it("says no data where a series has a gap", () => {
     chart([
       [T0, 1],

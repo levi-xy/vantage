@@ -158,7 +158,11 @@ export function AreaChart({ series, format, tickScale = 1, window, label }: Area
           className="block h-full min-h-16 w-full touch-pan-y overflow-visible"
           onPointerDown={move}
           onPointerMove={move}
-          onPointerLeave={() => setHover(null)}
+          // A finger lifting also "leaves": keep the readout after a tap so it can be read;
+          // the next tap moves it. A mouse leaving clears it.
+          onPointerLeave={(e) => {
+            if (e.pointerType !== "touch") setHover(null);
+          }}
           onPointerCancel={() => setHover(null)}
         >
           {ticks.map((t) => {

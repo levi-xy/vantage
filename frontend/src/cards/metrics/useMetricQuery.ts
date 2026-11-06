@@ -34,14 +34,18 @@ export interface RangeWindow {
   step: number;
 }
 
-/** A window ending now, with about 60 points. `end` is rounded to the step so refetches line up. */
+/**
+ * A window ending now, with about 60 points. `end` is rounded down to the step (at most
+ * 5 minutes) so refetches line up without leaving a long empty strip on long ranges.
+ */
 export function rangeWindow(
   windowSeconds: number,
   nowMs: number = Date.now(),
   targetPoints: number = TARGET_POINTS,
 ): RangeWindow {
   const step = Math.max(MIN_STEP_SECONDS, Math.ceil(windowSeconds / targetPoints));
-  const end = Math.floor(nowMs / 1000 / step) * step;
+  const align = Math.min(step, 300);
+  const end = Math.floor(nowMs / 1000 / align) * align;
   return { start: end - windowSeconds, end, step };
 }
 
