@@ -1,4 +1,4 @@
-import { areaPath, hourTicks, linePath, niceTicks, stats } from "./chart";
+import { areaPath, dayTicks, hourTicks, linePath, nearestPoint, niceTicks, stats } from "./chart";
 
 const box = { start: 0, end: 100, min: 0, max: 10, width: 1000, height: 100 };
 
@@ -66,5 +66,34 @@ describe("chart paths", () => {
       ]),
     ).toEqual({ min: 1, avg: 3, max: 6 });
     expect(stats([])).toBeUndefined();
+  });
+});
+
+describe("nearestPoint", () => {
+  const pts: [number, number][] = [
+    [0, 1],
+    [60, 2],
+    [120, 3],
+    [600, 4],
+  ];
+  it("finds the closest sample by time", () => {
+    expect(nearestPoint(pts, 70, 120)).toEqual([60, 2]);
+    expect(nearestPoint(pts, 100, 120)).toEqual([120, 3]);
+    expect(nearestPoint(pts, -5, 120)).toEqual([0, 1]);
+    expect(nearestPoint(pts, 9999, 120)).toBeUndefined();
+  });
+  it("returns nothing inside a gap or for an empty series", () => {
+    expect(nearestPoint(pts, 360, 120)).toBeUndefined();
+    expect(nearestPoint([], 5, 120)).toBeUndefined();
+  });
+});
+
+describe("dayTicks", () => {
+  it("gives local midnights, thinned to the label limit", () => {
+    const end = new Date(2026, 10, 30, 12).getTime() / 1000;
+    const week = dayTicks(end - 7 * 86400, end);
+    expect(week.length).toBeGreaterThan(3);
+    expect(week.every((t) => new Date(t * 1000).getHours() === 0)).toBe(true);
+    expect(dayTicks(end - 30 * 86400, end).length).toBeLessThanOrEqual(7);
   });
 });

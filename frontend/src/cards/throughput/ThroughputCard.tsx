@@ -18,8 +18,10 @@ import {
   portKey,
   portOptions,
   portsFromSettings,
+  CHART_POINTS,
   historyQuery,
   isWanPort,
+  rateWindowFor,
   rateQuery,
   settingsWithPorts,
   PFSENSE_INFO_QUERY,
@@ -71,8 +73,37 @@ function useLiveRate(now: number): LiveRate | undefined {
   return fresh ? live.data : undefined;
 }
 
-/** The chart's window: the last 6 hours. */
-const CHART_WINDOW_SECONDS = 6 * 3600;
+/** The chart's selectable windows. */
+const RANGES = [
+  { key: "1h", seconds: 3600, text: "1 hour" },
+  { key: "6h", seconds: 6 * 3600, text: "6 hours" },
+  { key: "24h", seconds: 24 * 3600, text: "24 hours" },
+  { key: "7d", seconds: 7 * 86400, text: "7 days" },
+  { key: "30d", seconds: 30 * 86400, text: "30 days" },
+] as const;
+const DEFAULT_RANGE = 1;
+
+function RangePicker({ value, onChange }: { value: number; onChange: (i: number) => void }) {
+  return (
+    <div
+      role="group"
+      aria-label="Chart range"
+      className="flex w-fit rounded border border-line text-xs"
+    >
+      {RANGES.map((r, i) => (
+        <button
+          key={r.key}
+          type="button"
+          aria-pressed={i === value}
+          onClick={() => onChange(i)}
+          className={`px-2 py-0.5 first:rounded-l last:rounded-r ${i === value ? "bg-chip font-semibold text-ink" : "text-muted hover:text-ink"}`}
+        >
+          {r.key}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 /**
  * The chosen ports' devices without fresh data: a polled device whose last successful poll
@@ -107,7 +138,7 @@ function Current({ label, value, tone }: { label: string; value: string; tone: "
 }
 
 /**
- * In and out traffic of the ports the admin chose (summed): now, and the last 6 hours. While
+ * In and out traffic of the ports the admin chose (summed): now, and a chart of the last 1 hour to 30 days (6 hours by default). While
  * the backend pushes live rates (every ~2 s), those replace Prometheus' 2-minute average.
  */
 export function ThroughputCard({ instances, settings }: WidgetProps) {
@@ -120,15 +151,21 @@ export function ThroughputCard({ instances, settings }: WidgetProps) {
   const rx = useFleetQuery(inExpr);
   const tx = useFleetQuery(outExpr);
   // No `or vector(0)` here: a time the device didn't report is a gap, not 0 traffic.
+  const [rangeIndex, setRangeIndex] = useState(DEFAULT_RANGE);
+  const range = RANGES[rangeIndex] ?? RANGES[DEFAULT_RANGE];
+  const windowSeconds = range.seconds;
+  const rateWindow = rateWindowFor(windowSeconds);
   const rxHistory = useFleetRangeQuery(
-    historyQuery(ports, "in"),
-    CHART_WINDOW_SECONDS,
+    historyQuery(ports, "in", rateWindow),
+    windowSeconds,
     chosen && tier === "full",
+    CHART_POINTS,
   );
   const txHistory = useFleetRangeQuery(
-    historyQuery(ports, "out"),
-    CHART_WINDOW_SECONDS,
+    historyQuery(ports, "out", rateWindow),
+    windowSeconds,
     chosen && tier === "full",
+    CHART_POINTS,
   );
   const { groups } = usePortOptions(instances);
   const now = useNow();
@@ -207,15 +244,13 @@ export function ThroughputCard({ instances, settings }: WidgetProps) {
     );
   }
   const historyError = rxHistory.error ?? txHistory.error;
-  // The whole 6 hours up to the last fetch, so a device that stopped reporting shows a gap
+  // The whole window up to the last fetch, so a device that stopped reporting shows a gap
   // up to "now" instead of a chart that ends early.
   const historyEnd = rxHistory.dataUpdatedAt / 1000;
   const chart = (
     <AreaChart
-      window={
-        historyEnd > 0 ? { start: historyEnd - CHART_WINDOW_SECONDS, end: historyEnd } : undefined
-      }
-      label={`${inName} and ${outName.toLowerCase()} over the last 6 hours`}
+      window={historyEnd > 0 ? { start: historyEnd - windowSeconds, end: historyEnd } : undefined}
+      label={`${inName} and ${outName.toLowerCase()} over the last ${range.text}`}
       format={formatRate}
       tickScale={unit === "bytes" ? 8 : 1}
       series={[
@@ -264,7 +299,12 @@ export function ThroughputCard({ instances, settings }: WidgetProps) {
         </div>
       </div>
       {/* Medium: the current rates only, no chart. */}
-      {tier === "full" && <div className="flex min-h-40 flex-1 flex-col">{history}</div>}
+      {tier === "full" && (
+        <div className="flex min-h-40 flex-1 flex-col gap-2">
+          <RangePicker value={rangeIndex} onChange={setRangeIndex} />
+          {history}
+        </div>
+      )}
       {stale && tier === "full" && (
         <p className="text-xs text-muted">
           No recent data from {staleDevices.map((i) => i.name).join(", ")}; history greyed.

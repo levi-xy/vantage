@@ -23,16 +23,22 @@ function xy([t, v]: Point, b: Box): string {
   return `${x.toFixed(1)} ${y.toFixed(1)}`;
 }
 
-/**
- * The points as runs without a gap. A range query leaves out the steps with no value, so a
- * jump of more than 1.5 x the series' step (its smallest spacing) is a gap: never bridged.
- */
-export function segments(points: Point[]): Point[][] {
+/** A series' step: its smallest spacing (Infinity with fewer than two distinct times). */
+export function stepOf(points: Point[]): number {
   let step = Infinity;
   for (let i = 1; i < points.length; i++) {
     const d = (points[i] as Point)[0] - (points[i - 1] as Point)[0];
     if (d > 0) step = Math.min(step, d);
   }
+  return step;
+}
+
+/**
+ * The points as runs without a gap. A range query leaves out the steps with no value, so a
+ * jump of more than 1.5 x the series' step (its smallest spacing) is a gap: never bridged.
+ */
+export function segments(points: Point[]): Point[][] {
+  const step = stepOf(points);
   const runs: Point[][] = [];
   let run: Point[] = [];
   for (const p of points) {
@@ -114,4 +120,43 @@ export function stats(points: Point[]): { min: number; avg: number; max: number 
     sum += v;
   }
   return { min, avg: sum / points.length, max };
+}
+
+/**
+ * The point closest in time to `t` in a series sorted by time (binary search), or undefined
+ * when it is more than `maxDistance` seconds away: a gap, not a far-away value.
+ */
+export function nearestPoint(points: Point[], t: number, maxDistance: number): Point | undefined {
+  let lo = 0;
+  let hi = points.length - 1;
+  if (hi < 0) return undefined;
+  // First index with a time >= t.
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if ((points[mid] as Point)[0] < t) lo = mid + 1;
+    else hi = mid;
+  }
+  const after = points[lo] as Point;
+  const before = lo > 0 ? (points[lo - 1] as Point) : undefined;
+  const best = before && t - before[0] <= after[0] - t ? before : after;
+  return Math.abs(best[0] - t) <= maxDistance ? best : undefined;
+}
+
+/**
+ * Local midnights strictly inside (start, end), at most `maxLabels` of them (every n-th day),
+ * leaving out ones too close to either edge to have room for a label.
+ */
+export function dayTicks(start: number, end: number, maxLabels = 7): number[] {
+  const span = end - start;
+  if (span <= 0) return [];
+  const margin = span * 0.06;
+  const days: number[] = [];
+  const d = new Date(start * 1000);
+  d.setHours(0, 0, 0, 0);
+  for (; d.getTime() / 1000 < end; d.setDate(d.getDate() + 1)) {
+    const t = d.getTime() / 1000;
+    if (t > start + margin && t < end - margin) days.push(t);
+  }
+  const every = Math.max(1, Math.ceil(days.length / maxLabels));
+  return days.filter((_, i) => i % every === 0);
 }
