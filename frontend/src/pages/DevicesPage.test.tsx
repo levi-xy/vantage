@@ -157,7 +157,7 @@ describe("device list", () => {
   });
 
   it("keeps viewers out of the add and edit pages", async () => {
-    for (const path of ["/devices/new", `/devices/${INSTANCE_ID}`]) {
+    for (const path of ["/devices/new", `/devices/${INSTANCE_ID}/edit`]) {
       const { unmount } = renderApp(path, backendWith([exampleInstance()], {}, "viewer"));
       expect(await screen.findByRole("heading", { name: "Admins only" })).toBeInTheDocument();
       unmount();
@@ -418,7 +418,7 @@ describe("add device", () => {
 describe("edit device", () => {
   async function openEdit(routes: FakeBackendOptions["routes"] = {}) {
     const backend = backendWith([exampleInstance()], routes);
-    const result = renderApp(`/devices/${INSTANCE_ID}`, backend);
+    const result = renderApp(`/devices/${INSTANCE_ID}/edit`, backend);
     await screen.findByRole("heading", { level: 1, name: "Edit nas-1" });
     return { ...result, backend };
   }
@@ -520,7 +520,7 @@ describe("edit device", () => {
       ],
       { [`PATCH ${ITEM}`]: () => json(exampleInstance()) },
     );
-    renderApp(`/devices/${INSTANCE_ID}`, backend);
+    renderApp(`/devices/${INSTANCE_ID}/edit`, backend);
     fireEvent.click(await screen.findByLabelText("Remove the stored value"));
     expect(screen.getByLabelText(/^Snmp Community/)).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
@@ -530,7 +530,7 @@ describe("edit device", () => {
 
   it("reports an unknown device", async () => {
     renderApp(
-      `/devices/${INSTANCE_ID}`,
+      `/devices/${INSTANCE_ID}/edit`,
       backendWith([], { [`GET ${ITEM}`]: () => json({ detail: "instance not found" }, 404) }),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent("instance not found");

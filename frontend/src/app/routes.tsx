@@ -4,6 +4,7 @@ import { AlertsPage } from "../pages/AlertsPage";
 import { AuditPage } from "../pages/AuditPage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { DevicesPage } from "../pages/DevicesPage";
+import { DeviceDetailPage } from "../pages/devices/DeviceDetailPage";
 import { AddDevicePage, EditDevicePage } from "../pages/devices/DeviceFormPages";
 import { LoginPage } from "../pages/LoginPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
@@ -48,8 +49,9 @@ export const routes: RouteObject[] = [
           </RequireRole>
         ),
       },
+      { path: "devices/:id", element: <DeviceDetailPage /> },
       {
-        path: "devices/:id",
+        path: "devices/:id/edit",
         element: (
           <RequireRole role="admin">
             <EditDevicePage />
