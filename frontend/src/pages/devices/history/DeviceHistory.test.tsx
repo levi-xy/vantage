@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { exampleMe, fakeBackend, json, mockSystemTheme, renderApp } from "../../../test-utils";
 import { exampleInstance, INSTANCE_ID } from "../testFixtures";
-import { chartQuery, historyChartsFor, rateRange } from "./historyCharts";
+import { chartQuery, historyChartsFor, ifaceListQuery, rateRange } from "./historyCharts";
 
 beforeEach(() => {
   mockSystemTheme(false);
@@ -104,6 +104,14 @@ describe("device history", () => {
 });
 
 describe("history queries", () => {
+  it("ranks ports over at most a day", () => {
+    const ifaces = historyChartsFor("pfsense").find((c) => c.ifaces)?.ifaces;
+    if (!ifaces) throw new Error("pfSense traffic has a port list");
+    const q = ifaceListQuery(INSTANCE_ID, ifaces, 30 * 86400);
+    expect(q).toContain("[86400s]");
+    expect(q).not.toContain("2592000");
+  });
+
   it("scope every chart to the instance and keep rate windows at least one step", () => {
     for (const type of [
       "pfsense",

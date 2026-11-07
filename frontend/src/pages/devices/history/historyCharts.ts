@@ -301,9 +301,13 @@ export function chartQuery(
   return scopedQuery(instanceId, (sel) => chart.build(sel, windowSeconds, iface));
 }
 
+/** Busiest ports are ranked over at most the last day: a 30-day rate() is heavy. */
+const IFACE_RANK_MAX_SECONDS = 86400;
+
 /** The interface-ranking query for one instance. */
 export function ifaceListQuery(instanceId: string, source: IfaceSource, windowSeconds: number) {
-  return scopedQuery(instanceId, (sel) => source.list(sel, windowSeconds));
+  const w = Math.min(windowSeconds, IFACE_RANK_MAX_SECONDS);
+  return scopedQuery(instanceId, (sel) => source.list(sel, w));
 }
 
 /** Lines' tones, in order: blue, orange, then the neutral one. */
