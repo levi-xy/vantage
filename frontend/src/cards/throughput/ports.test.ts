@@ -98,3 +98,10 @@ describe("throughput ports", () => {
     expect(formatBytesPerSecond(8_000_000)).toBe("1.0 MB/s");
   });
 });
+
+describe("historyQuery rate window", () => {
+  it("uses the given rate() range", () => {
+    const q = historyQuery([{ source: "pfsense", instanceId: "pf", iface: "igc0" }], "in", "1512s");
+    expect(q).toContain("[1512s]");
+  });
+});

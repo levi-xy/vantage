@@ -74,6 +74,13 @@ describe("rangeWindow", () => {
     expect(w.end - w.start).toBe(3600);
   });
 
+  it("ends at most 5 minutes before now on a long range", () => {
+    const now = 1_700_000_123_000;
+    const w = rangeWindow(30 * 86400, now, 400);
+    expect(now / 1000 - w.end).toBeLessThan(300);
+    expect(w.end - w.start).toBe(30 * 86400);
+  });
+
   it("never uses a step below the proxy's 15 s minimum", () => {
     expect(rangeWindow(300, 1_700_000_000_000).step).toBe(15);
   });

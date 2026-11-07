@@ -1,5 +1,6 @@
 // Ports the throughput card can watch, how a choice is stored in the card's settings, and
 // the PromQL for their traffic. Pure functions, so they're easy to test.
+import { rangeWindow } from "../metrics/useMetricQuery";
 import type { Instance, QueryResult } from "../../api";
 import {
   IF_INFO_METRIC,
@@ -108,8 +109,9 @@ export function rateQuery(ports: PortRef[], dir: "in" | "out"): string {
  * Like `rateQuery`, for the history: without `or vector(0)`, so a time when no chosen port
  * reported has no value (a gap in the chart), never a fake 0. The ports' series differ in
  * their instance or interface label, so `or` keeps every one and `sum` adds them up.
+ * `rateWindow` is the rate() range (a PromQL duration); keep it at least the query step.
  */
-export function historyQuery(ports: PortRef[], dir: "in" | "out"): string {
+export function historyQuery(ports: PortRef[], dir: "in" | "out", rateWindow = "2m"): string {
   if (ports.length === 0) return "vector(0)";
   const parts = ports.map((p) => {
     const m = SOURCE_METRICS[p.source];
@@ -117,7 +119,7 @@ export function historyQuery(ports: PortRef[], dir: "in" | "out"): string {
       `vantage_instance_id=${promqlString(p.instanceId)}`,
       `${m.label}=${promqlString(p.iface)}`,
     ]);
-    return `rate(${sel}[2m])`;
+    return `rate(${sel}[${rateWindow}])`;
   });
   return `8 * sum(${parts.join(" or ")})`;
 }
@@ -184,4 +186,15 @@ export function portOptions(
       ),
     }))
     .sort((a, b) => a.instance.name.localeCompare(b.instance.name));
+}
+
+/** Points per chart series: well under the query proxy's 1 100 (its 15 s minimum step caps 1 h). */
+export const CHART_POINTS = 400;
+/** rate() looks back at least 2 minutes (as before) and never less than one query step. */
+const MIN_RATE_SECONDS = 120;
+
+/** The rate() range (a PromQL duration) for a chart window: at least the step, at least 2 min. */
+export function rateWindowFor(windowSeconds: number): string {
+  const { step } = rangeWindow(windowSeconds, 0, CHART_POINTS);
+  return `${Math.max(MIN_RATE_SECONDS, step)}s`;
 }

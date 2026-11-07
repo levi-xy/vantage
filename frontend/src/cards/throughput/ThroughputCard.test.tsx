@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { ApiClient } from "../../api";
 import type { Instance, QueryRequest, QueryResult } from "../../api";
 import { LIVE_RATE_KEY } from "../../app/live";
@@ -9,6 +9,7 @@ import { MainDashboardContext } from "../mainDashboard";
 import { CardTierContext } from "../metrics/tier";
 import type { CardTier } from "../metrics/tier";
 import { ThroughputCard } from "./ThroughputCard";
+import { rateWindowFor } from "./ports";
 
 const client = new ApiClient({ fetch: vi.fn() });
 vi.mock("../../app/session", () => ({ useApiClient: () => client }));
@@ -117,6 +118,29 @@ describe("ThroughputCard", () => {
     expect(screen.getAllByText("100 Mbit/s").length).toBeGreaterThan(0);
     const range = queries.find((q) => q.start !== undefined);
     expect(range && (range.end ?? 0) - (range.start ?? 0)).toBe(6 * 3600);
+  });
+
+  it("switches the range: label, window, step and rate() range follow", async () => {
+    const queries = renderCard(firewall(10));
+    await screen.findByRole("img", { name: "Download and upload over the last 6 hours" });
+    fireEvent.click(screen.getByRole("button", { name: "7d" }));
+    expect(
+      await screen.findByRole("img", { name: "Download and upload over the last 7 days" }),
+    ).toBeInTheDocument();
+    const week = queries.find(
+      (q) => q.start !== undefined && (q.end ?? 0) - (q.start ?? 0) === 7 * 86400,
+    );
+    expect(week).toBeDefined();
+    expect((7 * 86400) / (week?.step ?? 1)).toBeLessThanOrEqual(1100);
+    expect(week?.query).toContain(`[${rateWindowFor(7 * 86400)}]`);
+  });
+
+  it("keeps the rate() range at least as long as the step", () => {
+    for (const hours of [1, 6, 24, 7 * 24, 30 * 24]) {
+      const step = Math.max(15, Math.ceil((hours * 3600) / 400));
+      expect(Number.parseInt(rateWindowFor(hours * 3600))).toBeGreaterThanOrEqual(step);
+      expect(Number.parseInt(rateWindowFor(hours * 3600))).toBeGreaterThanOrEqual(120);
+    }
   });
 
   it("greys the history and shows no current value when the device has no fresh data", async () => {

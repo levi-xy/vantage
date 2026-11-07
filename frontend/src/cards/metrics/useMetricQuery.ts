@@ -34,10 +34,18 @@ export interface RangeWindow {
   step: number;
 }
 
-/** A window ending now, with about 60 points. `end` is rounded to the step so refetches line up. */
-export function rangeWindow(windowSeconds: number, nowMs: number = Date.now()): RangeWindow {
-  const step = Math.max(MIN_STEP_SECONDS, Math.ceil(windowSeconds / TARGET_POINTS));
-  const end = Math.floor(nowMs / 1000 / step) * step;
+/**
+ * A window ending now, with about 60 points. `end` is rounded down to the step (at most
+ * 5 minutes) so refetches line up without leaving a long empty strip on long ranges.
+ */
+export function rangeWindow(
+  windowSeconds: number,
+  nowMs: number = Date.now(),
+  targetPoints: number = TARGET_POINTS,
+): RangeWindow {
+  const step = Math.max(MIN_STEP_SECONDS, Math.ceil(windowSeconds / targetPoints));
+  const align = Math.min(step, 300);
+  const end = Math.floor(nowMs / 1000 / align) * align;
   return { start: end - windowSeconds, end, step };
 }
 
@@ -239,11 +247,13 @@ export function useFleetRangeQuery(
   expr: string,
   windowSeconds: number = DEFAULT_WINDOW_SECONDS,
   enabled = true,
+  targetPoints: number = TARGET_POINTS,
 ) {
   const client = useApiClient();
   return useQuery<QueryResult>({
-    queryKey: ["query", "fleet-range", expr, windowSeconds],
-    queryFn: () => client.query({ query: expr, ...rangeWindow(windowSeconds) }),
+    queryKey: ["query", "fleet-range", expr, windowSeconds, targetPoints],
+    queryFn: () =>
+      client.query({ query: expr, ...rangeWindow(windowSeconds, Date.now(), targetPoints) }),
     refetchInterval: RANGE_REFETCH_MS,
     enabled,
   });
