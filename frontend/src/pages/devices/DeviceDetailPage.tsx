@@ -19,6 +19,7 @@ import { alertError } from "../../components/styles";
 import { panel, row, toneText, useNow } from "../alerts/tone";
 import { deviceHealth, timeText } from "./deviceStatus";
 import { errorText, useInstance } from "./queries";
+import { DeviceHistory } from "./history/DeviceHistory";
 import { StateText } from "./StateText";
 
 function subscribeResize(onChange: () => void) {
@@ -268,6 +269,7 @@ export function DeviceDetailPage() {
       </div>
       <Header instance={instance.data} />
       <OpenAlerts instanceId={instance.data.id} />
+      <DeviceHistory instance={instance.data} />
       <Cards instance={instance.data} desktop={desktop} />
     </>
   );
