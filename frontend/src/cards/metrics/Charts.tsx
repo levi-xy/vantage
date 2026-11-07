@@ -10,9 +10,11 @@ import type { Box, Point } from "./chart";
 const VIEW_W = 1000;
 const VIEW_H = 100;
 
-const STROKE = { in: "stroke-in", out: "stroke-out" } as const;
-const FILL = { in: "fill-in/15", out: "fill-out/15" } as const;
-type Tone = keyof typeof STROKE;
+// `line` is the neutral tone for a chart with one measure (CPU, latency).
+const STROKE = { in: "stroke-in", out: "stroke-out", line: "stroke-ink" } as const;
+const FILL = { in: "fill-in/15", out: "fill-out/15", line: "fill-ink/10" } as const;
+const BG = { in: "bg-in", out: "bg-out", line: "bg-ink" } as const;
+export type Tone = keyof typeof STROKE;
 
 function domain(series: Point[][]): { start: number; end: number; max: number } {
   let start = Infinity;
@@ -205,7 +207,7 @@ export function AreaChart({ series, format, tickScale = 1, window, label }: Area
                 <div
                   key={s.name}
                   aria-hidden="true"
-                  className={`pointer-events-none absolute size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-panel ${s.tone === "in" ? "bg-in" : "bg-out"}`}
+                  className={`pointer-events-none absolute size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-panel ${BG[s.tone]}`}
                   style={{
                     left: `${((point[0] - start) / (span || 1)) * 100}%`,
                     top: `${100 - (point[1] / top) * 100}%`,
@@ -221,9 +223,7 @@ export function AreaChart({ series, format, tickScale = 1, window, label }: Area
               <div className="text-muted">{whenText}</div>
               {readout.map(({ s, point }) => (
                 <div key={s.name} className="flex items-center gap-1.5">
-                  <span
-                    className={`h-[3px] w-2.5 rounded-sm ${s.tone === "in" ? "bg-in" : "bg-out"}`}
-                  />
+                  <span className={`h-[3px] w-2.5 rounded-sm ${BG[s.tone]}`} />
                   {s.name}
                   <span className="ml-auto pl-2 tabular-nums">
                     {point ? format(point[1]) : "no data"}

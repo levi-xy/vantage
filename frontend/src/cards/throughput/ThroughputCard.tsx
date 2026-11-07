@@ -10,6 +10,8 @@ import { firstSeries, firstValue } from "../metrics/promql";
 import { shownState, useScrapeStates } from "../metrics/scrapeStatus";
 import { useFleetQuery, useFleetRangeQuery } from "../metrics/useMetricQuery";
 import { KeyFigure } from "../metrics/KeyFigure";
+import { RangePicker } from "../metrics/RangePicker";
+import { RANGES } from "../metrics/ranges";
 import { useCardTier } from "../metrics/tier";
 import type { WidgetProps, WidgetSettingsProps } from "../widgets";
 import {
@@ -73,37 +75,7 @@ function useLiveRate(now: number): LiveRate | undefined {
   return fresh ? live.data : undefined;
 }
 
-/** The chart's selectable windows. */
-const RANGES = [
-  { key: "1h", seconds: 3600, text: "1 hour" },
-  { key: "6h", seconds: 6 * 3600, text: "6 hours" },
-  { key: "24h", seconds: 24 * 3600, text: "24 hours" },
-  { key: "7d", seconds: 7 * 86400, text: "7 days" },
-  { key: "30d", seconds: 30 * 86400, text: "30 days" },
-] as const;
 const DEFAULT_RANGE = 1;
-
-function RangePicker({ value, onChange }: { value: number; onChange: (i: number) => void }) {
-  return (
-    <div
-      role="group"
-      aria-label="Chart range"
-      className="flex w-fit rounded border border-line text-xs"
-    >
-      {RANGES.map((r, i) => (
-        <button
-          key={r.key}
-          type="button"
-          aria-pressed={i === value}
-          onClick={() => onChange(i)}
-          className={`px-2 py-0.5 first:rounded-l last:rounded-r ${i === value ? "bg-chip font-semibold text-ink" : "text-muted hover:text-ink"}`}
-        >
-          {r.key}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 /**
  * The chosen ports' devices without fresh data: a polled device whose last successful poll
