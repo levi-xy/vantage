@@ -9,6 +9,7 @@ import { deviceColor } from "../app/deviceColors";
 import { cardMinSize, cardTier, widget } from "./widgets";
 import { cardKey, GRID_COLUMNS, GRID_MARGIN, gridHeightPx, ROW_HEIGHT } from "./layout";
 import { cardComponent, cardSettingsEditor } from "./registry";
+import { CardEditingContext } from "./metrics/editing";
 import { CardTierContext } from "./metrics/tier";
 // Used only until the container has been measured (and in test DOMs, which have no layout).
 const FALLBACK_WIDTH = 1200;
@@ -149,7 +150,7 @@ export function DashboardGrid({
           compact ? (tile ? "min-w-0 " : "col-span-2 ") : "overflow-hidden "
         }${editing ? "border-in" : "border-line"}`}
       >
-        {content}
+        <CardEditingContext.Provider value={editing}>{content}</CardEditingContext.Provider>
         {color && (
           // A border on a rounded overlay, so the strip follows the card's corners.
           <span

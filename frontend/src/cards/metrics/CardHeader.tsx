@@ -6,8 +6,10 @@
 // tooltip, and the health popover and the Devices page show it in full.
 
 import { useEffect, useState } from "react";
+import { Link, useInRouterContext, useLocation } from "react-router";
 import type { Instance } from "../../api";
 import { deviceColor, tint } from "../../app/deviceColors";
+import { useCardEditing } from "./editing";
 import { shownState, useScrapeStates } from "./scrapeStatus";
 import { formatAsOf } from "./freshness";
 import type { Freshness } from "./freshness";
@@ -83,6 +85,16 @@ function TypeIcon({ icon, color }: { icon: Icon; color?: string }) {
   );
 }
 
+/** The type label ("pfSense") of an integration `type_id`. */
+export function deviceTypeLabel(typeId: string | undefined): string {
+  return deviceType(typeId).label;
+}
+
+/** The type icon, tinted with the device colour, for the device detail page. */
+export function DeviceColorIcon({ typeId, color }: { typeId: string; color?: string }) {
+  return <TypeIcon icon={deviceType(typeId).icon} color={color} />;
+}
+
 /** The card header's icon for an integration (`type_id`), for the Devices page. */
 export function DeviceTypeIcon({ typeId }: { typeId: string }) {
   return <TypeIcon icon={deviceType(typeId).icon} />;
@@ -109,6 +121,28 @@ const toSeconds = (iso: string | null | undefined) => {
   const t = iso ? Date.parse(iso) / 1000 : NaN;
   return Number.isFinite(t) ? t : undefined;
 };
+
+/** The device name: a link to the device's page, except in dashboard edit mode or without a router. */
+function DeviceName({ instance }: { instance: Instance | undefined }) {
+  const inRouter = useInRouterContext();
+  const editing = useCardEditing();
+  const name = instance?.name ?? "Unknown device";
+  if (!inRouter || editing || !instance) return <>{name}</>;
+  return <NameLink instance={instance} name={name} />;
+}
+
+function NameLink({ instance, name }: { instance: Instance; name: string }) {
+  const location = useLocation();
+  return (
+    <Link
+      to={`/devices/${encodeURIComponent(instance.id)}`}
+      state={{ from: location.pathname }}
+      className="hover:text-in hover:underline focus-visible:underline"
+    >
+      {name}
+    </Link>
+  );
+}
 
 export interface CardHeaderProps {
   instance: Instance | undefined;
@@ -170,7 +204,7 @@ export function CardHeader({
     return (
       <div className="flex min-w-0 items-baseline gap-2 leading-[18px]">
         <span className="min-w-0 flex-1 truncate text-[13px] font-semibold">
-          {instance?.name ?? "Unknown device"}
+          <DeviceName instance={instance} />
         </span>
         {stateText}
       </div>
@@ -181,7 +215,7 @@ export function CardHeader({
       <TypeIcon icon={type.icon} color={deviceColor(instance)} />
       <div className="min-w-0 flex-1">
         <div className="truncate text-[15px] font-semibold">
-          {instance?.name ?? "Unknown device"}
+          <DeviceName instance={instance} />
         </div>
         <div className="truncate text-xs text-muted">
           {type.label}

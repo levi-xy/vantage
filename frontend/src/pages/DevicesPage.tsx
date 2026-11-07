@@ -105,7 +105,7 @@ function AdminActions({ instance }: { instance: Instance }) {
               {test.isPending ? "Testing…" : "Test"}
             </button>
             <Link
-              to={`/devices/${encodeURIComponent(instance.id)}`}
+              to={`/devices/${encodeURIComponent(instance.id)}/edit`}
               className={actionButton}
               aria-label={`Edit ${instance.name}`}
             >
@@ -189,9 +189,14 @@ function DeviceRow({
                 className="h-2.5 w-2.5 shrink-0 rounded-full"
               />
             )}
-            <span className="truncate text-[15px] font-semibold" title={instance.name}>
+            <Link
+              to={`/devices/${encodeURIComponent(instance.id)}`}
+              state={{ from: "/devices" }}
+              className="truncate text-[15px] font-semibold hover:text-in hover:underline"
+              title={instance.name}
+            >
               {instance.name}
-            </span>
+            </Link>
           </div>
           <div className="truncate text-xs text-muted">
             {typeName}
