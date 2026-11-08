@@ -3,7 +3,9 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import type { MapDocument } from "../../api";
 import { buttonSecondary } from "../../components/styles";
 import { bounds } from "./geometry";
+import { CableCard, DetailsDrawer } from "./MapDetails";
 import { BoxView, CablesLayer, FrameView, LegendView, TableView, TextView } from "./MapElements";
+import type { CableHover } from "./MapElements";
 import type { MapLive } from "./mapLive";
 
 const MIN_ZOOM = 0.2;
@@ -25,6 +27,19 @@ export function MapCanvas({ doc, live }: { doc: MapDocument; live: MapLive }) {
   const box = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<View>({ x: 0, y: 0, z: 1 });
   const drag = useRef<{ px: number; py: number; vx: number; vy: number } | null>(null);
+  // A drag that moved is a pan, not a click on the box under the pointer.
+  const moved = useRef(false);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [hover, setHover] = useState<{ id: string; x: number; y: number; w: number } | null>(null);
+  const select = useCallback((id: string) => {
+    if (!moved.current) setSelected(id);
+  }, []);
+  const closeDrawer = useCallback(() => setSelected(null), []);
+  const onCableHover = (h: CableHover | null) => {
+    const r = box.current?.getBoundingClientRect();
+    setHover(h && r ? { id: h.id, x: h.x - r.left, y: h.y - r.top, w: r.width } : null);
+  };
+  const vlans = new Map(doc.vlans.map((v) => [v.id, v] as const));
 
   const fit = useCallback(() => {
     const el = box.current;
@@ -78,11 +93,19 @@ export function MapCanvas({ doc, live }: { doc: MapDocument; live: MapLive }) {
   const onDown = (e: ReactPointerEvent) => {
     if (e.button !== 0) return;
     drag.current = { px: e.clientX, py: e.clientY, vx: view.x, vy: view.y };
-    e.currentTarget.setPointerCapture?.(e.pointerId);
+    moved.current = false;
   };
   const onMove = (e: ReactPointerEvent) => {
     const d = drag.current;
-    if (d) setView((v) => ({ ...v, x: d.vx + e.clientX - d.px, y: d.vy + e.clientY - d.py }));
+    if (!d) return;
+    // Capture the pointer only once it is really a pan, so a plain click reaches the box.
+    if (!moved.current && Math.hypot(e.clientX - d.px, e.clientY - d.py) > 4) {
+      moved.current = true;
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    }
+    if (moved.current) {
+      setView((v) => ({ ...v, x: d.vx + e.clientX - d.px, y: d.vy + e.clientY - d.py }));
+    }
   };
   const onUp = () => {
     drag.current = null;
@@ -134,13 +157,15 @@ export function MapCanvas({ doc, live }: { doc: MapDocument; live: MapLive }) {
         >
           {/* Frames first, then the cables, then everything that sits on top. */}
           {doc.elements.map((el) =>
-            el.kind === "frame" ? <FrameView key={el.id} frame={el} live={live} /> : null,
+            el.kind === "frame" ? (
+              <FrameView key={el.id} frame={el} live={live} onSelect={select} />
+            ) : null,
           )}
-          <CablesLayer doc={doc} live={live} />
+          <CablesLayer doc={doc} live={live} onHover={onCableHover} />
           {doc.elements.map((el) => {
             switch (el.kind) {
               case "box":
-                return <BoxView key={el.id} box={el} live={live} />;
+                return <BoxView key={el.id} box={el} live={live} vlans={vlans} onSelect={select} />;
               case "text":
                 return <TextView key={el.id} el={el} />;
               case "table":
@@ -152,6 +177,20 @@ export function MapCanvas({ doc, live }: { doc: MapDocument; live: MapLive }) {
             }
           })}
         </div>
+        {hover && !selected && (
+          <div
+            className="pointer-events-none absolute z-10"
+            style={{
+              left: Math.min(hover.x + 14, Math.max(0, hover.w - 272)),
+              top: hover.y + 14,
+            }}
+          >
+            <CableCard cableId={hover.id} doc={doc} live={live} />
+          </div>
+        )}
+        {selected && (
+          <DetailsDrawer elementId={selected} doc={doc} live={live} onClose={closeDrawer} />
+        )}
       </div>
     </section>
   );

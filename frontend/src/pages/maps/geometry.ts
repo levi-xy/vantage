@@ -73,7 +73,14 @@ function orthogonal(points: Point[]): Point[] {
 }
 
 /** The points of a cable from one box to another, through its bends. */
-export function cablePath(a: Rect, b: Rect, bends: readonly Point[]): Point[] {
+export function cablePath(
+  a: Rect,
+  b: Rect,
+  bends: readonly Point[],
+  /** The boxes the ends sit on, when `a` or `b` is a port: they decide the direction. */
+  aBox: Rect = a,
+  bBox: Rect = b,
+): Point[] {
   if (bends.length > 0) {
     const first = bends[0] as Point;
     const last = bends[bends.length - 1] as Point;
@@ -81,17 +88,20 @@ export function cablePath(a: Rect, b: Rect, bends: readonly Point[]): Point[] {
   }
   const [acx, acy] = center(a);
   const [bcx, bcy] = center(b);
+  const [aox, aoy] = center(aBox);
+  const [box, boy] = center(bBox);
   const horizontal =
-    Math.abs(bcx - acx) * Math.max(a.h, b.h) >= Math.abs(bcy - acy) * Math.max(a.w, b.w);
+    Math.abs(box - aox) * Math.max(aBox.h, bBox.h) >=
+    Math.abs(boy - aoy) * Math.max(aBox.w, bBox.w);
   if (horizontal) {
-    const start: Point = [bcx >= acx ? a.x + a.w : a.x, acy];
-    const end: Point = [bcx >= acx ? b.x : b.x + b.w, bcy];
+    const start: Point = [box >= aox ? a.x + a.w : a.x, acy];
+    const end: Point = [box >= aox ? b.x : b.x + b.w, bcy];
     if (start[1] === end[1]) return [start, end];
     const mid = Math.round((start[0] + end[0]) / 2);
     return [start, [mid, start[1]], [mid, end[1]], end];
   }
-  const start: Point = [acx, bcy >= acy ? a.y + a.h : a.y];
-  const end: Point = [bcx, bcy >= acy ? b.y : b.y + b.h];
+  const start: Point = [acx, boy >= aoy ? a.y + a.h : a.y];
+  const end: Point = [bcx, boy >= aoy ? b.y : b.y + b.h];
   if (start[0] === end[0]) return [start, end];
   const mid = Math.round((start[1] + end[1]) / 2);
   return [start, [start[0], mid], [end[0], mid], end];

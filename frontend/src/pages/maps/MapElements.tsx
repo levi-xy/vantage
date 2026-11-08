@@ -1,6 +1,7 @@
 // The elements of a map, drawn read-only. Every string comes from the saved document or from
 // device names, so it is only ever rendered as React text (never as HTML, never as a link).
 
+import { useUnits } from "../../app/units";
 import type {
   MapBox,
   MapCable,
@@ -9,12 +10,14 @@ import type {
   MapLegend,
   MapTable,
   MapText,
+  MapVlan,
 } from "../../api";
 import { colorVar, deviceColor, isDeviceColor, tint } from "../../app/deviceColors";
 import { useProxmoxGuests } from "../../cards/proxmox-guests/useProxmoxGuests";
+import { cableLive, endElements } from "./cableLive";
+import type { CableLive } from "./cableLive";
 import {
   bounds,
-  cableEnds,
   cablePath,
   cableWidth,
   endRects,
@@ -25,6 +28,8 @@ import {
   tagPoint,
 } from "./geometry";
 import { guestTiles } from "./guests";
+import { PortStrip } from "./PortStrip";
+import { boxStrip } from "./strip";
 import { MapIcon } from "./MapIcon";
 import { instanceAddress } from "./mapLive";
 import type { MapLive } from "./mapLive";
@@ -49,7 +54,39 @@ export function StatusWord({ state }: { state: string | null }) {
   return null;
 }
 
-export function BoxView({ box, live }: { box: MapBox; live: MapLive }) {
+/** A linked box or frame opens the details drawer: a button for mouse, touch and keyboard. */
+function selectable(
+  id: string,
+  linked: boolean,
+  onSelect: ((id: string) => void) | undefined,
+  label: string,
+) {
+  if (!linked || !onSelect) return {};
+  return {
+    role: "button",
+    tabIndex: 0,
+    "aria-label": `Details of ${label}`,
+    onClick: () => onSelect(id),
+    onKeyDown: (e: { key: string; preventDefault: () => void }) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        onSelect(id);
+      }
+    },
+  };
+}
+
+export function BoxView({
+  box,
+  live,
+  vlans,
+  onSelect,
+}: {
+  box: MapBox;
+  live: MapLive;
+  vlans: ReadonlyMap<string, MapVlan>;
+  onSelect?: (id: string) => void;
+}) {
   const instance = live.instance(box.instance_id);
   const state = live.state(box.instance_id);
   const linked = box.instance_id !== null;
@@ -58,6 +95,7 @@ export function BoxView({ box, live }: { box: MapBox; live: MapLive }) {
   const color = paint(box.color) ?? deviceColor(instance);
   const dashed = !linked || removed;
   const name = box.label || instance?.name || "";
+  const strip = boxStrip(box, live.ports(box.instance_id));
 
   const border = down ? "border-crit" : "border-line";
   let body;
@@ -123,8 +161,9 @@ export function BoxView({ box, live }: { box: MapBox; live: MapLive }) {
       data-element={box.id}
       data-kind="box"
       data-down={down ? "true" : undefined}
-      className={`absolute box-border flex items-start gap-2.5 overflow-hidden rounded-[10px] border bg-panel px-3 py-2.5 text-ink ${border} ${dashed ? "border-dashed" : ""}`}
+      className={`absolute box-border flex items-start gap-2.5 overflow-hidden rounded-[10px] border bg-panel px-3 py-2.5 text-ink ${border} ${dashed ? "border-dashed" : ""} ${instance && onSelect ? "cursor-pointer focus-visible:ring-2 focus-visible:ring-in focus-visible:outline-none" : ""}`}
       style={place(box)}
+      {...selectable(box.id, instance !== undefined && !removed, onSelect, name)}
     >
       {color && instance && !removed && (
         <span
@@ -141,11 +180,20 @@ export function BoxView({ box, live }: { box: MapBox; live: MapLive }) {
         <MapIcon icon={box.icon} />
       </span>
       <span className="min-w-0 flex-1">{body}</span>
+      {strip && <PortStrip layout={strip.layout} origin={strip.origin} vlans={vlans} />}
     </div>
   );
 }
 
-export function FrameView({ frame, live }: { frame: MapFrame; live: MapLive }) {
+export function FrameView({
+  frame,
+  live,
+  onSelect,
+}: {
+  frame: MapFrame;
+  live: MapLive;
+  onSelect?: (id: string) => void;
+}) {
   const instance = live.instance(frame.instance_id);
   const state = live.state(frame.instance_id);
   const down = state === "down";
@@ -155,7 +203,13 @@ export function FrameView({ frame, live }: { frame: MapFrame; live: MapLive }) {
       data-element={frame.id}
       data-kind="frame"
       data-down={down ? "true" : undefined}
-      className={`absolute box-border overflow-hidden rounded-xl border px-4 py-3 ${down ? "border-crit" : "border-line"}`}
+      className={`absolute box-border overflow-hidden rounded-xl border px-4 py-3 focus-visible:ring-2 focus-visible:ring-in focus-visible:outline-none ${down ? "border-crit" : "border-line"} ${instance && onSelect ? "cursor-pointer" : ""}`}
+      {...selectable(
+        frame.id,
+        instance !== undefined && state !== "removed",
+        onSelect,
+        frame.label || instance?.name || "",
+      )}
       style={{
         ...place(frame),
         borderTop: `3px solid ${down ? "var(--vt-crit)" : (color ?? "var(--vt-line)")}`,
@@ -346,14 +400,47 @@ function cableColor(cable: MapCable, doc: MapDocument): string {
   return "var(--vt-muted)";
 }
 
-export function CablesLayer({ doc, live }: { doc: MapDocument; live: MapLive }) {
+export interface CableHover {
+  id: string;
+  /** Pointer position in the drawing's viewport (not zoomed). */
+  x: number;
+  y: number;
+}
+
+/** "↓ 1.2 Mbit/s ↑ 340 kbit/s" in the app's in (blue) and out (orange) colours. */
+export function RateText({ rate }: { rate: NonNullable<CableLive["rate"]> }) {
+  const { formatRate } = useUnits();
+  return (
+    <>
+      <tspan fill="var(--vt-in)">↓ {formatRate(rate.inBps)}</tspan>
+      <tspan fill="var(--vt-out)" dx="6">
+        ↑ {formatRate(rate.outBps)}
+      </tspan>
+    </>
+  );
+}
+
+export function CablesLayer({
+  doc,
+  live,
+  onHover,
+}: {
+  doc: MapDocument;
+  live: MapLive;
+  onHover?: (hover: CableHover | null) => void;
+}) {
   const rects = endRects(doc);
-  const ownerOf = new Map<string, string | null>();
-  for (const e of doc.elements) {
-    if (e.kind === "box" || e.kind === "frame") ownerOf.set(e.id, e.instance_id);
-  }
+  const owners = endElements(doc);
   const b = bounds(doc);
   const cables = doc.elements.filter((e): e is MapCable => e.kind === "cable");
+  // A cable that names a port of a box with a strip meets that jack; otherwise the box edge.
+  const strips = new Map<string, ReturnType<typeof boxStrip>>();
+  for (const el of owners.values()) {
+    if (el.kind === "box") strips.set(el.id, boxStrip(el, live.ports(el.instance_id)));
+  }
+  const endRect = (end: MapCable["from"]) =>
+    (end.port !== null ? strips.get(end.element)?.rects.get(end.port) : undefined) ??
+    rects.get(end.element);
   return (
     <svg
       aria-hidden="true"
@@ -363,13 +450,13 @@ export function CablesLayer({ doc, live }: { doc: MapDocument; live: MapLive }) 
       fill="none"
     >
       {cables.map((cable) => {
-        const ends = cableEnds(cable, rects);
-        if (!ends) return null;
-        const pts = cablePath(ends[0], ends[1], cable.bends);
+        const [boxA, boxB] = [rects.get(cable.from.element), rects.get(cable.to.element)];
+        const [a, z] = [endRect(cable.from), endRect(cable.to)];
+        if (!boxA || !boxB || !a || !z) return null;
+        const pts = cablePath(a, z, cable.bends, boxA, boxB);
         const d = pathData(pts);
-        const down =
-          live.isDown(ownerOf.get(cable.from.element) ?? null) ||
-          live.isDown(ownerOf.get(cable.to.element) ?? null);
+        const state = cableLive(cable, owners, live);
+        const down = state.down;
         const w = cableWidth(cable.speed);
         const color = down ? "var(--vt-crit)" : cableColor(cable, doc);
         const dash = down ? "6 5" : DASH[cable.style];
@@ -382,6 +469,7 @@ export function CablesLayer({ doc, live }: { doc: MapDocument; live: MapLive }) 
           paintOrder: "stroke",
           fontSize: 12,
         } as const;
+        const rate = cable.show_rate ? state.rate : null;
         return (
           <g key={cable.id} data-cable={cable.id} data-down={down ? "true" : undefined}>
             {cable.role === "trunk" && !down && (
@@ -402,9 +490,22 @@ export function CablesLayer({ doc, live }: { doc: MapDocument; live: MapLive }) 
               strokeLinecap={cable.style === "dotted" ? "round" : "butt"}
               strokeLinejoin="round"
             />
-            {cable.label && (
+            {onHover && (
+              <path
+                d={d}
+                data-hit={cable.id}
+                stroke="transparent"
+                strokeWidth={Math.max(14, w + 8)}
+                pointerEvents="stroke"
+                onPointerMove={(e) => onHover({ id: cable.id, x: e.clientX, y: e.clientY })}
+                onPointerLeave={() => onHover(null)}
+              />
+            )}
+            {(cable.label || rate) && (
               <text x={lx + 6} y={ly - 6} {...text}>
                 {cable.label}
+                {cable.label && rate ? " " : ""}
+                {rate && <RateText rate={rate} />}
               </text>
             )}
             {cable.speed && (
