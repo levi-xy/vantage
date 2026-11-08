@@ -209,8 +209,8 @@ Each task: config schema, `test_connection`, scrape targets and/or `poll`, cards
 
 | ID | Task | Acceptance criteria |
 |---|---|---|
-| M6.1 | Links API | CRUD per Contract 3, validates instance ids |
-| M6.2 | Map card | Draws instances and links; live status and link throughput where metrics exist; edit mode to add/remove links |
+| M6.1 | Links API | CRUD per Contract 3, validates instance ids. Replaced by M9 (2026-11-07) |
+| M6.2 | Map card | Draws instances and links; live status and link throughput where metrics exist; edit mode to add/remove links. Replaced by M9 (2026-11-07) |
 
 ## M7: Alerts
 
@@ -232,6 +232,19 @@ Each task: config schema, `test_connection`, scrape targets and/or `poll`, cards
 | M8.5 | Setup script | One-stop install (maintainer decision 2026-10-29): `deploy/setup.sh` (POSIX `sh` + `openssl`) creates whatever is missing of `master.key` (`openssl rand -base64 32`), `prometheus_token` (`openssl rand -hex 32`) and `.env`, then checks Docker, runs `docker compose up -d`, waits for `/healthz` and prints the URL; `--no-start` stops after the files. Hard limits: never overwrite an existing `master.key`, and refuse to create a new one when data may already exist unless `--force-new-key`; never print a secret; no secret file world-readable while the containers can still read them (fixes the M0.5 `chmod 644` follow-up); end the run that created the key with a reminder to back it up away from the server. Tests: fresh run, re-run keeps the key, `--no-start`, no secret in the output (with `docker` stubbed) |
 
 ---
+
+## M9: Network maps (user-drawn, maintainer-approved 2026-11-07)
+
+Replaces the M6 map card (removed: "it's terrible"). Admins draw maps on a page of their own (Map tab, one or more maps with tabs); every user can view them. Mock-ups: the "Network Map Plan" design canvas (view mode, edit mode, cables, a device down, hover and details, new map, phone list). Decisions (2026-11-07): Contract 2/3 change approved (`network_maps`, `/maps`); only admins change maps; Proxmox frames fill in their guests automatically and stay editable; no drawing on a phone, a list instead; light mode works through the existing theme tokens (no separate mock-ups).
+
+Ideas taken from a published homelab diagram (MIT, design reference only, no code reused): line width = link speed with a speed tag where the cable meets the device; VLAN bars under each port (tall = untagged, short = tagged); trunks drawn as a light cable with a dark core, access links in the VLAN colour; ports drawn as RJ45 jacks and SFP cages; solid = physical cable, dotted = over the internet, dashed = console; no interface names on the drawing unless typed.
+
+| ID | Task | Acceptance criteria |
+|---|---|---|
+| M9.1 | Maps backend | `network_maps` model + migration: creates the table, turns existing `links` rows (if any) into a first map named "Network" (one box per linked instance in a grid, one cable per link, the link's label and ports in the cable label), removes `network-map` cards from saved dashboard layouts, drops `links`. `/maps` API per Contract 3 with a Pydantic schema for the document (Contract 2 note), `/links` API removed. Frontend: the old network-map card, its registry entry and the links client calls removed. README's map-card sentence updated. Tests: CRUD + roles (viewer gets 403 on writes), revision conflict 409, size/count caps, a cable pointing at a missing element is 422, migration converts links |
+| M9.2 | Map page, view mode | Map tab in the top nav; `/map` and `/map/:id`; tabs per map; empty state with "New map" (admins). Renders every element type from the document read-only: boxes (linked: device colour, plain UP/DOWN, address, up to 3 figures; unlinked: dashed "Not monitored"; removed device), port strips with live port state, cables with right-angle segments, speed width and tags, red when an end's port or device is down, frames with Proxmox guests, text, tables, legend. Hover a cable: rate + last hour; click a linked box: details drawer with "Open device page". Pan/zoom/fit. Live data in a few combined queries per map, refreshed like dashboards. Phone width: a list (problems first, then devices in drawing order with what they connect to), no drawing |
+| M9.3 | Editor | Admin-only "Edit map" mode: tool rail (select, device, box, frame, text, table), place/move/resize with snap-to-grid and alignment guides, inspector per element, "Not on the map yet" device list to drag in, undo/redo, Done saves once with the revision (409 → "someone else saved; reload"), Cancel discards. New-map flow: blank, start with my devices (one box per device in rows by site), copy a map. Rename/reorder/delete maps |
+| M9.4 | Ports and cables | Port strips in the editor (from the device's interfaces or typed by hand; RJ45/SFP; per-port VLANs from the map's VLAN list), cable tool (drag from a port or box edge; speed, style, colour, label, show rate, right angles or straight, draggable bends), VLAN bars under ports, trunk/access cable styles, legend built from what's used, Proxmox frame guest editing (hide, reorder, add manual tiles) |
 
 ## Later milestones
 
