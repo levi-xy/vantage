@@ -1,0 +1,158 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
+import type { MapDocument } from "../../api";
+import { buttonSecondary } from "../../components/styles";
+import { bounds } from "./geometry";
+import { BoxView, CablesLayer, FrameView, LegendView, TableView, TextView } from "./MapElements";
+import type { MapLive } from "./mapLive";
+
+const MIN_ZOOM = 0.2;
+const MAX_ZOOM = 3;
+const FIT_MARGIN = 32;
+const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
+
+interface View {
+  x: number;
+  y: number;
+  z: number;
+}
+
+/**
+ * The read-only drawing: elements at their saved x/y/w/h inside a pan (drag) and zoom
+ * (wheel, +/-, Fit) viewport. Cables sit in an SVG layer under the boxes.
+ */
+export function MapCanvas({ doc, live }: { doc: MapDocument; live: MapLive }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [view, setView] = useState<View>({ x: 0, y: 0, z: 1 });
+  const drag = useRef<{ px: number; py: number; vx: number; vy: number } | null>(null);
+
+  const fit = useCallback(() => {
+    const el = box.current;
+    const b = bounds(doc);
+    // jsdom (and a hidden pane) reports no size: keep the natural view then.
+    if (!el || el.clientWidth === 0 || b.w === 0) return setView({ x: 0, y: 0, z: 1 });
+    const z = clampZoom(
+      Math.min(
+        (el.clientWidth - 2 * FIT_MARGIN) / b.w,
+        (el.clientHeight - 2 * FIT_MARGIN) / b.h,
+        1,
+      ),
+    );
+    setView({
+      z,
+      x: (el.clientWidth - b.w * z) / 2 - b.x * z,
+      y: (el.clientHeight - b.h * z) / 2 - b.y * z,
+    });
+  }, [doc]);
+
+  // Fit when a map is opened (and when its drawing is replaced), not on every refresh.
+  const docId = useRef<MapDocument | null>(null);
+  useEffect(() => {
+    if (docId.current !== doc) {
+      docId.current = doc;
+      fit();
+    }
+  }, [doc, fit]);
+
+  const zoomAt = useCallback((factor: number, cx: number, cy: number) => {
+    setView((v) => {
+      const z = clampZoom(v.z * factor);
+      const k = z / v.z;
+      return { z, x: cx - (cx - v.x) * k, y: cy - (cy - v.y) * k };
+    });
+  }, []);
+
+  // A wheel listener that can stop the page scrolling (React's onWheel is passive).
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const r = el.getBoundingClientRect();
+      zoomAt(e.deltaY < 0 ? 1.1 : 1 / 1.1, e.clientX - r.left, e.clientY - r.top);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [zoomAt]);
+
+  const onDown = (e: ReactPointerEvent) => {
+    if (e.button !== 0) return;
+    drag.current = { px: e.clientX, py: e.clientY, vx: view.x, vy: view.y };
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+  const onMove = (e: ReactPointerEvent) => {
+    const d = drag.current;
+    if (d) setView((v) => ({ ...v, x: d.vx + e.clientX - d.px, y: d.vy + e.clientY - d.py }));
+  };
+  const onUp = () => {
+    drag.current = null;
+  };
+
+  const centerZoom = (factor: number) => {
+    const el = box.current;
+    zoomAt(factor, (el?.clientWidth ?? 0) / 2, (el?.clientHeight ?? 0) / 2);
+  };
+
+  return (
+    <section aria-label="Network map">
+      <div className="mb-2 flex items-center justify-end gap-2">
+        <button
+          type="button"
+          aria-label="Zoom out"
+          className={buttonSecondary}
+          onClick={() => centerZoom(1 / 1.25)}
+        >
+          −
+        </button>
+        <span className="w-12 text-center text-sm text-muted tabular-nums">
+          {Math.round(view.z * 100)}%
+        </span>
+        <button
+          type="button"
+          aria-label="Zoom in"
+          className={buttonSecondary}
+          onClick={() => centerZoom(1.25)}
+        >
+          +
+        </button>
+        <button type="button" className={buttonSecondary} onClick={fit}>
+          Fit
+        </button>
+      </div>
+      <div
+        ref={box}
+        className="relative h-[calc(100vh-220px)] min-h-[420px] cursor-grab touch-none overflow-hidden rounded-lg border border-line bg-canvas select-none active:cursor-grabbing"
+        onPointerDown={onDown}
+        onPointerMove={onMove}
+        onPointerUp={onUp}
+        onPointerCancel={onUp}
+      >
+        <div
+          data-testid="map-surface"
+          className="absolute top-0 left-0 origin-top-left"
+          style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.z})` }}
+        >
+          {/* Frames first, then the cables, then everything that sits on top. */}
+          {doc.elements.map((el) =>
+            el.kind === "frame" ? <FrameView key={el.id} frame={el} live={live} /> : null,
+          )}
+          <CablesLayer doc={doc} live={live} />
+          {doc.elements.map((el) => {
+            switch (el.kind) {
+              case "box":
+                return <BoxView key={el.id} box={el} live={live} />;
+              case "text":
+                return <TextView key={el.id} el={el} />;
+              case "table":
+                return <TableView key={el.id} el={el} />;
+              case "legend":
+                return <LegendView key={el.id} el={el} doc={doc} />;
+              default:
+                return null;
+            }
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}

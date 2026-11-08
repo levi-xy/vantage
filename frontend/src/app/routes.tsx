@@ -7,6 +7,7 @@ import { DevicesPage } from "../pages/DevicesPage";
 import { DeviceDetailPage } from "../pages/devices/DeviceDetailPage";
 import { AddDevicePage, EditDevicePage } from "../pages/devices/DeviceFormPages";
 import { LoginPage } from "../pages/LoginPage";
+import { MapPage } from "../pages/MapPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
 import { SetupPage } from "../pages/SetupPage";
 import { UsersPage } from "../pages/UsersPage";
@@ -40,6 +41,8 @@ export const routes: RouteObject[] = [
     children: [
       { index: true, element: <DashboardPage /> },
       { path: "d/:id", element: <DashboardPage /> },
+      { path: "map", element: <MapPage /> },
+      { path: "map/:id", element: <MapPage /> },
       { path: "devices", element: <DevicesPage /> },
       {
         path: "devices/new",
