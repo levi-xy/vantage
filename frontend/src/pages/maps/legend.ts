@@ -23,7 +23,7 @@ export function legendEntries(doc: MapDocument) {
   const usedVlans = new Set<string | null>(cables.map((c) => c.vlan));
   for (const e of doc.elements) {
     if (e.kind !== "box") continue;
-    for (const p of e.ports?.ports ?? []) {
+    for (const p of e.panel?.ports ?? []) {
       usedVlans.add(p.vlans.untagged);
       for (const t of p.vlans.tagged) usedVlans.add(t);
     }

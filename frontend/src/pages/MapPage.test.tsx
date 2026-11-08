@@ -53,7 +53,7 @@ const box = (id: string, x: number, y: number, extra: Record<string, unknown> = 
   show: { details: true, status: true, figures: true },
   figures: [],
   color: null,
-  ports: null,
+  panel: null,
   ...extra,
 });
 
@@ -254,18 +254,25 @@ const PORT_DOC = {
     box("sw", 40, 40, {
       instance_id: "i-sw",
       h: 120,
-      ports: { source: "device", layout: "panel", ports: [] },
+      panel: {
+        source: "device",
+        groups: [{ id: "g1", kind: "rj45", count: 1, rows: 2 }],
+        ports: [],
+      },
     }),
     box("edge", 40, 400, { instance_id: "i-edge" }),
     box("man", 400, 40, {
       label: "Patch panel",
       h: 120,
-      ports: {
+      panel: {
         source: "manual",
-        layout: "row",
+        groups: [
+          { id: "g1", kind: "rj45", count: 1, rows: 1 },
+          { id: "g2", kind: "sfp_plus", count: 1, rows: 1 },
+        ],
         ports: [
-          { id: "a", label: "", kind: "rj45", vlans: { untagged: "10", tagged: ["20"] } },
-          { id: "b", label: "", kind: "sfp", vlans: { untagged: null, tagged: [] } },
+          { id: "a", group: "g1", n: 1, caption: "", vlans: { untagged: "10", tagged: ["20"] } },
+          { id: "b", group: "g2", n: 1, caption: "", vlans: { untagged: null, tagged: [] } },
         ],
       },
     }),

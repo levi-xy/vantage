@@ -7,6 +7,7 @@ import type { Placed } from "../../cards/switch-panel/panel";
 import type { PortState } from "../../cards/snmp-ports/ports";
 import type { DevicePort } from "./devicePorts";
 import type { Rect } from "./geometry";
+import { panelLayout, portKind } from "./panel";
 
 export interface StripPort {
   id: string;
@@ -33,18 +34,18 @@ const NO_VLANS: MapPort["vlans"] = { untagged: null, tagged: [] };
 
 /** The ports a box shows, from the typed list or from the device's own interfaces. */
 export function stripPorts(
-  box: Pick<MapBox, "ports">,
+  box: Pick<MapBox, "panel">,
   device: readonly DevicePort[] | undefined,
 ): { copper: Placed<StripPort>[][]; sfp: Placed<StripPort>[] } {
-  const config = box.ports;
+  const config = box.panel;
   if (!config) return { copper: [], sfp: [] };
   const live = new Map((device ?? []).map((p) => [p.id, p] as const));
   if (config.source === "manual") {
     const typed = config.ports.map((p): StripPort => ({
       id: p.id,
-      kind: p.kind,
-      label: p.label,
-      tip: p.label || p.id,
+      kind: portKind(config, p),
+      label: p.caption,
+      tip: p.caption || p.id,
       state: live.get(p.id)?.state ?? null,
       vlans: p.vlans,
     }));
@@ -64,8 +65,8 @@ export function stripPorts(
       port: {
         id: d.id,
         kind: cage ? "sfp" : "rj45",
-        label: o?.label ?? "",
-        tip: o?.label || d.name,
+        label: o?.caption ?? "",
+        tip: o?.caption || d.name,
         state: d.state,
         vlans: o?.vlans ?? NO_VLANS,
       } satisfies StripPort,
@@ -144,8 +145,12 @@ export function boxStrip(
   box: MapBox,
   device: readonly DevicePort[] | undefined,
 ): { layout: StripLayout; origin: { x: number; y: number }; rects: Map<string, Rect> } | null {
-  if (!box.ports) return null;
-  const layout = stripLayout(stripPorts(box, device), box.ports.layout, box.w - 2 * STRIP_PAD);
+  if (!box.panel) return null;
+  const layout = stripLayout(
+    stripPorts(box, device),
+    panelLayout(box.panel),
+    box.w - 2 * STRIP_PAD,
+  );
   if (layout.jacks.length === 0) return null;
   const origin = stripOrigin(box, layout);
   const rects = new Map<string, Rect>();

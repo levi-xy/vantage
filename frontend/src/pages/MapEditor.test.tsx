@@ -49,7 +49,7 @@ const box = (id: string, x: number, label: string) => ({
   show: { details: true, status: true, figures: true },
   figures: [],
   color: null,
-  ports: null,
+  panel: null,
 });
 
 const cable = {

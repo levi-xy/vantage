@@ -1,0 +1,7 @@
+# gitleaks config: the default rules, plus one path allowlist.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Checksums of the bundled dashboard-icons files (sha256 per file, not secrets)"
+paths = ['''^frontend/icons\.manifest\.json$''']

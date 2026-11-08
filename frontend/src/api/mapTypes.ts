@@ -8,18 +8,46 @@ export interface MapVlan {
   id: string;
   name: string;
   color: MapColor;
+  subnet: string;
+  note: string;
+}
+
+export interface MapVlanSettings {
+  untagged: string | null;
+  tagged: string[];
+}
+
+export type MapPortKind = "rj45" | "sfp" | "sfp_plus" | "sfp28" | "qsfp" | "console" | "usb";
+
+export interface MapPortGroup {
+  id: string;
+  kind: MapPortKind;
+  count: number;
+  rows: 1 | 2;
+  odd_top: boolean;
+  first: number;
+  prefix: string;
 }
 
 export interface MapPort {
   id: string;
-  label: string;
-  kind: "rj45" | "sfp";
-  vlans: { untagged: string | null; tagged: string[] };
+  group: string;
+  n: number;
+  caption: string;
+  interface: string;
+  vlans: MapVlanSettings;
+  hidden: boolean;
 }
 
-export interface MapPorts {
-  source: "device" | "manual";
-  layout: "row" | "panel";
+/** A box's front panel (was `ports` before M11). */
+export interface MapPanel {
+  look: "rack" | "desktop" | "flat";
+  place: "bottom" | "top" | "side";
+  size: "s" | "m" | "l";
+  numbers: boolean;
+  captions: "cables" | "typed" | "off";
+  source: "manual" | "device";
+  groups: MapPortGroup[];
   ports: MapPort[];
 }
 
@@ -40,6 +68,32 @@ export type MapIcon =
   | "iot"
   | "generic";
 
+/** A generic glyph, or a dashboard-icons slug (`di:<slug>`, files under /icons/di/). */
+export type MapIconRef = MapIcon | `di:${string}`;
+
+export interface MapItem {
+  id: string;
+  label: string;
+  value: string;
+  sub: string;
+  icon: MapIconRef | null;
+  color: MapColor | null;
+  figure: string | null;
+}
+
+export interface MapSection {
+  id: string;
+  title: string;
+  kind: "tiles" | "services" | "list";
+  columns: 1 | 2 | 3 | 4;
+  items: MapItem[];
+}
+
+export interface MapNas {
+  bays: number;
+  bay_disks: { bay: number; label: string; disk: string }[];
+}
+
 interface MapGeometry {
   id: string;
   x: number;
@@ -52,12 +106,19 @@ export interface MapBox extends MapGeometry {
   kind: "box";
   label: string;
   subtitle: string;
-  icon: MapIcon;
+  shape: "card" | "cloud" | "device" | "nas" | "ap";
+  role: string;
+  icon: MapIconRef;
+  model: string;
+  address: string;
+  version: string;
   instance_id: string | null;
   show: { details: boolean; status: boolean; figures: boolean };
   figures: string[];
+  sections: MapSection[];
   color: MapColor | null;
-  ports: MapPorts | null;
+  panel: MapPanel | null;
+  nas: MapNas | null;
 }
 
 export interface MapGuests {
@@ -67,12 +128,24 @@ export interface MapGuests {
   manual: { id: string; label: string; subtitle: string }[];
 }
 
+export interface MapGuestGroup {
+  id: string;
+  title: string;
+  members: string[];
+}
+
 export interface MapFrame extends MapGeometry {
   kind: "frame";
   label: string;
   instance_id: string | null;
   color: MapColor | null;
   guests: MapGuests;
+  groups: MapGuestGroup[];
+  bars: boolean;
+  side: { model: string; address: string; version: string; sections: MapSection[] } | null;
+  model: string;
+  address: string;
+  version: string;
 }
 
 export type MapSpeed =
@@ -116,13 +189,19 @@ export interface MapTable extends MapGeometry {
   title: string;
   columns: string[];
   rows: MapTableRow[];
+  badges: number[];
 }
 
 export interface MapLegend extends MapGeometry {
   kind: "legend";
 }
 
-export type MapElement = MapBox | MapFrame | MapCable | MapText | MapTable | MapLegend;
+export interface MapNetworks extends MapGeometry {
+  kind: "networks";
+}
+
+export type MapElement =
+  MapBox | MapFrame | MapCable | MapText | MapTable | MapLegend | MapNetworks;
 
 export interface MapDocument {
   version: 1;

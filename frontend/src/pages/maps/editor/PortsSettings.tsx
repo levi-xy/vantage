@@ -2,17 +2,24 @@
 // hand; row or front-panel layout; each port's VLANs (untagged and tagged) from the map's
 // VLAN list. On a device strip the VLANs are overrides stored by interface id.
 
-import type { Instance, MapBox, MapDocument, MapPort, MapPorts } from "../../../api";
+import type { Instance, MapBox, MapDocument, MapPanel, MapPort } from "../../../api";
 import { buttonSecondary, input } from "../../../components/styles";
 import { hasPorts } from "../devicePorts";
+import {
+  emptyPanel,
+  newPort,
+  NO_VLANS,
+  panelLayout,
+  portKind,
+  withLayout,
+  withTypedPorts,
+} from "../panel";
 import type { MapLive } from "../mapLive";
 import { Check, CommitText, labelText } from "./fields";
 import { MAX_PORTS, MAX_TAGGED, newPortId, renamePort, setBoxPorts } from "./mapOps";
 import { patchElement } from "./model";
 
 type Edit = (next: MapDocument) => void;
-
-const NO_VLANS: MapPort["vlans"] = { untagged: null, tagged: [] };
 
 function PortVlans({
   name,
@@ -89,17 +96,18 @@ export function PortsSettings({
   live: MapLive;
   edit: Edit;
 }) {
-  const strip = box.ports;
+  const strip = box.panel;
   const source = strip?.source ?? "none";
-  const setPorts = (ports: MapPorts) => edit(patchElement(doc, box.id, { ports }));
+  const setPorts = (panel: MapPanel) => edit(patchElement(doc, box.id, { panel }));
 
   const choose = (v: string) => {
     if (v === "none") return edit(setBoxPorts(doc, box.id, null));
     const kind = v as "device" | "manual";
     edit(
       setBoxPorts(doc, box.id, {
+        ...(strip ?? emptyPanel(kind)),
         source: kind,
-        layout: strip?.layout ?? "row",
+        groups: strip?.source === kind ? strip.groups : [],
         ports: strip?.source === kind ? strip.ports : [],
       }),
     );
@@ -124,8 +132,8 @@ export function PortsSettings({
         <select
           className={input}
           aria-label="Strip layout"
-          value={strip.layout}
-          onChange={(e) => setPorts({ ...strip, layout: e.target.value as "row" | "panel" })}
+          value={panelLayout(strip)}
+          onChange={(e) => setPorts(withLayout(strip, e.target.value as "row" | "panel"))}
         >
           <option value="row">In a row</option>
           <option value="panel">As a front panel</option>
@@ -147,12 +155,12 @@ function ManualPorts({
 }: {
   doc: MapDocument;
   box: MapBox;
-  strip: MapPorts;
+  strip: MapPanel;
   edit: Edit;
 }) {
   const ports = strip.ports;
-  const update = (list: MapPort[]) =>
-    edit(patchElement(doc, box.id, { ports: { ...strip, ports: list } }));
+  const update = (list: MapPort[], kinds?: ReadonlyMap<string, "rj45" | "sfp">) =>
+    edit(patchElement(doc, box.id, { panel: withTypedPorts(strip, list, kinds) }));
   const change = (i: number, patch: Partial<MapPort>) =>
     update(ports.map((p, k) => (k === i ? { ...p, ...patch } : p)));
   const move = (i: number, by: number) => {
@@ -177,17 +185,17 @@ function ManualPorts({
               />
               <CommitText
                 label={`${name} label`}
-                value={p.label}
+                value={p.caption}
                 maxLength={16}
                 accept={() => true}
-                onCommit={(v) => change(i, { label: v })}
+                onCommit={(v) => change(i, { caption: v })}
               />
             </div>
             <select
               className={input}
               aria-label={`${name} type`}
-              value={p.kind}
-              onChange={(e) => change(i, { kind: e.target.value as "rj45" | "sfp" })}
+              value={portKind(strip, p)}
+              onChange={(e) => update(ports, new Map([[p.id, e.target.value as "rj45" | "sfp"]]))}
             >
               <option value="rj45">RJ45</option>
               <option value="sfp">SFP</option>
@@ -228,7 +236,14 @@ function ManualPorts({
                 className={buttonSecondary}
                 onClick={() =>
                   edit(
-                    setBoxPorts(doc, box.id, { ...strip, ports: ports.filter((_, k) => k !== i) }),
+                    setBoxPorts(
+                      doc,
+                      box.id,
+                      withTypedPorts(
+                        strip,
+                        ports.filter((_, k) => k !== i),
+                      ),
+                    ),
                   )
                 }
               >
@@ -243,7 +258,7 @@ function ManualPorts({
         className={buttonSecondary}
         disabled={ports.length >= MAX_PORTS}
         onClick={() =>
-          update([...ports, { id: newPortId(ports), label: "", kind: "rj45", vlans: NO_VLANS }])
+          update([...ports, newPort(newPortId(ports))], new Map([[newPortId(ports), "rj45"]]))
         }
       >
         Add port
@@ -261,7 +276,7 @@ function DevicePorts({
 }: {
   doc: MapDocument;
   box: MapBox;
-  strip: MapPorts;
+  strip: MapPanel;
   live: MapLive;
   edit: Edit;
 }) {
@@ -272,12 +287,12 @@ function DevicePorts({
     const empty = vlans.untagged === null && vlans.tagged.length === 0;
     const rest = strip.ports.filter((p) => p.id !== id);
     const next: MapPort[] =
-      empty && !old?.label
+      empty && !old?.caption
         ? rest
         : strip.ports.some((p) => p.id === id)
           ? strip.ports.map((p) => (p.id === id ? { ...p, vlans } : p))
-          : [...rest, { id, label: "", kind: "rj45", vlans }];
-    edit(patchElement(doc, box.id, { ports: { ...strip, ports: next } }));
+          : [...rest, newPort(id, { interface: id, vlans })];
+    edit(patchElement(doc, box.id, { panel: { ...strip, ports: next } }));
   };
   if (device.length === 0) {
     return <p className="text-xs text-muted">The device&apos;s interfaces haven&apos;t loaded.</p>;

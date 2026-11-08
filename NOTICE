@@ -8,3 +8,9 @@ as a separate library under the GNU Lesser General Public License v3.0. Its
 source is available at https://github.com/psycopg/psycopg. Every other bundled
 dependency carries its own permissive license (MIT, BSD, ISC, Apache 2.0 and
 similar), listed in its package metadata.
+
+The frontend image also contains the dashboard-icons library
+(https://github.com/homarr-labs/dashboard-icons, Apache License 2.0, copyright 2024
+Bjorn Lammers, Meier Lukas, Thomas Camlong and Homarr Labs), used unmodified as icon
+images in the map editor. Its license is at /usr/share/doc/vantage/dashboard-icons-LICENSE.
+The icons themselves are the trademarks and logos of their owners.

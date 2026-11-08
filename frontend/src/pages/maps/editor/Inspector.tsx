@@ -17,7 +17,8 @@ import type { MapLive } from "../mapLive";
 import { CableSettings } from "./CableSettings";
 import { Check, ColorPicker, Field, labelText, section } from "./fields";
 import { ManualTiles, ProxmoxGuestList } from "./GuestsSettings";
-import { clamp, ICONS, MAX_SIZE, MIN_SIZE } from "./model";
+import { IconPicker } from "./IconPicker";
+import { clamp, MAX_SIZE, MIN_SIZE } from "./model";
 import { PortsSettings } from "./PortsSettings";
 
 const MAX_COLUMNS = 8;
@@ -147,19 +148,10 @@ function BoxSettings({
           />
         </Field>
       )}
-      <Field label="Icon">
-        <select
-          className={input}
-          value={box.icon}
-          onChange={(e) => patch({ icon: e.target.value })}
-        >
-          {ICONS.map((i) => (
-            <option key={i} value={i}>
-              {i}
-            </option>
-          ))}
-        </select>
-      </Field>
+      <div>
+        <span className={labelText}>Icon</span>
+        <IconPicker value={box.icon} onChange={(icon) => patch({ icon })} />
+      </div>
       <PortsSettings doc={doc} box={box} instance={instance} live={live} edit={edit} />
       {box.instance_id && (
         <fieldset className="flex flex-col gap-1.5">
@@ -433,6 +425,7 @@ const KIND_NAME: Record<MapElement["kind"], string> = {
   text: "Text",
   table: "Table",
   legend: "Legend",
+  networks: "Networks",
   cable: "Cable",
 };
 

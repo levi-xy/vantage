@@ -51,7 +51,7 @@ export function useMapLive(doc: MapDocument | undefined, drawing = true): MapLiv
   // Interfaces are read for devices with a port strip or a cable that names a port.
   const needPorts = new Set<string>();
   for (const el of elements) {
-    if (el.kind === "box" && el.ports && el.instance_id) needPorts.add(el.instance_id);
+    if (el.kind === "box" && el.panel && el.instance_id) needPorts.add(el.instance_id);
     if (el.kind !== "cable") continue;
     for (const end of [el.from, el.to]) {
       const owner = elements.find((e) => e.id === end.element);

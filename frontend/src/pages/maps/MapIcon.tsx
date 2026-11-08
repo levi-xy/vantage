@@ -1,5 +1,6 @@
+import { useState } from "react";
 import type { ReactNode } from "react";
-import type { MapIcon as IconName } from "../../api";
+import type { MapIcon as IconName, MapIconRef } from "../../api";
 
 const PATHS: Record<IconName, ReactNode> = {
   internet: (
@@ -85,8 +86,12 @@ const PATHS: Record<IconName, ReactNode> = {
   generic: <rect x="4" y="4" width="16" height="16" rx="3" />,
 };
 
-/** A simple stroke glyph for a box (the `icon` enum of the map document). */
-export function MapIcon({ icon, size = 18 }: { icon: IconName; size?: number }) {
+const DI = /^di:([a-z0-9-]{1,64})$/;
+
+/** Where a library icon is served from: Vantage's own web server, never a CDN. */
+const libraryIconUrl = (slug: string) => `/icons/di/${slug}.svg`;
+
+function Glyph({ icon, size }: { icon: IconName; size: number }) {
   return (
     <svg
       width={size}
@@ -102,4 +107,27 @@ export function MapIcon({ icon, size = 18 }: { icon: IconName; size?: number }) 
       {PATHS[icon] ?? PATHS.generic}
     </svg>
   );
+}
+
+/**
+ * A box's icon: one of the generic stroke glyphs, or a library icon (`di:<slug>`) shown as an
+ * image (never inlined, so an SVG can't run script). A library file that is missing, or an
+ * unknown name, shows the generic glyph.
+ */
+export function MapIcon({ icon, size = 18 }: { icon: MapIconRef; size?: number }) {
+  const [failed, setFailed] = useState<string | null>(null);
+  const slug = DI.exec(icon)?.[1];
+  if (slug && failed !== slug) {
+    return (
+      <img
+        src={libraryIconUrl(slug)}
+        width={size}
+        height={size}
+        alt=""
+        loading="lazy"
+        onError={() => setFailed(slug)}
+      />
+    );
+  }
+  return <Glyph icon={slug ? "generic" : (icon as IconName)} size={size} />;
 }
