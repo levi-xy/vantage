@@ -6,7 +6,6 @@ import type { WidgetSpec } from "./layout";
 import { fullSize } from "./registry";
 import { SMALLEST_SIZE, tierFor } from "./metrics/tier";
 import type { CardTier } from "./metrics/tier";
-import { NetworkMapCard, NetworkMapSettings } from "./network-map/NetworkMapCard";
 import { ThroughputCard, ThroughputSettings } from "./throughput/ThroughputCard";
 
 type Settings = CardPlacement["settings"];
@@ -64,14 +63,6 @@ export const WIDGETS: readonly Widget[] = [
     default_size: [6, 5],
     component: ThroughputCard,
     settingsEditor: ThroughputSettings,
-  },
-  {
-    card_type: "network-map",
-    title: "Network map",
-    default_size: [6, 4],
-    component: NetworkMapCard,
-    settingsEditor: NetworkMapSettings,
-    notOnOldLayouts: true,
   },
 ];
 

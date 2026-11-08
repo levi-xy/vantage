@@ -17,7 +17,7 @@ from tests.test_auth import do_setup, make_client
 EXPECTED_TABLES = {
     "users",
     "instances",
-    "links",
+    "network_maps",
     "dashboards",
     "alert_rules",
     "alert_events",

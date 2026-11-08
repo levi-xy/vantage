@@ -16,8 +16,8 @@ from app.models.audit import ActorType, AuditLog
 from app.models.channel import Channel, ChannelType
 from app.models.dashboard import Dashboard
 from app.models.instance import Instance
-from app.models.link import Link
 from app.models.login_failure import LoginFailure
+from app.models.network_map import NetworkMap
 from app.models.notification import AlertNotification, NotificationKind, NotificationStatus
 from app.models.session import UserSession
 from app.models.setting import Setting
@@ -37,8 +37,8 @@ __all__ = [
     "EndReason",
     "EventSource",
     "Instance",
-    "Link",
     "LoginFailure",
+    "NetworkMap",
     "NotificationKind",
     "NotificationStatus",
     "Role",
