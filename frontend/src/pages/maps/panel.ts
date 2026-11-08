@@ -3,7 +3,7 @@
 // device or vendor is known to the code (the model list is presets, in editor/presets.ts).
 
 import type { MapPanel, MapPort, MapPortGroup, MapPortKind } from "../../api";
-import { isSfp } from "../../cards/switch-panel/panel";
+import { faceplate, isSfp } from "../../cards/switch-panel/panel";
 import type { DevicePort } from "./devicePorts";
 
 export const MAX_GROUPS = 8;
@@ -116,8 +116,9 @@ function commonPrefix(names: readonly string[]): string {
 }
 
 /**
- * Groups and ports for a device's own interfaces: copper in one group (two rows, odd numbers
- * on top, past 8 ports), cages in one group of their own. Existing ports that name an
+ * Groups and ports for a device's own interfaces. A switch (SNMP / SwOS) gets the dashboard
+ * switch card's faceplate; other devices get copper in one group (two rows, odd numbers on
+ * top, past 8 ports) and cages in one group of their own. Existing ports that name an
  * interface keep their id, caption and VLANs; `interfaceIds` makes new ports take the
  * interface name as their id (what a cable to an unlisted device port already holds).
  */
@@ -126,16 +127,16 @@ export function fromDevice(
   existing: readonly MapPort[],
   interfaceIds: ReadonlySet<string> | "all" = new Set(),
 ): Pick<MapPanel, "groups" | "ports"> {
-  const cages = device.filter((d) => isSfp(d));
-  const copper = device.filter((d) => !isSfp(d));
   const groups: MapPortGroup[] = [];
   const ports: MapPort[] = [];
-  const add = (list: readonly DevicePort[], kind: MapPortKind, rows: 1 | 2) => {
+  const add = (list: readonly DevicePort[], kind: MapPortKind, rows: 1 | 2, first?: number) => {
     if (list.length === 0) return;
     const group = newGroup(groups, kind, {
       count: list.length,
       rows,
-      order: rows === 2 ? "odd_top" : "rows",
+      // A switch's blocks (given a first number) put odd numbers on the bottom, like its card.
+      order: rows === 1 ? "rows" : first === undefined ? "odd_top" : "odd_bottom",
+      first: first ?? 1,
       prefix: commonPrefix(list.map((d) => d.id)),
     });
     groups.push(group);
@@ -154,8 +155,31 @@ export function fromDevice(
       );
     });
   };
+  const cageKind = (list: readonly DevicePort[]): MapPortKind =>
+    list.some((d) => (d.speed ?? 0) >= 25e9) ? "sfp28" : "sfp_plus";
+  if (device.length > 0 && device.every((d) => d.ref?.source === "snmp")) {
+    // A switch: the same faceplate as the dashboard's switch card (copper in blocks of 8,
+    // cages in their own block numbered on their own, odd numbers on the bottom).
+    const plate = faceplate([...device]);
+    const blocks = plate.copper.map((block) => block.map((p) => p.port));
+    const pairs = (n: number) => (n > 1 ? 2 : 1);
+    if (blocks.length <= MAX_GROUPS - 1) {
+      let first = 1;
+      for (const block of blocks) {
+        add(block, "rj45", pairs(block.length), first);
+        first += block.length;
+      }
+    } else {
+      add(blocks.flat(), "rj45", 2, 1);
+    }
+    const cageList = plate.sfp.map((p) => p.port);
+    add(cageList, cageKind(cageList), pairs(cageList.length), plate.sfp[0]?.cage ?? 1);
+    return { groups, ports: ports.slice(0, MAX_PANEL_PORTS) };
+  }
+  const cages = device.filter((d) => isSfp(d));
+  const copper = device.filter((d) => !isSfp(d));
   add(copper, "rj45", copper.length > 8 ? 2 : 1);
-  add(cages, cages.some((d) => (d.speed ?? 0) >= 25e9) ? "sfp28" : "sfp_plus", 1);
+  add(cages, cageKind(cages), 1);
   return { groups, ports: ports.slice(0, MAX_PANEL_PORTS) };
 }
 

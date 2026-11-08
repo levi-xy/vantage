@@ -23,6 +23,23 @@ import { IconPicker } from "./IconPicker";
 import { contentSized } from "../boxFacts";
 import { clamp, MAX_SIZE, MIN_SIZE } from "./model";
 import { LookAndPorts } from "./LookAndPorts";
+import { emptyPanel } from "../panel";
+
+/** Integrations whose ports the map draws like the dashboard's switch card. */
+const SWITCH_TYPES = new Set(["snmp_device", "mikrotik_swos"]);
+
+/**
+ * Linking a box without ports to a switch gives it the switch's own front panel, read live
+ * from the device (as on its dashboard card). A box that already has ports keeps them.
+ */
+function switchPanel(box: MapBox, id: string | null, instances: readonly Instance[]) {
+  const type = instances.find((i) => i.id === id)?.type_id;
+  if (box.panel || !type || !SWITCH_TYPES.has(type)) return {};
+  return {
+    shape: box.shape === "card" ? ("device" as const) : box.shape,
+    panel: { ...emptyPanel("device"), look: "rack" as const, captions: "cables" as const },
+  };
+}
 
 const MAX_COLUMNS = 8;
 const MAX_ROWS = 100;
@@ -161,7 +178,9 @@ function BoxSettings({
           value={box.instance_id}
           instances={instances}
           noneLabel="None (not monitored)"
-          onChange={(id) => patch({ instance_id: id, figures: [] })}
+          onChange={(id) =>
+            patch({ instance_id: id, figures: [], ...switchPanel(box, id, instances) })
+          }
         />
       </Field>
       <p className="text-xs text-muted">
