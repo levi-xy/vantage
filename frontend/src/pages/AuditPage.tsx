@@ -11,6 +11,7 @@ import { useApiClient } from "../app/session";
 import { EmptyState, PageHeader } from "../components/PageHeader";
 import { alertError, buttonSecondary } from "../components/styles";
 import { changeLines } from "./auditChanges";
+import { formatDateTime } from "../app/time";
 
 const AUDIT_PAGE_SIZE = 50;
 
@@ -46,7 +47,7 @@ function Row({ entry, names }: { entry: AuditEntry; names: ReadonlyMap<number, s
   return (
     <tr className="border-t border-slate-200 dark:border-slate-800">
       <td className={`${cell} whitespace-nowrap`}>
-        <time dateTime={entry.at}>{new Date(entry.at).toLocaleString()}</time>
+        <time dateTime={entry.at}>{formatDateTime(Date.parse(entry.at))}</time>
       </td>
       <td className={`${cell} whitespace-nowrap`}>{actor(entry, names)}</td>
       <td className={`${cell} whitespace-nowrap font-medium`}>{entry.action}</td>

@@ -27,6 +27,7 @@ import { NO_DATA_REASONS } from "./noDataReasons";
 import { buttonDanger, panel, row, toneText, useNow } from "./tone";
 import type { Tone } from "./tone";
 import { SectionHeader, Tag } from "./ui";
+import { formatDateTime } from "../../app/time";
 
 const PAGE = 50;
 const FIRING_LIMIT = 200;
@@ -79,7 +80,7 @@ function Clock({ iso, now }: { iso: string; now: number }) {
   const t = parse(iso);
   if (t === null) return <>{iso}</>;
   return (
-    <time dateTime={iso} title={new Date(t).toLocaleString()} className="tabular-nums">
+    <time dateTime={iso} title={formatDateTime(t)} className="tabular-nums">
       {clockTime(t, now)}
     </time>
   );
@@ -90,7 +91,7 @@ function Age({ iso, now }: { iso: string; now: number }) {
   const t = parse(iso);
   if (t === null) return null;
   return (
-    <time dateTime={iso} title={new Date(t).toLocaleString()} className="tabular-nums">
+    <time dateTime={iso} title={formatDateTime(t)} className="tabular-nums">
       {ageText(now - t)}
     </time>
   );

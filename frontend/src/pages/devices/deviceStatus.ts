@@ -4,6 +4,7 @@
 
 import type { Instance, InstanceStatus } from "../../api";
 import { ageText, clockTime } from "../../cards/problems";
+import { formatDateTime } from "../../app/time";
 
 type State = InstanceStatus["state"];
 
@@ -74,6 +75,6 @@ export function timeText(
   if (Number.isNaN(ms)) return null;
   return {
     short: `${clockTime(ms, nowMs)} · ${ageText(nowMs - ms)} ago`,
-    full: new Date(ms).toLocaleString(),
+    full: formatDateTime(ms),
   };
 }

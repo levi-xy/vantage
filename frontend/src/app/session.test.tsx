@@ -117,7 +117,7 @@ describe("first-run setup", () => {
 
     await mainNav();
     expect(router.state.location.pathname).toBe("/");
-    expect(within(openAccountMenu()).getByRole("link", { name: "Audit log" })).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "Settings" }).length).toBeGreaterThan(0);
     expect(screen.getByText("example-admin")).toBeInTheDocument();
     expect(client.hasSession).toBe(true);
     const sent = backend.fetch.mock.calls.find(([, init]) => init?.method === "POST");
@@ -353,7 +353,7 @@ describe("role-aware navigation", () => {
   it("shows the audit log to admins", async () => {
     renderApp("/");
     await mainNav();
-    expect(within(openAccountMenu()).getByRole("link", { name: "Audit log" })).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "Settings" }).length).toBeGreaterThan(0);
     expect(screen.getByText("(Admin)")).toBeInTheDocument();
   });
 
@@ -361,8 +361,7 @@ describe("role-aware navigation", () => {
     renderApp("/", fakeBackend({ session: exampleMe("viewer") }));
     const nav = await mainNav();
     const menu = openAccountMenu();
-    expect(within(menu).queryByRole("link", { name: "Audit log" })).not.toBeInTheDocument();
-    expect(within(menu).queryByRole("link", { name: "Users" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Settings" })).not.toBeInTheDocument();
     expect(within(menu).getByRole("link", { name: "My account" })).toBeInTheDocument();
     expect(within(nav).getByRole("link", { name: "Dashboard" })).toBeInTheDocument();
     expect(within(nav).getByRole("link", { name: "Devices" })).toBeInTheDocument();
@@ -380,13 +379,11 @@ describe("role-aware navigation", () => {
   it("switches the menu when a viewer logs in after an admin", async () => {
     renderApp("/");
     await mainNav();
-    expect(within(openAccountMenu()).getByRole("link", { name: "Audit log" })).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "Settings" }).length).toBeGreaterThan(0);
     clickLogOut();
     await logIn("viewer");
     await mainNav();
-    expect(
-      within(openAccountMenu()).queryByRole("link", { name: "Audit log" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Settings" })).not.toBeInTheDocument();
   });
 });
 

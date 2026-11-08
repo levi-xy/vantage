@@ -12,6 +12,7 @@ from app.api import (
     integrations,
     maps,
     query,
+    settings,
     users,
     ws,
 )
@@ -26,6 +27,7 @@ api_router.include_router(integrations.router)
 api_router.include_router(instances.router)
 api_router.include_router(maps.router)
 api_router.include_router(query.router)
+api_router.include_router(settings.router)
 api_router.include_router(users.router)
 api_router.include_router(ws.router)
 

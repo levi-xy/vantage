@@ -49,6 +49,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.alerts.delivery import enqueue, stuck_count
 from app.collectors.hub import EventHub, Message
+from app.core import timezone
 from app.core.db import utcnow
 from app.models import (
     OPEN_STATES,
@@ -111,7 +112,7 @@ HEALTH_PRIORITY = (
 
 
 def hhmm(at: datetime) -> str:
-    return at.strftime("%H:%M UTC")
+    return timezone.local(at).strftime("%H:%M %Z")
 
 
 def minutes(seconds: float) -> str:

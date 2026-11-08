@@ -51,7 +51,7 @@ describe("audit page", () => {
           ]),
       },
     });
-    renderApp("/audit", backend);
+    renderApp("/settings/audit", backend);
 
     const table = await findTable();
     const [header, failed, created, ...rest] = within(table).getAllByRole("row");
@@ -92,7 +92,7 @@ describe("audit page", () => {
         "GET /audit": () => json([entry(2), entry(1, { user_id: 9 })]),
       },
     });
-    renderApp("/audit", backend);
+    renderApp("/settings/audit", backend);
     const table = await findTable();
     expect(await within(table).findByText("example-admin")).toBeInTheDocument();
     expect(within(table).getByText("User #9")).toBeInTheDocument();
@@ -120,7 +120,7 @@ describe("audit page", () => {
           ]),
       },
     });
-    renderApp("/audit", backend);
+    renderApp("/settings/audit", backend);
     const table = await findTable();
 
     const placeholders = within(table).getAllByText("<changed>", { exact: true });
@@ -138,7 +138,7 @@ describe("audit page", () => {
       session: exampleMe("admin"),
       routes: { "GET /audit": () => json([entry(1, { changes: { name: markup } })]) },
     });
-    renderApp("/audit", backend);
+    renderApp("/settings/audit", backend);
     const table = await findTable();
     expect(within(table).getByText(markup)).toBeInTheDocument();
     expect(table.querySelector("img")).toBeNull();
@@ -156,7 +156,7 @@ describe("audit page", () => {
           ]),
       },
     });
-    renderApp("/audit", backend);
+    renderApp("/settings/audit", backend);
     const table = await findTable();
     const [, system, cli, failed] = within(table).getAllByRole("row");
     if (!system || !cli || !failed) throw new Error("expected three entries");
@@ -170,7 +170,7 @@ describe("audit page", () => {
       session: exampleMe("admin"),
       routes: { "GET /audit": () => json([]) },
     });
-    renderApp("/audit", backend);
+    renderApp("/settings/audit", backend);
     expect(await screen.findByText("No audit entries yet.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Load older entries" })).not.toBeInTheDocument();
   });
@@ -184,7 +184,7 @@ describe("audit page", () => {
           fail ? json({ detail: "admin role required" }, 403) : json([entry(1)]),
       },
     });
-    renderApp("/audit", backend);
+    renderApp("/settings/audit", backend);
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Could not load the audit log: admin role required");
@@ -207,7 +207,7 @@ describe("audit page", () => {
         },
       },
     });
-    renderApp("/audit", backend);
+    renderApp("/settings/audit", backend);
 
     const table = await findTable();
     expect(within(table).getAllByRole("row")).toHaveLength(51);
@@ -235,7 +235,7 @@ describe("audit page", () => {
         },
       },
     });
-    renderApp("/audit", backend);
+    renderApp("/settings/audit", backend);
     const table = await findTable();
 
     fireEvent.click(screen.getByRole("button", { name: "Load older entries" }));
@@ -247,7 +247,7 @@ describe("audit page", () => {
 
   it("is never requested for a viewer", async () => {
     const backend = fakeBackend({ session: exampleMe("viewer") });
-    renderApp("/audit", backend);
+    renderApp("/settings/audit", backend);
     expect(
       await screen.findByRole("heading", { level: 1, name: "Admins only" }),
     ).toBeInTheDocument();

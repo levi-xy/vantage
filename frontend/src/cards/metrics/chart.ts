@@ -1,3 +1,5 @@
+import { zoneParts } from "../../app/time";
+
 // Path maths for the small inline-SVG charts (Sparkline, AreaChart). Pure, so it is easy to
 // test. Points are `[unix_seconds, value]`; the SVG's viewBox is `width` x `height` and is
 // stretched to its box (preserveAspectRatio="none").
@@ -99,11 +101,11 @@ export function hourTicks(start: number, end: number, everyHours = 1): number[] 
   if (span <= 0) return [];
   const margin = span * 0.06;
   const ticks: number[] = [];
-  const first = new Date(start * 1000);
-  first.setMinutes(0, 0, 0);
-  for (let t = first.getTime() / 1000; t < end; t += 3600) {
-    const hour = new Date(t * 1000).getHours();
-    if (t > start + margin && t < end - margin && hour % everyHours === 0) ticks.push(t);
+  // Quarter-hour steps, so zones with a 30 or 45 minute offset still hit their full hours.
+  for (let t = Math.ceil(start / 900) * 900; t < end; t += 900) {
+    if (t <= start + margin || t >= end - margin) continue;
+    const p = zoneParts(t * 1000);
+    if (p.minute === 0 && p.hour % everyHours === 0) ticks.push(t);
   }
   return ticks;
 }
@@ -143,7 +145,7 @@ export function nearestPoint(points: Point[], t: number, maxDistance: number): P
 }
 
 /**
- * Local midnights strictly inside (start, end), at most `maxLabels` of them (every n-th day),
+ * Midnights (in the configured timezone) strictly inside (start, end), at most `maxLabels` of them (every n-th day),
  * leaving out ones too close to either edge to have room for a label.
  */
 export function dayTicks(start: number, end: number, maxLabels = 7): number[] {
@@ -151,11 +153,10 @@ export function dayTicks(start: number, end: number, maxLabels = 7): number[] {
   if (span <= 0) return [];
   const margin = span * 0.06;
   const days: number[] = [];
-  const d = new Date(start * 1000);
-  d.setHours(0, 0, 0, 0);
-  for (; d.getTime() / 1000 < end; d.setDate(d.getDate() + 1)) {
-    const t = d.getTime() / 1000;
-    if (t > start + margin && t < end - margin) days.push(t);
+  for (let t = Math.ceil(start / 900) * 900; t < end; t += 900) {
+    if (t <= start + margin || t >= end - margin) continue;
+    const p = zoneParts(t * 1000);
+    if (p.hour === 0 && p.minute === 0) days.push(t);
   }
   const every = Math.max(1, Math.ceil(days.length / maxLabels));
   return days.filter((_, i) => i % every === 0);

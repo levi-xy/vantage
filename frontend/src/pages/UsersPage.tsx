@@ -28,6 +28,7 @@ import {
   USERNAME_HINT,
   USERNAME_PATTERN,
 } from "./users/passwordRules";
+import { formatDateTime } from "../app/time";
 
 const USERS_KEY = ["users"] as const;
 
@@ -56,8 +57,8 @@ function errorText(error: unknown): string {
 
 function formatTime(iso: string | null): string {
   if (!iso) return "Never";
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms) ? "—" : formatDateTime(ms);
 }
 
 function useUsers() {

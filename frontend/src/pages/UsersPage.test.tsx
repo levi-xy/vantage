@@ -75,7 +75,7 @@ function passwordInputs(): HTMLInputElement[] {
 
 describe("users page", () => {
   it("lists every user with their role, and marks you", async () => {
-    renderApp("/users", backendWith());
+    renderApp("/settings/users", backendWith());
     const me = await findRow("admin");
     expect(within(me).getByText("Admin")).toBeInTheDocument();
     expect(within(me).getByText("(you)")).toBeInTheDocument();
@@ -86,18 +86,16 @@ describe("users page", () => {
     for (const field of passwordInputs()) expect(field.value).toBe("");
   });
 
-  it("is in the admin's menu and hidden from viewers, who never request it", async () => {
+  it("is under Settings for admins and hidden from viewers, who never request it", async () => {
     const admin = renderApp("/", backendWith());
     await screen.findByRole("navigation", { name: "Main" });
-    expect(within(openAccountMenu()).getByRole("link", { name: "Users" })).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "Settings" }).length).toBeGreaterThan(0);
     admin.unmount();
 
     const backend = fakeBackend({ session: exampleMe("viewer") });
-    renderApp("/users", backend);
+    renderApp("/settings/users", backend);
     await screen.findByRole("navigation", { name: "Main" });
-    expect(
-      within(openAccountMenu()).queryByRole("link", { name: "Users" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Settings" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 1, name: "Users" })).not.toBeInTheDocument();
     expect(routesSent(backend)).not.toContain("GET /users");
   });
@@ -106,7 +104,7 @@ describe("users page", () => {
     const backend = backendWith({
       "POST /users": (body) => json(user(3, (body as { username: string }).username, "admin"), 201),
     });
-    renderApp("/users", backend);
+    renderApp("/settings/users", backend);
     const form = await screen.findByRole("region", { name: "Add a user" });
     fill("Username", "ops.user", form);
     fireEvent.change(within(form).getByLabelText("Role"), { target: { value: "admin" } });
@@ -133,7 +131,7 @@ describe("users page", () => {
 
   it("checks the new user's fields before sending anything", async () => {
     const backend = backendWith();
-    renderApp("/users", backend);
+    renderApp("/settings/users", backend);
     const form = await screen.findByRole("region", { name: "Add a user" });
     const submit = () => fireEvent.click(within(form).getByRole("button", { name: "Add user" }));
 
@@ -158,7 +156,7 @@ describe("users page", () => {
     const backend = backendWith({
       "POST /users": () => json({ detail: "a user with that username already exists" }, 409),
     });
-    renderApp("/users", backend);
+    renderApp("/settings/users", backend);
     const form = await screen.findByRole("region", { name: "Add a user" });
     fill("Username", "Admin", form);
     fill("New password", NEW_PASSWORD, form);
@@ -172,7 +170,7 @@ describe("users page", () => {
 
   it("changes a role", async () => {
     const backend = backendWith({ "PATCH /users/2": () => json({ ...VIEWER, role: "admin" }) });
-    renderApp("/users", backend);
+    renderApp("/settings/users", backend);
     const row = await findRow("viewer1");
     fireEvent.click(within(row).getByRole("button", { name: "Make viewer1 admin" }));
     expect(await within(row).findByRole("status")).toHaveTextContent("viewer1 is now admin.");
@@ -184,11 +182,11 @@ describe("users page", () => {
       ADMIN,
       VIEWER,
     ]);
-    const { router } = renderApp("/users", backend);
+    const { router } = renderApp("/settings/users", backend);
     const me = await findRow("admin");
     fireEvent.click(within(me).getByRole("button", { name: "Make admin viewer" }));
     expect(await within(me).findByRole("alert")).toHaveTextContent(`Not done: ${LAST_ADMIN}.`);
-    expect(router.state.location.pathname).toBe("/users");
+    expect(router.state.location.pathname).toBe("/settings/users");
   });
 
   it("explains the last-admin rule when the backend refuses a delete", async () => {
@@ -196,7 +194,7 @@ describe("users page", () => {
       ADMIN,
       user(2, "admin2", "admin"),
     ]);
-    renderApp("/users", backend);
+    renderApp("/settings/users", backend);
     const row = await findRow("admin2");
     fireEvent.click(within(row).getByRole("button", { name: "Delete admin2" }));
     fireEvent.click(within(row).getByRole("button", { name: "Confirm deleting admin2" }));
@@ -208,7 +206,7 @@ describe("users page", () => {
       ADMIN,
       user(3, "admin2", "admin"),
     ]);
-    const { router } = renderApp("/users", backend);
+    const { router } = renderApp("/settings/users", backend);
     const me = await findRow("admin");
     backend.state.session = exampleMe("viewer", "admin");
     fireEvent.click(within(me).getByRole("button", { name: "Make admin viewer" }));
@@ -224,7 +222,7 @@ describe("users page", () => {
 
   it("resets another user's password", async () => {
     const backend = backendWith({ "POST /users/2/password": noContent });
-    renderApp("/users", backend);
+    renderApp("/settings/users", backend);
     const row = await findRow("viewer1");
     fireEvent.click(within(row).getByRole("button", { name: "Reset the password of viewer1" }));
     const form = within(row).getByRole("form", { name: "Reset the password of viewer1" });
@@ -242,7 +240,7 @@ describe("users page", () => {
 
   it("doesn't send a reset whose passwords don't match", async () => {
     const backend = backendWith();
-    renderApp("/users", backend);
+    renderApp("/settings/users", backend);
     const row = await findRow("viewer1");
     fireEvent.click(within(row).getByRole("button", { name: "Reset the password of viewer1" }));
     const form = within(row).getByRole("form", { name: "Reset the password of viewer1" });
@@ -265,7 +263,7 @@ describe("users page", () => {
         },
       },
     });
-    renderApp("/users", backend);
+    renderApp("/settings/users", backend);
     const row = await findRow("viewer1");
     fireEvent.click(within(row).getByRole("button", { name: "Delete viewer1" }));
     expect(routesSent(backend)).not.toContain("DELETE /users/2");
@@ -275,7 +273,7 @@ describe("users page", () => {
   });
 
   it("offers no reset or delete on your own row, only your own password form", async () => {
-    renderApp("/users", backendWith());
+    renderApp("/settings/users", backendWith());
     const me = await findRow("admin");
     expect(within(me).queryByRole("button", { name: /Reset the password/ })).toBeNull();
     expect(within(me).queryByRole("button", { name: /Delete/ })).toBeNull();
@@ -293,7 +291,7 @@ describe("users page", () => {
         "GET /users": () => (fail ? json({ detail: "admin role required" }, 403) : json([ADMIN])),
       },
     });
-    renderApp("/users", backend);
+    renderApp("/settings/users", backend);
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not load the users");
     fail = false;
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
@@ -304,7 +302,7 @@ describe("users page", () => {
     const backend = backendWith({
       "POST /users": () => json(user(3, "ops.user", "viewer"), 201),
     });
-    renderApp("/users", backend);
+    renderApp("/settings/users", backend);
     const form = await screen.findByRole("region", { name: "Add a user" });
     fill("Username", "ops.user", form);
     fill("New password", NEW_PASSWORD, form);

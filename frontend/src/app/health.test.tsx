@@ -9,7 +9,7 @@ import { REFRESH_MS } from "./live";
 
 beforeEach(() => mockSystemTheme(false));
 
-const at = new Date(2026, 10, 2, 14, 15, 32).getTime();
+const at = Date.UTC(2026, 10, 2, 14, 15, 32);
 const scrapeOk: ScrapeStatus = { states: new Map(), needed: 0, pending: false, failed: false };
 
 const status = (state: Instance["status"]["state"]) => ({

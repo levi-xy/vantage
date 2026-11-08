@@ -4,6 +4,7 @@ import { API_BASE } from "../api";
 import type { Instance, LiveMessage } from "../api";
 import { INSTANT_REFETCH_MS } from "../cards/metrics/useMetricQuery";
 import { INSTANCES_KEY } from "../pages/devices/queries";
+import { formatClock } from "./time";
 
 /** Every alert-events query is keyed under this. */
 export const ALERTS_KEY = ["alerts"] as const;
@@ -155,10 +156,7 @@ export function useLastDataUpdate(queryClient: QueryClient): number | null {
 /** How often the app refreshes its data: the cards' instant queries and the alert count. */
 export const REFRESH_MS = INSTANT_REFETCH_MS;
 
-const pad = (n: number) => String(n).padStart(2, "0");
-
-/** HH:MM:SS, 24-hour, local time. */
+/** HH:MM:SS, 24-hour, in the configured timezone. */
 export function clockTime(at: number): string {
-  const d = new Date(at);
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  return formatClock(at, true);
 }

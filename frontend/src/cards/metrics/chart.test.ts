@@ -52,9 +52,9 @@ describe("chart paths", () => {
   });
 
   it("labels full hours inside the window, away from the edges", () => {
-    const start = new Date(2026, 10, 2, 8, 30).getTime() / 1000;
+    const start = Date.UTC(2026, 10, 2, 8, 30) / 1000;
     const ticks = hourTicks(start, start + 6 * 3600);
-    expect(ticks.map((t) => new Date(t * 1000).getHours())).toEqual([9, 10, 11, 12, 13, 14]);
+    expect(ticks.map((t) => new Date(t * 1000).getUTCHours())).toEqual([9, 10, 11, 12, 13, 14]);
   });
 
   it("gives min, average and max", () => {
@@ -90,10 +90,10 @@ describe("nearestPoint", () => {
 
 describe("dayTicks", () => {
   it("gives local midnights, thinned to the label limit", () => {
-    const end = new Date(2026, 10, 30, 12).getTime() / 1000;
+    const end = Date.UTC(2026, 10, 30, 12) / 1000;
     const week = dayTicks(end - 7 * 86400, end);
     expect(week.length).toBeGreaterThan(3);
-    expect(week.every((t) => new Date(t * 1000).getHours() === 0)).toBe(true);
+    expect(week.every((t) => new Date(t * 1000).getUTCHours() === 0)).toBe(true);
     expect(dayTicks(end - 30 * 86400, end).length).toBeLessThanOrEqual(7);
   });
 });

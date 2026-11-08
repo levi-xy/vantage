@@ -22,6 +22,15 @@ export interface Me {
   csrf_token: string;
 }
 
+/** `GET /settings/time` (any role) and the response of `PUT` (admin). */
+export interface TimeSettings {
+  timezone: string;
+  /** The backend's clock, UTC ISO 8601. */
+  server_time: string;
+  clock_source: "host";
+  timezones: string[];
+}
+
 /** `GET /users`, and the response of creating or updating one. Never carries a password or hash. */
 export interface UserInfo {
   id: number;

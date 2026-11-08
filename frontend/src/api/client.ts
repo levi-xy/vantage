@@ -9,6 +9,7 @@ import type {
   AlertTemplate,
   AuditEntry,
   AuditQuery,
+  TimeSettings,
   CardSpec,
   NowPlaying,
   Channel,
@@ -196,6 +197,16 @@ export class ApiClient {
   /** Any role. Needs the current password; ends the user's other sessions (this one stays). */
   changeMyPassword(body: PasswordChange): Promise<void> {
     return this.request("POST", "/me/password", body);
+  }
+
+  /** Any role: the one timezone everyone sees times in, and the server's clock. */
+  timeSettings(): Promise<TimeSettings> {
+    return this.request("GET", "/settings/time");
+  }
+
+  /** Admin only. 422 for an unknown zone. */
+  setTimeZone(timezone: string): Promise<TimeSettings> {
+    return this.request("PUT", "/settings/time", { timezone });
   }
 
   /** Admin only. */
