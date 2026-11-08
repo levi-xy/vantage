@@ -80,6 +80,8 @@ def _links_to_map(bind: sa.Connection) -> None:
                 }
             )
     for link in links:
+        if link.a_instance_id == link.b_instance_id:
+            continue  # a cable needs two different ends; the box is still placed
         elements.append(
             {
                 "id": f"c{link.id}",

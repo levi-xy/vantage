@@ -13,12 +13,13 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
-from sqlalchemy import select
+from sqlalchemy import CursorResult, select, update
 from sqlalchemy.orm import Session
 
 from app.api.deps import AdminDep, AuthDep, DbDep
 from app.api.map_document import MAX_DOCUMENT_BYTES, MapDocument
 from app.core import audit
+from app.core.db import utcnow
 from app.models import NetworkMap
 
 router = APIRouter()
@@ -145,11 +146,19 @@ def get_map(map_id: int, _auth: AuthDep, db: DbDep) -> MapOut:
 def put_map(map_id: int, body: MapPut, _auth: AdminDep, db: DbDep) -> MapOut:
     data = _dump(body.document)
     row = _get(db, map_id)
-    if body.revision != row.revision:
+    # One conditional UPDATE, so two admins saving the same revision at once can't both
+    # win: the second matches no row and gets the 409.
+    result: CursorResult[Any] = db.execute(  # type: ignore[assignment]
+        update(NetworkMap)
+        .where(NetworkMap.id == map_id, NetworkMap.revision == body.revision)
+        .values(document=data, revision=NetworkMap.revision + 1, updated_at=utcnow())
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "the map was changed by someone else")
-    row.document = data
-    row.revision += 1
     db.commit()
+    db.refresh(row)
     return _out(row)
 
 
