@@ -14,6 +14,7 @@ import type {
 import { buttonSecondary, input } from "../../../components/styles";
 import { FIGURES } from "../figures";
 import type { MapLive } from "../mapLive";
+import { BoxContentSettings } from "./BoxContentSettings";
 import { CableSettings } from "./CableSettings";
 import { Check, ColorPicker, Field, labelText, section } from "./fields";
 import { ManualTiles, ProxmoxGuestList } from "./GuestsSettings";
@@ -152,6 +153,7 @@ function BoxSettings({
         <span className={labelText}>Icon</span>
         <IconPicker value={box.icon} onChange={(icon) => patch({ icon })} />
       </div>
+      <BoxContentSettings box={box} instance={instance} patch={patch} />
       <PortsSettings doc={doc} box={box} instance={instance} live={live} edit={edit} />
       {box.instance_id && (
         <fieldset className="flex flex-col gap-1.5">
@@ -490,7 +492,11 @@ export function Inspector({
       {el.kind !== "cable" && (
         <div className={`${section} grid grid-cols-2 gap-3`}>
           <NumberField label="W" value={el.w} onCommit={(w) => set({ w })} />
-          <NumberField label="H" value={el.h} onCommit={(h) => set({ h })} />
+          {el.kind === "box" ? (
+            <p className="self-end text-xs text-muted">Height follows the content.</p>
+          ) : (
+            <NumberField label="H" value={el.h} onCommit={(h) => set({ h })} />
+          )}
         </div>
       )}
       <div className={section}>

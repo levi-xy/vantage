@@ -2,7 +2,9 @@ import { useCallback, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { MapDocument } from "../../api";
 import { buttonSecondary } from "../../components/styles";
+import { boxRate } from "./cableLive";
 import { CableCard, DetailsDrawer } from "./MapDetails";
+import { MeasureProvider, useMeasuredDoc } from "./measure";
 import { BoxView, CablesLayer, FrameView, LegendView, TableView, TextView } from "./MapElements";
 import type { CableHover } from "./MapElements";
 import type { MapLive } from "./mapLive";
@@ -12,9 +14,12 @@ import { useViewport } from "./useViewport";
  * The read-only drawing: elements at their saved x/y/w/h inside a pan (drag) and zoom
  * (wheel, +/-, Fit) viewport. Cables sit in an SVG layer under the boxes.
  */
-export function MapCanvas({ doc, live }: { doc: MapDocument; live: MapLive }) {
+export function MapCanvas({ doc: saved, live }: { doc: MapDocument; live: MapLive }) {
   const box = useRef<HTMLDivElement>(null);
-  const { view, setView, fit, centerZoom } = useViewport(box, doc, doc);
+  // Boxes are as tall as their content: cables and the fit use the measured heights.
+  const { shown: doc, heights, report } = useMeasuredDoc(saved);
+  // Fit once at first, and again when the first measurement arrives or the map changes.
+  const { view, setView, fit, centerZoom } = useViewport(box, doc, heights.size > 0 ? saved : null);
   const drag = useRef<{ px: number; py: number; vx: number; vy: number } | null>(null);
   // A drag that moved is a pan, not a click on the box under the pointer.
   const moved = useRef(false);
@@ -90,27 +95,38 @@ export function MapCanvas({ doc, live }: { doc: MapDocument; live: MapLive }) {
           className="absolute top-0 left-0 origin-top-left"
           style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.z})` }}
         >
-          {/* Frames first, then the cables, then everything that sits on top. */}
-          {doc.elements.map((el) =>
-            el.kind === "frame" ? (
-              <FrameView key={el.id} frame={el} live={live} onSelect={select} />
-            ) : null,
-          )}
-          <CablesLayer doc={doc} live={live} onHover={onCableHover} />
-          {doc.elements.map((el) => {
-            switch (el.kind) {
-              case "box":
-                return <BoxView key={el.id} box={el} live={live} vlans={vlans} onSelect={select} />;
-              case "text":
-                return <TextView key={el.id} el={el} />;
-              case "table":
-                return <TableView key={el.id} el={el} />;
-              case "legend":
-                return <LegendView key={el.id} el={el} doc={doc} />;
-              default:
-                return null;
-            }
-          })}
+          <MeasureProvider value={report}>
+            {/* Frames first, then the cables, then everything that sits on top. */}
+            {doc.elements.map((el) =>
+              el.kind === "frame" ? (
+                <FrameView key={el.id} frame={el} live={live} onSelect={select} />
+              ) : null,
+            )}
+            <CablesLayer doc={doc} live={live} onHover={onCableHover} />
+            {doc.elements.map((el) => {
+              switch (el.kind) {
+                case "box":
+                  return (
+                    <BoxView
+                      key={el.id}
+                      box={el}
+                      live={live}
+                      vlans={vlans}
+                      onSelect={select}
+                      rate={el.shape === "cloud" ? boxRate(doc, el.id, live) : null}
+                    />
+                  );
+                case "text":
+                  return <TextView key={el.id} el={el} />;
+                case "table":
+                  return <TableView key={el.id} el={el} />;
+                case "legend":
+                  return <LegendView key={el.id} el={el} doc={doc} />;
+                default:
+                  return null;
+              }
+            })}
+          </MeasureProvider>
         </div>
         {hover && !selected && (
           <div

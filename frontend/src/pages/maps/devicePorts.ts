@@ -13,6 +13,7 @@ import { IF_DOWN, IF_UP } from "../../cards/snmp-overview/snmpMetrics";
 import { isInternal } from "../../cards/snmp-ports/ports";
 import type { PortState } from "../../cards/snmp-ports/ports";
 import type { PortRef, PortSource } from "../../cards/throughput/ports";
+import { useDocumentHidden } from "./useDocumentHidden";
 
 export interface DevicePort {
   /** The interface as the metrics name it (port3, igc0, eth0): what a cable's `port` holds. */
@@ -135,13 +136,14 @@ function build(results: Map<string, QueryResult | undefined>): DevicePorts {
  */
 export function useDevicePorts(devices: readonly Instance[]): DevicePorts {
   const client = useApiClient();
+  const hidden = useDocumentHidden();
   const sources = new Set(devices.map((d) => SOURCE_OF[d.type_id]));
   const active = QUERIES.filter(([src]) => sources.has(src));
   return useQueries({
     queries: active.map(([, , expr]) => ({
       queryKey: ["query", "fleet", expr],
       queryFn: () => client.query({ query: expr }),
-      refetchInterval: INSTANT_REFETCH_MS,
+      refetchInterval: hidden ? false : INSTANT_REFETCH_MS,
     })),
     combine: (res) =>
       build(new Map(active.map(([src, part], i) => [`${src}.${part}`, res[i]?.data] as const))),

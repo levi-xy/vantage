@@ -57,3 +57,18 @@ export function cableLive(
   );
   return { down: deviceDown || ends.some((e) => e.portDown), ends, rate };
 }
+
+/** The live in/out of the first cable on a box that has counters (the cloud shows it). */
+export function boxRate(
+  doc: MapDocument,
+  boxId: string,
+  live: MapLive,
+): { inBps?: number; outBps?: number } | null {
+  const owners = endElements(doc);
+  for (const c of doc.elements) {
+    if (c.kind !== "cable" || (c.from.element !== boxId && c.to.element !== boxId)) continue;
+    const rate = cableLive(c, owners, live).rate;
+    if (rate) return { inBps: rate.inBps, outBps: rate.outBps };
+  }
+  return null;
+}

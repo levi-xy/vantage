@@ -15,6 +15,7 @@ import {
   formatRatio,
 } from "../../cards/metrics/format";
 import { parseValue } from "../../cards/metrics/promql";
+import { useDocumentHidden } from "./useDocumentHidden";
 
 export interface FigureDef {
   /** Stored in a box's `figures` list. */
@@ -150,6 +151,22 @@ export function boxFigures(box: Pick<MapBox, "figures">, typeId: string): Figure
   return (box.figures.length > 0 ? named : [...defs]).slice(0, MAX_FIGURES);
 }
 
+/** The figure with this key for an integration (what a section item's `figure` names). */
+export const figureDef = (typeId: string, key: string): FigureDef | undefined =>
+  FIGURES[typeId]?.find((d) => d.id === key);
+
+/** The figures that the items of a box's sections ask for. */
+export function sectionFigures(box: Pick<MapBox, "sections">, typeId: string): FigureDef[] {
+  const out: FigureDef[] = [];
+  for (const section of box.sections ?? []) {
+    for (const item of section.items) {
+      const def = item.figure ? figureDef(typeId, item.figure) : undefined;
+      if (def && !out.includes(def)) out.push(def);
+    }
+  }
+  return out;
+}
+
 export type FigureValues = ReadonlyMap<FigureDef, ReadonlyMap<string, number>>;
 
 function valuesByInstance(result: QueryResult | undefined): Map<string, number> {
@@ -165,11 +182,12 @@ function valuesByInstance(result: QueryResult | undefined): Map<string, number> 
 /** One shared fleet query per figure in use, refreshed like the dashboard's cards. */
 export function useFigureValues(defs: readonly FigureDef[]): FigureValues {
   const client = useApiClient();
+  const hidden = useDocumentHidden();
   return useQueries({
     queries: defs.map((def) => ({
       queryKey: ["query", "fleet", def.expr],
       queryFn: () => client.query({ query: def.expr }),
-      refetchInterval: INSTANT_REFETCH_MS,
+      refetchInterval: hidden ? false : INSTANT_REFETCH_MS,
     })),
     combine: (results) =>
       new Map(defs.map((def, i) => [def, valuesByInstance(results[i]?.data)] as const)),

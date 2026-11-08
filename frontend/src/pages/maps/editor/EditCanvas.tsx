@@ -7,7 +7,9 @@ import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, RefObject } from "react";
 import type { MapCable, MapCableEnd, MapDocument } from "../../../api";
 import { buttonSecondary } from "../../../components/styles";
+import { boxRate } from "../cableLive";
 import { cableRoutes } from "../cableRoutes";
+import { MeasureProvider, useMeasuredDoc } from "../measure";
 import { BoxView, CablesLayer, FrameView, LegendView, TableView, TextView } from "../MapElements";
 import type { MapLive } from "../mapLive";
 import type { useViewport } from "../useViewport";
@@ -91,6 +93,12 @@ function endAt(e: { clientX: number; clientY: number; target: EventTarget }): Ma
   return { element, port: jack && owner.contains(jack) ? jack.getAttribute("data-port") : null };
 }
 
+/** A box is as tall as its content, so only its width can be dragged. */
+const handlesFor = (doc: MapDocument, id: string): readonly Handle[] =>
+  doc.elements.find((e) => e.id === id)?.kind === "box"
+    ? HANDLES.filter((h) => h === "e" || h === "w")
+    : HANDLES;
+
 export function EditCanvas({
   doc,
   box,
@@ -127,12 +135,14 @@ export function EditCanvas({
   commitFrom: (base: MapDocument) => void;
 }) {
   const { view, setView, fit, centerZoom } = viewport;
+  // Boxes are as tall as their content: cables, outlines and guides use the measured heights.
+  const { shown, report } = useMeasuredDoc(doc);
   const drag = useRef<Drag | null>(null);
   const [guides, setGuides] = useState<Guides>({ v: [], h: [] });
   const vlans = new Map(doc.vlans.map((v) => [v.id, v] as const));
   const single = selected.length === 1 ? selected[0] : undefined;
   const [draft, setDraft] = useState<Draft | null>(null);
-  const routes = cableRoutes(doc, live);
+  const routes = cableRoutes(shown, live);
   const selCable = doc.elements.find((e): e is MapCable => e.kind === "cable" && e.id === single);
   const selPoints = selCable ? routes.points(selCable) : undefined;
 
@@ -318,7 +328,7 @@ export function EditCanvas({
       nx = snapTo(nx);
       ny = snapTo(ny);
     }
-    const others = d.base.elements.flatMap((el) =>
+    const others = shown.elements.flatMap((el) =>
       el.kind === "cable" || d.ids.includes(el.id) ? [] : [{ x: el.x, y: el.y, w: el.w, h: el.h }],
     );
     const pulled = alignTo({ ...group, x: nx, y: ny }, others, ALIGN_PX / view.z);
@@ -357,7 +367,7 @@ export function EditCanvas({
     if (d.mode === "resize" || d.moved) commitFrom(d.base);
   };
 
-  const selectedRects = doc.elements.flatMap((el) =>
+  const selectedRects = shown.elements.flatMap((el) =>
     el.kind !== "cable" && selected.includes(el.id)
       ? [{ id: el.id, x: el.x, y: el.y, w: el.w, h: el.h }]
       : [],
@@ -439,150 +449,160 @@ export function EditCanvas({
           className="absolute top-0 left-0 origin-top-left"
           style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.z})` }}
         >
-          {doc.elements.map((el) =>
-            el.kind === "frame" ? <FrameView key={el.id} frame={el} live={live} /> : null,
-          )}
-          <CablesLayer doc={doc} live={live} pickedId={cable} onPick={(id) => onSelect([id])} />
-          {doc.elements.map((el) => {
-            switch (el.kind) {
-              case "box":
-                return <BoxView key={el.id} box={el} live={live} vlans={vlans} />;
-              case "text":
-                return <TextView key={el.id} el={el} />;
-              case "table":
-                return <TableView key={el.id} el={el} />;
-              case "legend":
-                return <LegendView key={el.id} el={el} doc={doc} />;
-              default:
-                return null;
-            }
-          })}
-          {selectedRects.map((r) => (
-            <div
-              key={r.id}
-              data-selected={r.id}
-              className="pointer-events-none absolute rounded-[10px] border-2 border-in"
-              style={{ left: r.x - 1, top: r.y - 1, width: r.w + 2, height: r.h + 2 }}
-            />
-          ))}
-          {single &&
-            selectedRects.length === 1 &&
-            HANDLES.map((h) => (
+          <MeasureProvider value={report}>
+            {doc.elements.map((el) =>
+              el.kind === "frame" ? <FrameView key={el.id} frame={el} live={live} /> : null,
+            )}
+            <CablesLayer doc={shown} live={live} pickedId={cable} onPick={(id) => onSelect([id])} />
+            {doc.elements.map((el) => {
+              switch (el.kind) {
+                case "box":
+                  return (
+                    <BoxView
+                      key={el.id}
+                      box={el}
+                      live={live}
+                      vlans={vlans}
+                      rate={el.shape === "cloud" ? boxRate(shown, el.id, live) : null}
+                    />
+                  );
+                case "text":
+                  return <TextView key={el.id} el={el} />;
+                case "table":
+                  return <TableView key={el.id} el={el} />;
+                case "legend":
+                  return <LegendView key={el.id} el={el} doc={doc} />;
+                default:
+                  return null;
+              }
+            })}
+            {selectedRects.map((r) => (
               <div
-                key={h}
-                data-handle={h}
-                className="absolute rounded-sm border border-in bg-panel"
-                style={{
-                  ...handleAt(selectedRects[0] as Rect, h),
-                  width: handleSize,
-                  height: handleSize,
-                  cursor: cursor[h],
-                }}
+                key={r.id}
+                data-selected={r.id}
+                className="pointer-events-none absolute rounded-[10px] border-2 border-in"
+                style={{ left: r.x - 1, top: r.y - 1, width: r.w + 2, height: r.h + 2 }}
               />
             ))}
-          {selCable && selPoints && (
-            <>
-              {(["from", "to"] as const).map((end) => {
-                const p = end === "from" ? selPoints[0] : selPoints[selPoints.length - 1];
-                const size = 12 / view.z;
-                return (
-                  p && (
+            {single &&
+              selectedRects.length === 1 &&
+              handlesFor(shown, single).map((h) => (
+                <div
+                  key={h}
+                  data-handle={h}
+                  className="absolute rounded-sm border border-in bg-panel"
+                  style={{
+                    ...handleAt(selectedRects[0] as Rect, h),
+                    width: handleSize,
+                    height: handleSize,
+                    cursor: cursor[h],
+                  }}
+                />
+              ))}
+            {selCable && selPoints && (
+              <>
+                {(["from", "to"] as const).map((end) => {
+                  const p = end === "from" ? selPoints[0] : selPoints[selPoints.length - 1];
+                  const size = 12 / view.z;
+                  return (
+                    p && (
+                      <div
+                        key={end}
+                        data-end-handle={end}
+                        title="Drag to connect this end elsewhere"
+                        className="absolute cursor-grab rounded-full border-2 border-in bg-panel"
+                        style={{
+                          left: p[0] - size / 2,
+                          top: p[1] - size / 2,
+                          width: size,
+                          height: size,
+                        }}
+                      />
+                    )
+                  );
+                })}
+                {selCable.bends.map((b, i) => {
+                  const size = 10 / view.z;
+                  return (
                     <div
-                      key={end}
-                      data-end-handle={end}
-                      title="Drag to connect this end elsewhere"
-                      className="absolute cursor-grab rounded-full border-2 border-in bg-panel"
+                      key={i}
+                      data-bend={i}
+                      title="Drag to move; double-click to remove"
+                      className="absolute cursor-move rounded-sm border-2 border-in bg-panel"
                       style={{
-                        left: p[0] - size / 2,
-                        top: p[1] - size / 2,
+                        left: b[0] - size / 2,
+                        top: b[1] - size / 2,
                         width: size,
                         height: size,
                       }}
+                      onDoubleClick={() =>
+                        commit(
+                          patchElement(doc, selCable.id, { bends: removeBend(selCable.bends, i) }),
+                        )
+                      }
                     />
-                  )
-                );
-              })}
-              {selCable.bends.map((b, i) => {
-                const size = 10 / view.z;
-                return (
-                  <div
-                    key={i}
-                    data-bend={i}
-                    title="Drag to move; double-click to remove"
-                    className="absolute cursor-move rounded-sm border-2 border-in bg-panel"
-                    style={{
-                      left: b[0] - size / 2,
-                      top: b[1] - size / 2,
-                      width: size,
-                      height: size,
-                    }}
-                    onDoubleClick={() =>
-                      commit(
-                        patchElement(doc, selCable.id, { bends: removeBend(selCable.bends, i) }),
-                      )
-                    }
-                  />
-                );
-              })}
-            </>
-          )}
-          {draft && (
-            <>
-              <svg
-                className="pointer-events-none absolute top-0 left-0 overflow-visible"
-                width="1"
-                height="1"
-                aria-hidden="true"
-              >
-                <line
-                  x1={draft.from[0]}
-                  y1={draft.from[1]}
-                  x2={draft.x}
-                  y2={draft.y}
-                  stroke="var(--vt-in)"
-                  strokeWidth={2 / view.z}
-                  strokeDasharray={`${6 / view.z} ${4 / view.z}`}
-                />
-              </svg>
-              {draft.over &&
-                (() => {
-                  const r = routes.endRect(draft.over);
-                  return (
-                    r && (
-                      <>
-                        <div
-                          data-drop-target={draft.over.element}
-                          className="pointer-events-none absolute rounded-[10px] border-2 border-in"
-                          style={{ left: r.x - 3, top: r.y - 3, width: r.w + 6, height: r.h + 6 }}
-                        />
-                        <div
-                          className="pointer-events-none absolute rounded bg-in px-1.5 text-white"
-                          style={{ left: r.x, top: r.y - 22 / view.z, fontSize: 12 / view.z }}
-                        >
-                          Drop to connect
-                        </div>
-                      </>
-                    )
                   );
-                })()}
-            </>
-          )}
-          {guides.v.map((x) => (
-            <div
-              key={`v${x}`}
-              data-guide="v"
-              className="pointer-events-none absolute top-0 bg-out"
-              style={{ left: x, width: 1 / view.z, height: MAX_COORD }}
-            />
-          ))}
-          {guides.h.map((y) => (
-            <div
-              key={`h${y}`}
-              data-guide="h"
-              className="pointer-events-none absolute left-0 bg-out"
-              style={{ top: y, height: 1 / view.z, width: MAX_COORD }}
-            />
-          ))}
+                })}
+              </>
+            )}
+            {draft && (
+              <>
+                <svg
+                  className="pointer-events-none absolute top-0 left-0 overflow-visible"
+                  width="1"
+                  height="1"
+                  aria-hidden="true"
+                >
+                  <line
+                    x1={draft.from[0]}
+                    y1={draft.from[1]}
+                    x2={draft.x}
+                    y2={draft.y}
+                    stroke="var(--vt-in)"
+                    strokeWidth={2 / view.z}
+                    strokeDasharray={`${6 / view.z} ${4 / view.z}`}
+                  />
+                </svg>
+                {draft.over &&
+                  (() => {
+                    const r = routes.endRect(draft.over);
+                    return (
+                      r && (
+                        <>
+                          <div
+                            data-drop-target={draft.over.element}
+                            className="pointer-events-none absolute rounded-[10px] border-2 border-in"
+                            style={{ left: r.x - 3, top: r.y - 3, width: r.w + 6, height: r.h + 6 }}
+                          />
+                          <div
+                            className="pointer-events-none absolute rounded bg-in px-1.5 text-white"
+                            style={{ left: r.x, top: r.y - 22 / view.z, fontSize: 12 / view.z }}
+                          >
+                            Drop to connect
+                          </div>
+                        </>
+                      )
+                    );
+                  })()}
+              </>
+            )}
+            {guides.v.map((x) => (
+              <div
+                key={`v${x}`}
+                data-guide="v"
+                className="pointer-events-none absolute top-0 bg-out"
+                style={{ left: x, width: 1 / view.z, height: MAX_COORD }}
+              />
+            ))}
+            {guides.h.map((y) => (
+              <div
+                key={`h${y}`}
+                data-guide="h"
+                className="pointer-events-none absolute left-0 bg-out"
+                style={{ top: y, height: 1 / view.z, width: MAX_COORD }}
+              />
+            ))}
+          </MeasureProvider>
         </div>
         {doc.elements.length === 0 && (
           <p className="pointer-events-none absolute inset-x-0 top-1/3 text-center text-sm text-muted">

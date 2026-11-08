@@ -2,17 +2,8 @@
 // device names, so it is only ever rendered as React text (never as HTML, never as a link).
 
 import { useUnits } from "../../app/units";
-import type {
-  MapBox,
-  MapCable,
-  MapDocument,
-  MapFrame,
-  MapLegend,
-  MapTable,
-  MapText,
-  MapVlan,
-} from "../../api";
-import { colorVar, deviceColor, isDeviceColor, tint } from "../../app/deviceColors";
+import type { MapCable, MapDocument, MapFrame, MapLegend, MapTable, MapText } from "../../api";
+import { deviceColor, tint } from "../../app/deviceColors";
 import { useProxmoxGuests } from "../../cards/proxmox-guests/useProxmoxGuests";
 import { cableLive, endElements } from "./cableLive";
 import { cableRoutes } from "./cableRoutes";
@@ -21,14 +12,10 @@ import { bounds, cableWidth, labelPoint, pathData, speedLabel, tagPoint } from "
 import { guestTiles } from "./guests";
 import { legendEntries, STYLE_NAME } from "./legend";
 import type { GuestTile } from "./guests";
-import { PortStrip } from "./PortStrip";
-import { boxStrip } from "./strip";
-import { MapIcon } from "./MapIcon";
-import { instanceAddress } from "./mapLive";
+import { BoxView } from "./BoxView";
+import { paint, selectable } from "./boxFacts";
+import { StatusWord } from "./boxParts";
 import type { MapLive } from "./mapLive";
-
-const paint = (name: string | null | undefined): string | undefined =>
-  isDeviceColor(name) ? colorVar(name) : undefined;
 
 const place = (e: { x: number; y: number; w: number; h: number }) => ({
   left: e.x,
@@ -37,146 +24,7 @@ const place = (e: { x: number; y: number; w: number; h: number }) => ({
   height: e.h,
 });
 
-export function StatusWord({ state }: { state: string | null }) {
-  if (state === "up") {
-    return <b className="text-[12px] font-bold text-ok-text">UP</b>;
-  }
-  if (state === "down") {
-    return <b className="text-[12px] font-bold text-crit-text">DOWN</b>;
-  }
-  return null;
-}
-
-/** A linked box or frame opens the details drawer: a button for mouse, touch and keyboard. */
-function selectable(
-  id: string,
-  linked: boolean,
-  onSelect: ((id: string) => void) | undefined,
-  label: string,
-) {
-  if (!linked || !onSelect) return {};
-  return {
-    role: "button",
-    tabIndex: 0,
-    "aria-label": `Details of ${label}`,
-    onClick: () => onSelect(id),
-    onKeyDown: (e: { key: string; preventDefault: () => void }) => {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        onSelect(id);
-      }
-    },
-  };
-}
-
-export function BoxView({
-  box,
-  live,
-  vlans,
-  onSelect,
-}: {
-  box: MapBox;
-  live: MapLive;
-  vlans: ReadonlyMap<string, MapVlan>;
-  onSelect?: (id: string) => void;
-}) {
-  const instance = live.instance(box.instance_id);
-  const state = live.state(box.instance_id);
-  const linked = box.instance_id !== null;
-  const removed = state === "removed";
-  const down = state === "down";
-  const color = paint(box.color) ?? deviceColor(instance);
-  const dashed = !linked || removed;
-  const name = box.label || instance?.name || "";
-  const strip = boxStrip(box, live.ports(box.instance_id));
-
-  const border = down ? "border-crit" : "border-line";
-  let body;
-  if (removed) {
-    body = (
-      <>
-        <b className="block truncate text-muted">{box.label || "Device"}</b>
-        <span className="block text-[12px] text-muted">Device removed</span>
-      </>
-    );
-  } else if (instance) {
-    const figures = box.show.figures ? live.figures(box, instance) : [];
-    body = (
-      <>
-        <span className="block truncate">
-          <b className={`text-[15px] ${down ? "text-crit-text" : ""}`}>{name}</b>
-          {box.show.status && (
-            <>
-              {" "}
-              <StatusWord state={state} />
-            </>
-          )}
-        </span>
-        {box.show.details && (
-          <span className="block truncate font-mono text-[11px] text-muted">
-            {[live.typeName(instance.type_id), instanceAddress(instance)]
-              .filter(Boolean)
-              .join(" · ")}
-          </span>
-        )}
-        {figures.length > 0 && (
-          <span className="block truncate text-[12px] text-muted">
-            {figures.map(({ def, text }, i) => (
-              <span key={def.id}>
-                {i > 0 && " · "}
-                {def.label}{" "}
-                <b
-                  className={down ? "text-crit-text" : "text-ink"}
-                  style={{ color: down ? undefined : color }}
-                >
-                  {text}
-                </b>
-              </span>
-            ))}
-          </span>
-        )}
-      </>
-    );
-  } else {
-    // Unlinked, or the instance list has not loaded yet.
-    body = (
-      <>
-        <b className="block truncate text-[15px]">{box.label}</b>
-        <span className="block truncate text-[12px] text-muted">
-          {linked ? "" : box.subtitle || "Not monitored"}
-        </span>
-      </>
-    );
-  }
-
-  return (
-    <div
-      data-element={box.id}
-      data-kind="box"
-      data-down={down ? "true" : undefined}
-      className={`absolute box-border flex items-start gap-2.5 overflow-hidden rounded-[10px] border bg-panel px-3 py-2.5 text-ink ${border} ${dashed ? "border-dashed" : ""} ${instance && onSelect ? "cursor-pointer focus-visible:ring-2 focus-visible:ring-in focus-visible:outline-none" : ""}`}
-      style={place(box)}
-      {...selectable(box.id, instance !== undefined && !removed, onSelect, name)}
-    >
-      {color && instance && !removed && (
-        <span
-          aria-hidden="true"
-          className="absolute inset-x-0 top-0 h-[3px]"
-          style={{ background: down ? "var(--vt-crit)" : color }}
-        />
-      )}
-      <span
-        aria-hidden="true"
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-chip text-muted"
-        style={color && instance && !removed ? { background: tint(color), color } : undefined}
-      >
-        <MapIcon icon={box.icon} />
-      </span>
-      <span className="min-w-0 flex-1">{body}</span>
-      {strip && <PortStrip layout={strip.layout} origin={strip.origin} vlans={vlans} />}
-    </div>
-  );
-}
+export { BoxView, StatusWord };
 
 export function FrameView({
   frame,
