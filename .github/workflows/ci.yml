@@ -89,7 +89,7 @@ jobs:
           fetch-depth: 0
       - name: Install gitleaks
         run: |
-          curl -sSfL -o gitleaks.tar.gz \
+          curl -sSfL --retry 6 --retry-delay 10 --retry-all-errors -o gitleaks.tar.gz \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           tar -xzf gitleaks.tar.gz gitleaks
       - name: Scan full history
