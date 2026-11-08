@@ -6,8 +6,8 @@ Create Date: 2026-11-08 12:00:00.000000
 
 Maintainer-approved 2026-11-08 (M11.1). Data migration over ``network_maps.document``: a
 box's old ``ports`` object ``{source, layout, ports: [{id, label, kind, vlans}]}`` becomes
-``panel``: consecutive ports of the same kind form one group (two rows when the old layout
-was ``panel``), every port keeps its ``id`` (cables still point at it), the label becomes
+``panel``: ports of the same kind form one group (kinds in first-seen order; two rows when
+the old layout was ``panel``), every port keeps its ``id`` (cables still point at it), the label becomes
 the caption, VLANs are kept. A null ``ports`` is dropped. Documents without ``ports`` are
 untouched, so running it twice changes nothing. Self-contained: it does not import app code.
 
@@ -37,19 +37,18 @@ def _to_panel(old: dict[str, Any]) -> dict[str, Any]:
     ports: list[dict[str, Any]] = []
     for port in old.get("ports") or []:
         kind = "sfp" if port.get("kind") == "sfp" else "rj45"
-        if not groups or groups[-1]["kind"] != kind:
-            groups.append(
-                {
-                    "id": f"g{len(groups) + 1}",
-                    "kind": kind,
-                    "count": 0,
-                    "rows": rows,
-                    "odd_top": False,
-                    "first": 1,
-                    "prefix": "",
-                }
-            )
-        group = groups[-1]
+        group = next((g for g in groups if g["kind"] == kind), None)
+        if group is None:  # one group per kind, so an alternating strip stays within 8 groups
+            group = {
+                "id": f"g{len(groups) + 1}",
+                "kind": kind,
+                "count": 0,
+                "rows": rows,
+                "odd_top": False,
+                "first": 1,
+                "prefix": "",
+            }
+            groups.append(group)
         group["count"] += 1
         ports.append(
             {

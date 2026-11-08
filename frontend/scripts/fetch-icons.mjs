@@ -99,6 +99,9 @@ async function install() {
   if (!/^[0-9a-f]{40}$/.test(commit) || paths.length === 0) {
     throw new Error("icons.manifest.json is empty; run with --update <sha> first");
   }
+  // Only file names this script itself would list: nothing else is ever joined to outDir.
+  const bad = paths.find((p) => p !== "metadata.json" && !/^svg\/[a-z0-9-]{1,64}\.svg$/.test(p));
+  if (bad !== undefined) throw new Error(`icons.manifest.json lists an unexpected path: ${bad}`);
   await mkdir(outDir, { recursive: true });
   let metadata = null;
   await pool(paths, async (path) => {

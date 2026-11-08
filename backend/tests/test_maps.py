@@ -146,3 +146,14 @@ def test_new_fields_are_stored_and_old_ports_are_read_as_a_panel(admin: TestClie
     stored = r.json()["document"]["elements"]
     assert stored[0]["shape"] == "nas" and stored[0]["panel"]["groups"][0]["kind"] == "sfp_plus"
     assert "ports" not in stored[1] and stored[1]["panel"]["ports"][0]["id"] == "p1"
+
+
+def test_alternating_legacy_strip_merges_groups_by_kind(admin: TestClient) -> None:
+    created = admin.post(f"{API}/maps", json={"name": "Home"}).json()
+    ports = [{"id": f"p{i}", "kind": "sfp" if i % 2 else "rj45"} for i in range(20)]
+    legacy = box("a", ports={"source": "manual", "ports": ports})
+    r = admin.put(f"{API}/maps/{created['id']}", json={"document": doc(legacy), "revision": 1})
+    assert r.status_code == 200, r.text
+    panel = r.json()["document"]["elements"][0]["panel"]
+    assert [(g["kind"], g["count"]) for g in panel["groups"]] == [("rj45", 10), ("sfp", 10)]
+    assert [p["id"] for p in panel["ports"]] == [f"p{i}" for i in range(20)]

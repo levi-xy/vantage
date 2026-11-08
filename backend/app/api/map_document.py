@@ -92,19 +92,18 @@ def legacy_ports_to_panel(old: dict[str, Any]) -> dict[str, Any]:
     device = old.get("source") == "device"
     for port in old.get("ports") or []:
         kind = "sfp" if port.get("kind") == "sfp" else "rj45"
-        if not groups or groups[-1]["kind"] != kind:
-            groups.append(
-                {
-                    "id": f"g{len(groups) + 1}",
-                    "kind": kind,
-                    "count": 0,
-                    "rows": rows,
-                    "odd_top": False,
-                    "first": 1,
-                    "prefix": "",
-                }
-            )
-        group = groups[-1]
+        group = next((g for g in groups if g["kind"] == kind), None)
+        if group is None:  # one group per kind, so an alternating strip stays within 8 groups
+            group = {
+                "id": f"g{len(groups) + 1}",
+                "kind": kind,
+                "count": 0,
+                "rows": rows,
+                "odd_top": False,
+                "first": 1,
+                "prefix": "",
+            }
+            groups.append(group)
         group["count"] += 1
         ports.append(
             {
