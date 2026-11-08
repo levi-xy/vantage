@@ -152,6 +152,19 @@ const TABS: readonly Tab[] = [
       </Icon>
     ),
   },
+  {
+    to: "/map",
+    label: "Map",
+    end: false,
+    icon: (
+      <Icon>
+        <circle cx="6" cy="6" r="2.5" />
+        <circle cx="18" cy="8" r="2.5" />
+        <circle cx="12" cy="18" r="2.5" />
+        <path d="M8 7l8 1M7.5 8l3 8M16.5 10l-3 6" />
+      </Icon>
+    ),
+  },
 ];
 
 interface MenuItem {
@@ -218,7 +231,7 @@ function BottomTabs({
   return (
     <nav
       aria-label="Tabs"
-      className="fixed inset-x-0 bottom-0 z-30 grid h-16 grid-cols-4 border-t border-line bg-panel md:hidden"
+      className="fixed inset-x-0 bottom-0 z-30 grid h-16 grid-cols-5 border-t border-line bg-panel md:hidden"
     >
       {TABS.map((tab) => (
         <NavLink

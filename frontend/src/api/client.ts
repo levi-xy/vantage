@@ -37,6 +37,7 @@ import type {
   UserCreate,
   UserInfo,
 } from "./types";
+import type { NetworkMap, NetworkMapSummary } from "./mapTypes";
 
 export const API_BASE = "/api/v1";
 export const CSRF_HEADER = "X-CSRF-Token";
@@ -353,6 +354,20 @@ export class ApiClient {
   /** Any user. The last dashboard can't be deleted (409). */
   deleteDashboard(id: number): Promise<void> {
     return this.request("DELETE", `/dashboards/${encodeURIComponent(String(id))}`);
+  }
+
+  /** Every network map in tab order (any user). */
+  maps(): Promise<NetworkMapSummary[]> {
+    return this.request("GET", "/maps");
+  }
+
+  map(id: number): Promise<NetworkMap> {
+    return this.request("GET", `/maps/${encodeURIComponent(String(id))}`);
+  }
+
+  /** Admin only: a blank map, appended last. At most 50 (409). */
+  createMap(body: { name: string }): Promise<NetworkMap> {
+    return this.request("POST", "/maps", body);
   }
 
   /** Admin only. */
