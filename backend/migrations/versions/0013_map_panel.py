@@ -7,9 +7,10 @@ Create Date: 2026-11-08 12:00:00.000000
 Maintainer-approved 2026-11-08 (M11.1). Data migration over ``network_maps.document``: a
 box's old ``ports`` object ``{source, layout, ports: [{id, label, kind, vlans}]}`` becomes
 ``panel``: ports of the same kind form one group (kinds in first-seen order; two rows when
-the old layout was ``panel``), every port keeps its ``id`` (cables still point at it), the label becomes
-the caption, VLANs are kept. A null ``ports`` is dropped. Documents without ``ports`` are
-untouched, so running it twice changes nothing. Self-contained: it does not import app code.
+the old layout was ``panel``), every port keeps its ``id`` (cables still point at it), the
+label becomes the caption, VLANs are kept. A null ``ports`` is dropped. Documents without
+``ports`` are untouched, so running it twice changes nothing. Self-contained: it does not
+import app code.
 
 Downgrade turns panels back into ``ports`` (groups' kind, rows and captions only; the new
 fields are dropped).
