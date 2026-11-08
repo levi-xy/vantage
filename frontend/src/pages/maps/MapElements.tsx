@@ -4,7 +4,9 @@
 import { useUnits } from "../../app/units";
 import type { MapCable, MapDocument, MapLegend, MapNetworks, MapTable, MapText } from "../../api";
 import { cableLive, endElements } from "./cableLive";
+import { useMemo, useState } from "react";
 import { cableRoutes } from "./cableRoutes";
+import type { RouteCache } from "./cableRoutes";
 import type { CableLive } from "./cableLive";
 import { bounds, cableWidth, labelPoint, pathData, speedLabel, tagPoint } from "./geometry";
 import { legendEntries, STYLE_NAME } from "./legend";
@@ -288,7 +290,8 @@ export function CablesLayer({
   const owners = endElements(doc);
   const b = bounds(doc);
   const cables = doc.elements.filter((e): e is MapCable => e.kind === "cable");
-  const routes = cableRoutes(doc, live);
+  const [cache] = useState<RouteCache>(() => new Map());
+  const routes = useMemo(() => cableRoutes(doc, live, cache), [doc, live, cache]);
   return (
     <svg
       className="pointer-events-none absolute top-0 left-0 overflow-visible"

@@ -22,6 +22,18 @@ export function inflate(r: Rect, tabbed: boolean): Rect {
 export const overlap = (a: Rect, b: Rect): boolean =>
   a.x + a.w > b.x && a.x < b.x + b.w && a.y + a.h > b.y && a.y < b.y + b.h;
 
+/** The area a route between two ends can occupy (their joint span), with room for the air. */
+export function nearby(a: Rect, b: Rect): Rect {
+  const x = Math.min(a.x, b.x) - AIR - MARGIN;
+  const y = Math.min(a.y, b.y) - AIR - TAB;
+  return {
+    x,
+    y,
+    w: Math.max(a.x + a.w, b.x + b.w) + AIR + MARGIN - x,
+    h: Math.max(a.y + a.h, b.y + b.h) + AIR + MARGIN - y,
+  };
+}
+
 /** Whether an axis-aligned segment passes through the inside of a rectangle. */
 function hits(r: Rect, [ax, ay]: Point, [bx, by]: Point): boolean {
   return (
@@ -62,6 +74,8 @@ function vertical(
   const lo = down ? sy + MARGIN : ey + MARGIN;
   const hi = down ? ey - turnMargin : sy - turnMargin;
   if (hi < lo) return null;
+  // Long cables look at fewer lanes: about 60 across the span, never finer than STEP.
+  const step = Math.max(STEP, Math.ceil((hi - lo) / 60 / 2) * 2);
   const startsA = columns(a, aWhole);
   const endsB = columns(b, bWhole);
   // Prefer a route with some air around it; squeeze through a narrow gap only when it must.
@@ -75,7 +89,7 @@ function vertical(
     const clearV = (x: number, y0: number, y1: number) =>
       room.every((o) => !hits(o, [x, y0], [x, y1]));
     const out: { y: number; sx: number; ex: number }[] = [];
-    for (let y = Math.ceil(lo); y <= hi; y += STEP) {
+    for (let y = Math.ceil(lo); y <= hi; y += step) {
       const sx = startsA.find((x) => clearV(x, sy, y));
       if (sx === undefined) continue;
       const ex = endsB.find(
@@ -95,7 +109,7 @@ function vertical(
   for (const l of lanes) {
     const run = runs[runs.length - 1];
     const last = run?.[run.length - 1];
-    if (run && last && l.y - last.y <= STEP && l.sx === last.sx && l.ex === last.ex) run.push(l);
+    if (run && last && l.y - last.y <= step && l.sx === last.sx && l.ex === last.ex) run.push(l);
     else runs.push([l]);
   }
   const target = (lo + hi) / 2;
@@ -142,7 +156,11 @@ export function avoidingRoute(
   // The two ends' own surroundings don't count, nor does anything the ends sit inside.
   const ca: Point = [a.x + a.w / 2, a.y + a.h / 2];
   const cb: Point = [b.x + b.w / 2, b.y + b.h / 2];
-  const avoid = opts.avoid.filter((o) => !contains(o, ca[0], ca[1]) && !contains(o, cb[0], cb[1]));
+  // Only what lies within the span of the two ends can be in the way.
+  const zone = nearby(a, b);
+  const avoid = opts.avoid.filter(
+    (o) => overlap(o, zone) && !contains(o, ca[0], ca[1]) && !contains(o, cb[0], cb[1]),
+  );
   if (!horizontal) return vertical(a, b, aWhole, bWhole, forward, avoid, TAB + MARGIN);
   const pts = vertical(flip(a), flip(b), aWhole, bWhole, forward, avoid.map(flip), MARGIN);
   return pts && pts.map(([x, y]): Point => [y, x]);

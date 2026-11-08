@@ -12,6 +12,8 @@ import { legendEntries } from "./maps/legend";
 import { makeElement } from "./maps/editor/model";
 import { inflate } from "./maps/cableAvoid";
 import { cablePath } from "./maps/geometry";
+import { cableRoutes } from "./maps/cableRoutes";
+import type { RouteCache } from "./maps/cableRoutes";
 
 vi.mock("../cards/proxmox-guests/useProxmoxGuests", () => ({
   useProxmoxGuests: () => ({
@@ -323,5 +325,81 @@ describe("groups on a device-source panel without own ports", () => {
     const next = edit.mock.calls[0]?.[0] as MapDocument;
     const cable = next.elements.find((e) => e.kind === "cable");
     expect(cable?.kind === "cable" && cable.from.port).toBe("eth0");
+  });
+});
+
+describe("routing a big map", () => {
+  it("routes 200 cables among 300 boxes quickly", () => {
+    const elements: MapDocument["elements"] = [];
+    for (let i = 0; i < 300; i++) {
+      elements.push(
+        makeElement(
+          { version: 1, vlans: [], elements },
+          "box",
+          (i % 20) * 300,
+          Math.floor(i / 20) * 200,
+        ),
+      );
+    }
+    for (let i = 0; i < 200; i++) {
+      elements.push({
+        id: `k${i}`,
+        kind: "cable",
+        from: { element: `b${i + 1}`, port: null },
+        to: { element: `b${((i * 7 + 40) % 300) + 1}`, port: null },
+        speed: null,
+        style: "solid",
+        role: null,
+        vlan: null,
+        color: null,
+        label: "link",
+        show_rate: false,
+        bends: [],
+      });
+    }
+    const big: MapDocument = { version: 1, vlans: [], elements };
+    const all = () => elements.filter((e) => e.kind === "cable");
+    const cache: RouteCache = new Map();
+    const first = cableRoutes(big, live(), cache);
+    for (const e of all()) if (e.kind === "cable") first.points(e);
+    // A second pass with nothing changed reuses every route.
+    const t1 = performance.now();
+    const again = cableRoutes(big, live(), cache);
+    for (const e of all()) if (e.kind === "cable") again.points(e);
+    expect(performance.now() - t1).toBeLessThan(200);
+  });
+
+  it("routes the first time in reasonable time", () => {
+    const elements: MapDocument["elements"] = [];
+    for (let i = 0; i < 300; i++) {
+      elements.push(
+        makeElement(
+          { version: 1, vlans: [], elements },
+          "box",
+          (i % 20) * 300,
+          Math.floor(i / 20) * 200,
+        ),
+      );
+    }
+    for (let i = 0; i < 200; i++) {
+      elements.push({
+        id: `k${i}`,
+        kind: "cable",
+        from: { element: `b${i + 1}`, port: null },
+        to: { element: `b${((i * 7 + 40) % 300) + 1}`, port: null },
+        speed: null,
+        style: "solid",
+        role: null,
+        vlan: null,
+        color: null,
+        label: "",
+        show_rate: false,
+        bends: [],
+      });
+    }
+    const t0 = performance.now();
+    const routes = cableRoutes({ version: 1, vlans: [], elements }, live());
+    for (const e of elements) if (e.kind === "cable") routes.points(e);
+    expect(performance.now() - t0).toBeLessThan(300);
   });
 });

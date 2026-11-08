@@ -3,12 +3,13 @@
 // press on an element selects and drags it, press on a handle resizes, press on the
 // background pans (or places the tool's new element).
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, RefObject } from "react";
 import type { MapCable, MapCableEnd, MapDocument } from "../../../api";
 import { buttonSecondary } from "../../../components/styles";
 import { boxRate, portCables } from "../cableLive";
 import { cableRoutes } from "../cableRoutes";
+import type { RouteCache } from "../cableRoutes";
 import { MeasureProvider, useMeasuredDoc } from "../measure";
 import { contentSized } from "../boxFacts";
 import {
@@ -151,7 +152,8 @@ export function EditCanvas({
   const vlans = new Map(doc.vlans.map((v) => [v.id, v] as const));
   const single = selected.length === 1 ? selected[0] : undefined;
   const [draft, setDraft] = useState<Draft | null>(null);
-  const routes = cableRoutes(shown, live);
+  const [routeCache] = useState<RouteCache>(() => new Map());
+  const routes = useMemo(() => cableRoutes(shown, live, routeCache), [shown, live, routeCache]);
   const cables = portCables(shown, live);
   const selCable = doc.elements.find((e): e is MapCable => e.kind === "cable" && e.id === single);
   const selPoints = selCable ? routes.points(selCable) : undefined;

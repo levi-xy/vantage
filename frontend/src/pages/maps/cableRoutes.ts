@@ -4,7 +4,7 @@
 
 import type { MapCable, MapCableEnd, MapDocument } from "../../api";
 import { endElements } from "./cableLive";
-import { inflate, placeLabel } from "./cableAvoid";
+import { inflate, nearby, overlap, placeLabel } from "./cableAvoid";
 import { cablePath, endRects, labelPoint } from "./geometry";
 import type { Point, Rect } from "./geometry";
 import type { MapLive } from "./mapLive";
@@ -19,7 +19,10 @@ export interface Routes {
   labelAt: (cable: MapCable) => Point | undefined;
 }
 
-export function cableRoutes(doc: MapDocument, live: MapLive): Routes {
+/** Routes worked out before, by cable: a cable whose ends and surroundings didn't change keeps its route. */
+export type RouteCache = Map<string, { key: string; points: Point[] | undefined }>;
+
+export function cableRoutes(doc: MapDocument, live: MapLive, cache?: RouteCache): Routes {
   const rects = endRects(doc);
   const panels = new Map<string, ReturnType<typeof boxPanel>>();
   for (const el of endElements(doc).values()) {
@@ -42,22 +45,30 @@ export function cableRoutes(doc: MapDocument, live: MapLive): Routes {
           },
         ],
   );
-  const cache = new Map<string, Point[] | undefined>();
+  const computed = new Map<string, Point[] | undefined>();
   const points = (cable: MapCable) => {
-    if (cache.has(cable.id)) return cache.get(cable.id);
+    if (computed.has(cable.id)) return computed.get(cable.id);
     const [boxA, boxB] = [rects.get(cable.from.element), rects.get(cable.to.element)];
     const [a, z] = [endRect(cable.from), endRect(cable.to)];
     let out: Point[] | undefined;
     if (boxA && boxB && a && z) {
+      const zone = nearby(a, z);
       const avoid =
         cable.bends.length > 0
           ? []
           : things
               .filter((t) => t.id !== cable.from.element && t.id !== cable.to.element)
-              .map((t) => t.rect);
-      out = cablePath(a, z, cable.bends, boxA, boxB, avoid);
+              .map((t) => t.rect)
+              .filter((r) => overlap(r, zone));
+      const key = JSON.stringify([a, z, boxA, boxB, cable.bends, avoid]);
+      const old = cache?.get(cable.id);
+      if (old && old.key === key) out = old.points;
+      else {
+        out = cablePath(a, z, cable.bends, boxA, boxB, avoid);
+        cache?.set(cable.id, { key, points: out });
+      }
     }
-    cache.set(cable.id, out);
+    computed.set(cable.id, out);
     return out;
   };
   let labels: Map<string, Point> | undefined;
