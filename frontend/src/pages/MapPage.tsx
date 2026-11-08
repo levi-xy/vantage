@@ -8,6 +8,7 @@ import { errorText } from "./devices/queries";
 import { MapCanvas } from "./maps/MapCanvas";
 import { useMapLive } from "./maps/mapLive";
 import { MapPhoneList } from "./maps/MapPhoneList";
+import { useMediaQuery, WIDE_QUERY } from "./maps/useMediaQuery";
 
 const MAPS_KEY = ["maps", "list"] as const;
 const mapKey = (id: number) => ["maps", id] as const;
@@ -99,7 +100,9 @@ function MapView({ id }: { id: number }) {
     queryFn: () => api.map(id),
     refetchInterval: MAP_REFRESH_MS,
   });
-  const live = useMapLive(map.data?.document);
+  // Draw on a wide screen, list on a phone: only one of the two is rendered (and queried).
+  const wide = useMediaQuery(WIDE_QUERY);
+  const live = useMapLive(map.data?.document, wide);
   if (map.isPending) return <p className="text-sm text-muted">Loading the map…</p>;
   if (map.isError) {
     return (
@@ -112,16 +115,7 @@ function MapView({ id }: { id: number }) {
   if (doc.elements.length === 0) {
     return <EmptyState>This map is empty. Drawing comes with the map editor.</EmptyState>;
   }
-  return (
-    <>
-      <div className="hidden md:block">
-        <MapCanvas doc={doc} live={live} />
-      </div>
-      <div className="md:hidden">
-        <MapPhoneList doc={doc} live={live} />
-      </div>
-    </>
-  );
+  return wide ? <MapCanvas doc={doc} live={live} /> : <MapPhoneList doc={doc} live={live} />;
 }
 
 /** `/map` shows the first map, `/map/<id>` any map. */

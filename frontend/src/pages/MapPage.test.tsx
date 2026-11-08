@@ -2,8 +2,22 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { Instance, MapDocument, NetworkMap } from "../api";
 import { exampleMe, fakeBackend, json, mockSystemTheme, renderApp } from "../test-utils";
 
+/** A wide (desktop) or narrow (phone) screen; the map draws on one and lists on the other. */
+function stubScreen(wide: boolean) {
+  vi.stubGlobal(
+    "matchMedia",
+    vi.fn((media: string) => ({
+      matches: media.includes("min-width") ? wide : false,
+      media,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    })),
+  );
+}
+
 beforeEach(() => {
   mockSystemTheme(false);
+  stubScreen(true);
 });
 
 const XSS = "<img src=x onerror=alert(1)>";
@@ -108,18 +122,38 @@ function mapOut(doc: MapDocument): NetworkMap {
 }
 
 function backend(
-  opts: { role?: "admin" | "viewer"; maps?: unknown[]; coreState?: "up" | "down" } = {},
+  opts: {
+    role?: "admin" | "viewer";
+    maps?: unknown[];
+    coreState?: "up" | "down";
+    doc?: MapDocument;
+  } = {},
 ) {
   return fakeBackend({
     session: exampleMe(opts.role ?? "viewer"),
     routes: {
       "GET /maps": () => json(opts.maps ?? [{ id: 1, name: "Home", position: 0 }]),
-      "GET /maps/1": () => json(mapOut(DOC)),
+      "GET /maps/1": () => json(mapOut(opts.doc ?? DOC)),
       "GET /instances": () =>
         json([
           instance("i-edge", "edge-fw", "ping_check", "up"),
           instance("i-core", "core-sw", "ping_check", opts.coreState ?? "down"),
+          instance("i-sw", "access-sw", "snmp_device", "up"),
         ]),
+      // The switch reports port1 without link and port2 with link.
+      "POST /query": (body) => {
+        const q = (body as { query: string }).query;
+        const port = (name: string, value: string, index: string) => ({
+          labels: { vantage_instance_id: "i-sw", if_name: name, if_index: index },
+          values: [[1, value]] as [number, string][],
+        });
+        const series = q.includes("if_oper_status")
+          ? [port("port1", "2", "1"), port("port2", "1", "2")]
+          : q.includes("if_admin_status")
+            ? [port("port1", "1", "1"), port("port2", "1", "2")]
+            : [];
+        return json({ result_type: "vector", series, warnings: [] });
+      },
       "POST /maps": () => json({ ...mapOut({ version: 1, vlans: [], elements: [] }), id: 2 }, 201),
       "GET /maps/2": () => json({ ...mapOut({ version: 1, vlans: [], elements: [] }), id: 2 }),
     },
@@ -162,6 +196,7 @@ describe("map page", () => {
   });
 
   it("lists problems first on a phone", async () => {
+    stubScreen(false);
     renderApp("/map", backend());
     const list = await screen.findByRole("region", { name: "Map devices" });
     await waitFor(() => expect(within(list).getByText("DOWN")).toBeInTheDocument());
@@ -172,6 +207,8 @@ describe("map page", () => {
     expect(order).toEqual(["core", "edge", "desk", "gone"]);
     expect(within(list).getByText(/via edge-fw · 1G/)).toBeInTheDocument();
     fireEvent.click(within(list).getByText("Open ports"));
+    // A phone gets the list only, not the drawing.
+    expect(screen.queryByRole("region", { name: "Network map" })).not.toBeInTheDocument();
   });
 
   it("shows the empty state, with New map for admins only", async () => {
@@ -186,5 +223,90 @@ describe("map page", () => {
     expect(await screen.findByText("No maps yet")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "New map" })).not.toBeInTheDocument();
     expect(screen.getByText(/An admin can draw/)).toBeInTheDocument();
+  });
+});
+
+const cable = (id: string, from: [string, string | null], to: [string, string | null]) => ({
+  id,
+  kind: "cable" as const,
+  from: { element: from[0], port: from[1] },
+  to: { element: to[0], port: to[1] },
+  speed: "1G" as const,
+  style: "solid" as const,
+  role: null,
+  vlan: null,
+  color: null,
+  label: "",
+  show_rate: false,
+  bends: [],
+});
+
+// "sw" shows the switch's own ports; "man" has two typed ports with VLANs.
+const PORT_DOC = {
+  version: 1,
+  vlans: [
+    { id: "10", name: "Users", color: "teal" },
+    { id: "20", name: "Voice", color: "pink" },
+  ],
+  elements: [
+    box("sw", 40, 40, {
+      instance_id: "i-sw",
+      h: 120,
+      ports: { source: "device", layout: "panel", ports: [] },
+    }),
+    box("edge", 40, 400, { instance_id: "i-edge" }),
+    box("man", 400, 40, {
+      label: "Patch panel",
+      h: 120,
+      ports: {
+        source: "manual",
+        layout: "row",
+        ports: [
+          { id: "a", label: "", kind: "rj45", vlans: { untagged: "10", tagged: ["20"] } },
+          { id: "b", label: "", kind: "sfp", vlans: { untagged: null, tagged: [] } },
+        ],
+      },
+    }),
+    cable("down", ["sw", "port1"], ["edge", null]),
+    cable("fine", ["sw", "port2"], ["man", "a"]),
+  ],
+} as unknown as MapDocument;
+
+describe("map page, live view", () => {
+  it("draws a typed port strip with jacks, cages and VLAN bars", async () => {
+    renderApp("/map", backend({ doc: PORT_DOC }));
+    const canvas = await screen.findByRole("region", { name: "Network map" });
+    const man = canvas.querySelector('[data-element="man"]') as HTMLElement;
+    expect(man.querySelectorAll("[data-port]")).toHaveLength(2);
+    expect(man.querySelector('[data-port="a"] [data-vlan="10"]')).not.toBeNull(); // untagged
+    expect(man.querySelector('[data-port="a"] [data-vlan="20"]')).not.toBeNull(); // tagged
+    // No port name is drawn unless typed; it is the tooltip.
+    expect(man.querySelector('[data-port="a"]')).toHaveAttribute("title", "a");
+    expect(man.querySelector('[data-port="a"]')?.textContent).toBe("");
+  });
+
+  it("turns the cable of a port without link red, and leaves the others", async () => {
+    renderApp("/map", backend({ doc: PORT_DOC }));
+    const canvas = await screen.findByRole("region", { name: "Network map" });
+    await waitFor(() =>
+      expect(canvas.querySelector('[data-port="port1"]')).toHaveAttribute("data-state", "down"),
+    );
+    expect(canvas.querySelector('[data-port="port2"]')).toHaveAttribute("data-state", "up");
+    expect(canvas.querySelector('[data-cable="down"]')).toHaveAttribute("data-down", "true");
+    expect(canvas.querySelector('[data-cable="fine"]')).not.toHaveAttribute("data-down");
+  });
+
+  it("opens the details drawer on a click, links to the device and closes on Escape", async () => {
+    renderApp("/map", backend());
+    const canvas = await screen.findByRole("region", { name: "Network map" });
+    fireEvent.click(await within(canvas).findByRole("button", { name: "Details of edge-fw" }));
+    const drawer = await within(canvas).findByRole("complementary", { name: "Details of edge-fw" });
+    expect(within(drawer).getByRole("link", { name: "Open device page" })).toHaveAttribute(
+      "href",
+      "/devices/i-edge",
+    );
+    expect(within(drawer).getByText(/core-sw/)).toBeInTheDocument(); // the cable's other end
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(within(canvas).queryByRole("complementary")).not.toBeInTheDocument();
   });
 });
