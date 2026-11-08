@@ -76,6 +76,12 @@ Background tasks, all in the one backend process:
 
 Everything an integration does is read-only toward the device (hard rule 2); the tests of each integration check that only allowed reads are sent.
 
+## Time and NTP
+
+Vantage never sets a clock and sends no NTP traffic. The backend and the other containers use the host's kernel clock, so keep NTP running on the host (chrony or systemd-timesyncd). Settings > Time shows the server's time and warns when it differs from the browser's by more than 5 seconds.
+
+Admins choose one timezone (an IANA name such as `Europe/Berlin`; the default is UTC). Web pages, Telegram messages, backend log lines (`2026-11-07 14:05:03+01:00 INFO ...`) and CLI output all use it. Stored data stays in UTC and Prometheus is untouched. The choice is the `timezone` row in the `settings` table and is included in backups.
+
 ## Releases
 
 A pushed `vX.Y.Z` tag runs `.github/workflows/release.yml`: multi-arch images to `ghcr.io/levi-xy/vantage-backend` and `-frontend` with SBOM and provenance, signed with cosign (keyless), then a draft GitHub release holding the install bundle that `deploy/make_bundle.py` builds (the `deploy/` files with a compose file that pulls those images) and its checksums.

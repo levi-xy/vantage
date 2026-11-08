@@ -23,8 +23,8 @@ describe("routing", () => {
   it.each([
     ["/", "Dashboard"],
     ["/devices", "Devices"],
-    ["/audit", "Audit log"],
-    ["/users", "Users"],
+    ["/settings/audit", "Audit log"],
+    ["/settings/users", "Users"],
     ["/account", "My account"],
     ["/no/such/page", "Page not found"],
   ])("renders %s inside the layout", async (path, heading) => {
@@ -62,7 +62,7 @@ describe("routing", () => {
 });
 
 describe("layout", () => {
-  it("keeps the admin pages in the account menu, which closes after navigating", async () => {
+  it("keeps only My account in the account menu, which closes after navigating", async () => {
     await renderReady("/");
     const button = screen.getByRole("button", { name: "admin (Admin)" });
     expect(button).toHaveAttribute("aria-expanded", "false");
@@ -70,9 +70,11 @@ describe("layout", () => {
 
     const menu = openAccountMenu();
     expect(button).toHaveAttribute("aria-expanded", "true");
-    expect(within(menu).getByRole("link", { name: "Users" })).toBeInTheDocument();
-    fireEvent.click(within(menu).getByRole("link", { name: "Audit log" }));
-    expect(await screen.findByRole("heading", { level: 1, name: "Audit log" })).toBeInTheDocument();
+    expect(within(menu).queryByRole("link", { name: "Users" })).not.toBeInTheDocument();
+    fireEvent.click(within(menu).getByRole("link", { name: "My account" }));
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "My account" }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Account" })).not.toBeInTheDocument();
 
     openAccountMenu();

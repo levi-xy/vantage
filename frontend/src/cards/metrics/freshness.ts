@@ -3,6 +3,7 @@
 
 import { createContext } from "react";
 import type { Instance, QueryResult } from "../../api";
+import { formatClockOrDay } from "../../app/time";
 
 /**
  * The API doesn't tell the frontend an instance's poll interval, so polled instances use the
@@ -61,14 +62,7 @@ export function cardFreshness(...queries: { freshness: Freshness }[]): Freshness
 
 /** "14:05", with the date when it isn't today. */
 export function formatAsOf(unixSeconds: number, now: Date = new Date()): string {
-  const at = new Date(unixSeconds * 1000);
-  const time = at.toLocaleTimeString(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  });
-  if (at.toDateString() === now.toDateString()) return time;
-  return `${at.toLocaleDateString(undefined, { day: "numeric", month: "short" })} ${time}`;
+  return formatClockOrDay(unixSeconds * 1000, now.getTime());
 }
 
 /** True inside a card body that shows a past value: threshold colours turn neutral. */

@@ -6,7 +6,7 @@ import sys
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TextIO
 
 from fastapi import FastAPI, Request, Response, status
@@ -28,6 +28,7 @@ from app.collectors.hub import EventHub
 from app.collectors.scheduler import PollScheduler
 from app.collectors.seed import seed_last_success
 from app.collectors.store import MetricsStore, make_registry
+from app.core import timezone
 from app.core.auth import LoginRateLimiter, Passwords
 from app.core.config import Settings, get_settings, host_allowed
 from app.core.crypto import SecretBox, load_master_key
@@ -81,6 +82,11 @@ def create_app(
         # polling, live rates and delivery don't start (the key monitor starts them once
         # it matches).
         heartbeat: Heartbeat = app.state.heartbeat
+        try:
+            with app.state.session_factory() as db:
+                timezone.load(db)
+        except Exception as exc:  # stays UTC until an admin saves a zone
+            log.warning("timezone load failed (%s)", type(exc).__name__)
         try:
             await heartbeat.beat()
         except Exception as exc:  # retried on every beat
@@ -347,8 +353,15 @@ def configure_logging(level: str) -> None:
     logger.setLevel(level)
     if not any(isinstance(h, _StderrHandler) for h in logger.handlers):
         handler = _StderrHandler()
-        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+        handler.setFormatter(_ZoneFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
         logger.addHandler(handler)
+
+
+class _ZoneFormatter(logging.Formatter):
+    """Timestamps in the configured timezone, with offset (maintainer-approved 2026-11-07)."""
+
+    def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
+        return timezone.stamp(datetime.fromtimestamp(record.created, UTC))
 
 
 class _StderrHandler(logging.StreamHandler):  # type: ignore[type-arg]

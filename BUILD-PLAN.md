@@ -264,3 +264,11 @@ Ideas taken from a published homelab diagram (MIT, design reference only, no cod
 | M5 | Live with the dashboard for a few days; list what's missing or noisy |
 | M7 | Trigger a test alert to Telegram; unplug something harmless and confirm the alert |
 | M8 | Re-run your firewall lockdown checks (blocked internet, allowed ports only) with the release build |
+
+## M10: Timezone (maintainer-approved 2026-11-07)
+
+One admin-chosen timezone shown everywhere; the clock itself stays the host's (no NTP, no clock setting in Vantage).
+
+| ID | Task | Acceptance criteria |
+|---|---|---|
+| M10.1 | Timezone setting | `settings` row `timezone`; `GET`/`PUT /settings/time` per Contract 3; backend log lines, Telegram system-alert times and CLI listings use the zone; frontend formats every time through one module in the configured zone; new admin Settings area (`/settings/time`, `/users`, `/audit`, `/channels`; old `/users` and `/audit` redirect) with a Time section (searchable zone picker, ticking server time, host-clock note, clock-skew warning). Docs: "Time and NTP". Tests: roles, 422, audit row, log and Telegram format, frontend formatter, settings page |

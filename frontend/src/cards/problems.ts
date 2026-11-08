@@ -2,6 +2,7 @@
 
 import type { AlertEvent, Instance } from "../api";
 import { NO_DATA_REASONS } from "../pages/alerts/noDataReasons";
+import { formatClockOrDay } from "../app/time";
 
 type State = Instance["status"]["state"];
 
@@ -33,16 +34,9 @@ function parseTime(iso: string | null | undefined): number | null {
   return Number.isNaN(t) ? null : t;
 }
 
-const pad = (n: number) => String(n).padStart(2, "0");
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-/** "14:03" in local time; "1 Nov 14:03" when it's not today. */
+/** "14:03" in the configured timezone; "1 Nov 14:03" when it's not today. */
 export function clockTime(ms: number, nowMs: number): string {
-  const d = new Date(ms);
-  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  return d.toDateString() === new Date(nowMs).toDateString()
-    ? time
-    : `${d.getDate()} ${MONTHS[d.getMonth()]} ${time}`;
+  return formatClockOrDay(ms, nowMs);
 }
 
 /** "12 s", "12 min", "2 h 5 min", "3 d". */

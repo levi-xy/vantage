@@ -56,7 +56,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.auth import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, USERNAME_PATTERN
 from app.cli import backup_restore as backups
-from app.core import audit, maintenance, users
+from app.core import audit, maintenance, timezone, users
 from app.core.auth import Passwords
 from app.core.config import ConfigError, Settings, load_settings
 from app.core.crypto import MasterKeyError, SecretBox, decode_key, load_master_key, read_key_file
@@ -365,14 +365,17 @@ def list_users(ctx: Context) -> None:
                 User.id
             )
         ).all()
+        zone = timezone.zone_of(db)
     header = ("ID", "USERNAME", "ROLE", "CREATED_AT", "LAST_LOGIN_AT")
     table = [header] + [
         (
             str(row.id),
             row.username,
             Role(row.role).value,
-            row.created_at.isoformat(timespec="seconds"),
-            row.last_login_at.isoformat(timespec="seconds") if row.last_login_at else "never",
+            timezone.local(row.created_at, zone).isoformat(timespec="seconds"),
+            timezone.local(row.last_login_at, zone).isoformat(timespec="seconds")
+            if row.last_login_at
+            else "never",
         )
         for row in rows
     ]

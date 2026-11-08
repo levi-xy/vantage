@@ -39,10 +39,10 @@ function fill(name: string, value: string, scope: HTMLElement) {
   fireEvent.change(within(scope).getByLabelText(name), { target: { value } });
 }
 
-describe("alerts page: channels", () => {
+describe("channels page", () => {
   it("lists channels with set/not set and creates one with a password token field", async () => {
     const backend = backendWith({ "POST /channels": () => json(OPS, 201) });
-    renderApp("/alerts", backend);
+    renderApp("/settings/channels", backend);
     const list = await screen.findByRole("list", { name: "Channels" });
     expect(within(list).getByText(/bot token set/)).toBeInTheDocument();
 
@@ -66,7 +66,7 @@ describe("alerts page: channels", () => {
 
   it("edits without re-sending the token when the field is left empty", async () => {
     const backend = backendWith({ "PATCH /channels/1": () => json(OPS) });
-    renderApp("/alerts", backend);
+    renderApp("/settings/channels", backend);
     fireEvent.click(await screen.findByRole("button", { name: "Edit ops" }));
     const form = screen.getByRole("form", { name: "Edit ops" });
     const tokenInput = within(form).getByLabelText<HTMLInputElement>("Bot token");
@@ -88,7 +88,7 @@ describe("alerts page: channels", () => {
       "POST /channels/1/test": () =>
         json({ ok: false, message: "Telegram API answered HTTP 401: Unauthorized" }),
     });
-    renderApp("/alerts", backend);
+    renderApp("/settings/channels", backend);
     fireEvent.click(await screen.findByRole("button", { name: "Send a test message to ops" }));
     expect(await screen.findByText(/Test failed: Telegram API answered HTTP 401/)).toBeVisible();
   });

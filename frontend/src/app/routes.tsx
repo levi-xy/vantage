@@ -1,3 +1,4 @@
+import { Navigate } from "react-router";
 import type { RouteObject } from "react-router";
 import { AccountPage } from "../pages/AccountPage";
 import { AlertsPage } from "../pages/AlertsPage";
@@ -9,6 +10,9 @@ import { AddDevicePage, EditDevicePage } from "../pages/devices/DeviceFormPages"
 import { LoginPage } from "../pages/LoginPage";
 import { MapPage } from "../pages/MapPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
+import { ChannelsPage } from "../pages/ChannelsPage";
+import { SettingsShell } from "../pages/settings/SettingsShell";
+import { TimePage } from "../pages/TimePage";
 import { SetupPage } from "../pages/SetupPage";
 import { UsersPage } from "../pages/UsersPage";
 import { RequireRole, SessionGate } from "./gates";
@@ -66,21 +70,22 @@ export const routes: RouteObject[] = [
         element: <AlertsPage />,
       },
       {
-        path: "audit",
+        path: "settings",
         element: (
           <RequireRole role="admin">
-            <AuditPage />
+            <SettingsShell />
           </RequireRole>
         ),
+        children: [
+          { index: true, element: <Navigate to="/settings/time" replace /> },
+          { path: "time", element: <TimePage /> },
+          { path: "users", element: <UsersPage /> },
+          { path: "audit", element: <AuditPage /> },
+          { path: "channels", element: <ChannelsPage /> },
+        ],
       },
-      {
-        path: "users",
-        element: (
-          <RequireRole role="admin">
-            <UsersPage />
-          </RequireRole>
-        ),
-      },
+      { path: "users", element: <Navigate to="/settings/users" replace /> },
+      { path: "audit", element: <Navigate to="/settings/audit" replace /> },
       { path: "account", element: <AccountPage /> },
       { path: "*", element: <NotFoundPage /> },
     ],

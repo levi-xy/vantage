@@ -1,4 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router";
@@ -10,6 +10,8 @@ import { useDeliveryStatus } from "./deliveryStatus";
 import { HealthStatus } from "./HealthStatus";
 import { useLastDataUpdate, useLiveUpdates } from "./live";
 import { useApiClient, useSession, useUser } from "./session";
+import { setTimeZone } from "./time";
+import { TIME_KEY } from "./timeSettings";
 
 /** Shown to every logged-in user while a system alert fires (Prometheus unreachable, ...)
  * or alert messages wait 15+ minutes or recently failed. One poll for both. */
@@ -167,6 +169,24 @@ const TABS: readonly Tab[] = [
   },
 ];
 
+/** Admins also get Settings (time, users, audit log, notification channels). */
+const SETTINGS_TAB: Tab = {
+  to: "/settings",
+  label: "Settings",
+  end: false,
+  icon: (
+    <Icon>
+      <path d="M4 7h10M18 7h2M4 17h2M10 17h10" />
+      <circle cx="16" cy="7" r="2" />
+      <circle cx="8" cy="17" r="2" />
+    </Icon>
+  ),
+};
+
+function useTabs(): readonly Tab[] {
+  return useUser().role === "admin" ? [...TABS, SETTINGS_TAB] : TABS;
+}
+
 interface MenuItem {
   to: string;
   label: string;
@@ -174,11 +194,7 @@ interface MenuItem {
   role?: Role;
 }
 
-const MENU: readonly MenuItem[] = [
-  { to: "/users", label: "Users", role: "admin" },
-  { to: "/audit", label: "Audit log", role: "admin" },
-  { to: "/account", label: "My account" },
-];
+const MENU: readonly MenuItem[] = [{ to: "/account", label: "My account" }];
 
 /** The Dashboard tab also stands for every other dashboard (`/d/<id>`). */
 function useOnOtherDashboard(): boolean {
@@ -188,9 +204,10 @@ function useOnOtherDashboard(): boolean {
 /** Desktop: tabs in the top bar, the current one underlined. */
 function TopNav({ alerts }: { alerts: number }) {
   const otherDashboard = useOnOtherDashboard();
+  const tabs = useTabs();
   return (
     <nav aria-label="Main" className="hidden gap-1 self-stretch md:flex">
-      {TABS.map((tab) => (
+      {tabs.map((tab) => (
         <NavLink
           key={tab.to}
           to={tab.to}
@@ -224,6 +241,7 @@ function BottomTabs({
   moreRef: RefObject<HTMLButtonElement>;
 }) {
   const otherDashboard = useOnOtherDashboard();
+  const tabs = useTabs();
   const tabClass = (active: boolean) =>
     `relative flex flex-col items-center justify-center gap-[3px] text-[11px] ${focusRing} ${
       active ? "text-in" : "text-muted"
@@ -231,9 +249,11 @@ function BottomTabs({
   return (
     <nav
       aria-label="Tabs"
-      className="fixed inset-x-0 bottom-0 z-30 grid h-16 grid-cols-5 border-t border-line bg-panel md:hidden"
+      className={`fixed inset-x-0 bottom-0 z-30 grid h-16 border-t border-line bg-panel md:hidden ${
+        tabs.length > TABS.length ? "grid-cols-6" : "grid-cols-5"
+      }`}
     >
-      {TABS.map((tab) => (
+      {tabs.map((tab) => (
         <NavLink
           key={tab.to}
           to={tab.to}
@@ -340,6 +360,15 @@ export function Layout() {
   const checkSession = useCallback(() => {
     client.me().catch(() => undefined);
   }, [client]);
+  // Every time on screen is in the admin-chosen timezone. Set before the page renders; the
+  // page remounts when the zone changes, so nothing keeps showing the old one.
+  const timeSettings = useQuery({
+    queryKey: TIME_KEY,
+    queryFn: () => client.timeSettings(),
+    staleTime: 60_000,
+  });
+  const timeZone = timeSettings.data?.timezone;
+  setTimeZone(timeZone);
   const live = useLiveUpdates(queryClient, checkSession);
   const lastUpdate = useLastDataUpdate(queryClient);
   const alerts = useOpenAlertCount();
@@ -427,7 +456,7 @@ export function Layout() {
         id="main"
         className="mx-auto w-full max-w-[1440px] min-w-0 px-4 pt-4 pb-24 md:px-8 md:pt-7 md:pb-12"
       >
-        <Outlet />
+        <Outlet key={timeZone ?? "UTC"} />
       </main>
 
       <BottomTabs alerts={alerts} menuOpen={menuOpen} onMore={toggleMenu} moreRef={moreRef} />

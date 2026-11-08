@@ -6,6 +6,7 @@ import { useState } from "react";
 import type { PointerEvent } from "react";
 import { areaPath, dayTicks, hourTicks, linePath, nearestPoint, niceTicks, stepOf } from "./chart";
 import type { Box, Point } from "./chart";
+import { formatClock, formatDayMonth } from "../../app/time";
 
 const VIEW_W = 1000;
 const VIEW_H = 100;
@@ -109,14 +110,8 @@ export function AreaChart({ series, format, tickScale = 1, window, label }: Area
   const span = end - start;
   const byDay = span > 3 * 86400;
   const labels = byDay ? dayTicks(start, end) : hourTicks(start, end, span > 8 * 3600 ? 3 : 1);
-  const clock = (t: number) =>
-    new Date(t * 1000).toLocaleTimeString(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-    });
-  const day = (t: number) =>
-    new Date(t * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const clock = (t: number) => formatClock(t * 1000);
+  const day = (t: number) => formatDayMonth(t * 1000);
   const tick = byDay ? day : clock;
   const move = (e: PointerEvent<SVGSVGElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
