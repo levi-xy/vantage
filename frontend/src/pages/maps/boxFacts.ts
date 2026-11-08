@@ -2,7 +2,7 @@
 // of its sections that have something to show. Pure given the live lookups.
 
 import { colorVar, isDeviceColor } from "../../app/deviceColors";
-import type { Instance, MapBox, MapItem, MapSection } from "../../api";
+import type { Instance, MapBox, MapElement, MapFrame, MapItem, MapSection } from "../../api";
 import { instanceAddress } from "./mapLive";
 import type { MapLive } from "./mapLive";
 
@@ -81,3 +81,17 @@ export function selectable(
     },
   };
 }
+
+/** Boxes, the networks and legend panels, and filled frames: only their width is stored. */
+export const contentSized = (e: MapElement): boolean =>
+  e.kind === "box" ||
+  e.kind === "networks" ||
+  e.kind === "legend" ||
+  (e.kind === "frame" && frameSized(e));
+
+/**
+ * A frame with something to show is as tall as its content; an empty one keeps its stored
+ * height so it can still be drawn around other things.
+ */
+export const frameSized = (f: Pick<MapFrame, "instance_id" | "guests" | "side">): boolean =>
+  f.instance_id !== null || f.guests.manual.length > 0 || f.side !== null;

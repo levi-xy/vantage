@@ -14,11 +14,13 @@ import type {
 import { buttonSecondary, input } from "../../../components/styles";
 import { FIGURES } from "../figures";
 import type { MapLive } from "../mapLive";
-import { BoxContentSettings } from "./BoxContentSettings";
+import { BoxContentSettings, Row, SectionsEditor } from "./BoxContentSettings";
 import { CableSettings } from "./CableSettings";
 import { Check, ColorPicker, Field, labelText, section } from "./fields";
+import { FrameGroups } from "./FrameGroups";
 import { ManualTiles, ProxmoxGuestList } from "./GuestsSettings";
 import { IconPicker } from "./IconPicker";
+import { contentSized } from "../boxFacts";
 import { clamp, MAX_SIZE, MIN_SIZE } from "./model";
 import { LookAndPorts } from "./LookAndPorts";
 
@@ -288,6 +290,48 @@ function FrameSettings({
         />
       )}
       <ManualTiles frame={frame} set={(guests, key) => patch({ guests }, key)} />
+      <FrameGroups
+        frame={frame}
+        proxmoxId={frame.guests.auto && frame.instance_id && isProxmox ? frame.instance_id : null}
+        set={(groups, key) => patch({ groups }, key)}
+      />
+      <Check
+        label="CPU and memory bars on the guests"
+        checked={frame.bars}
+        onChange={(v) => patch({ bars: v })}
+      />
+      <Check
+        label="Side column (identity and sections)"
+        checked={frame.side !== null}
+        onChange={(on) =>
+          patch({ side: on ? { model: "", address: "", version: "", sections: [] } : null })
+        }
+      />
+      {frame.side && (
+        <>
+          {(["model", "address", "version"] as const).map((k) => (
+            <Row
+              key={k}
+              label={k[0]?.toUpperCase() + k.slice(1)}
+              value={frame.side?.[k] ?? ""}
+              max={64}
+              onChange={(v) =>
+                patch(
+                  { side: { ...(frame.side as NonNullable<MapFrame["side"]>), [k]: v } },
+                  `${frame.id}:side:${k}`,
+                )
+              }
+            />
+          ))}
+          <SectionsEditor
+            sections={frame.side.sections}
+            instance={instances.find((i) => i.id === frame.instance_id)}
+            set={(sections) =>
+              patch({ side: { ...(frame.side as NonNullable<MapFrame["side"]>), sections } })
+            }
+          />
+        </>
+      )}
       <div>
         <span className={labelText}>Colour</span>
         <ColorPicker
@@ -328,7 +372,8 @@ function TextSettings({ el, patch }: { el: MapText; patch: Patch }) {
 }
 
 function TableSettings({ el, patch }: { el: MapTable; patch: Patch }) {
-  const setColumns = (columns: string[], rows = el.rows) => patch({ columns, rows });
+  const setColumns = (columns: string[], rows = el.rows, badges = el.badges) =>
+    patch({ columns, rows, badges });
   const cell = (cells: string[], c: number) => cells[c] ?? "";
   const moveRow = (r: number, by: number) => {
     const rows = [...el.rows];
@@ -349,7 +394,7 @@ function TableSettings({ el, patch }: { el: MapTable; patch: Patch }) {
       <fieldset className="flex flex-col gap-1.5">
         <legend className={labelText}>Columns</legend>
         {el.columns.map((name, c) => (
-          <div key={c} className="flex gap-1.5">
+          <div key={c} className="flex flex-wrap items-center gap-1.5">
             <input
               className={input}
               aria-label={`Column ${c + 1}`}
@@ -365,11 +410,19 @@ function TableSettings({ el, patch }: { el: MapTable; patch: Patch }) {
                 setColumns(
                   el.columns.filter((_, i) => i !== c),
                   el.rows.map((r) => ({ ...r, cells: r.cells.filter((_, i) => i !== c) })),
+                  el.badges.filter((b) => b !== c).map((b) => (b > c ? b - 1 : b)),
                 )
               }
             >
               ×
             </button>
+            <Check
+              label={`Column ${c + 1} as badges`}
+              checked={el.badges.includes(c)}
+              onChange={(on) =>
+                patch({ badges: on ? [...el.badges, c] : el.badges.filter((b) => b !== c) })
+              }
+            />
           </div>
         ))}
         <button
@@ -525,13 +578,18 @@ export function Inspector({
           The legend lists the cable types this map uses. Nothing to set.
         </p>
       )}
+      {el.kind === "networks" && (
+        <p className="text-xs text-muted">
+          Lists the VLANs of this map (name, note and subnet are set under VLANs). Nothing to set.
+        </p>
+      )}
       {el.kind === "cable" && (
         <CableSettings cable={el} doc={doc} instances={instances} live={live} patch={set} />
       )}
       {el.kind !== "cable" && (
         <div className={`${section} grid grid-cols-2 gap-3`}>
           <NumberField label="W" value={el.w} onCommit={(w) => set({ w })} />
-          {el.kind === "box" ? (
+          {contentSized(el) ? (
             <p className="self-end text-xs text-muted">Height follows the content.</p>
           ) : (
             <NumberField label="H" value={el.h} onCommit={(h) => set({ h })} />

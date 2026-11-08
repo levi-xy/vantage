@@ -17,11 +17,12 @@ import {
   newGroup,
   portNumber,
   regeneratePorts,
+  resolvePanel,
 } from "../panel";
 import type { MapLive } from "../mapLive";
 import { hasPorts } from "../devicePorts";
 import { Check, CommitText, labelText } from "./fields";
-import { setBoxPorts, vlanSummary } from "./mapOps";
+import { portsLost, setBoxPorts, vlanSummary } from "./mapOps";
 import { patchElement } from "./model";
 import { PortVlans } from "./PortVlans";
 import { applyPreset, PRESETS } from "./presets";
@@ -180,8 +181,12 @@ export function LookAndPorts({
   const shape = box.shape ?? "card";
   const device = live.ports(box.instance_id) ?? [];
   const setPanel = (next: MapPanel | null) => edit(setBoxPorts(doc, box.id, next));
-  const setGroups = (groups: MapPanel["groups"]) =>
-    setPanel(regeneratePorts({ ...(panel ?? emptyPanel()), source: "manual", groups }));
+  const setGroups = (groups: MapPanel["groups"]) => {
+    // A panel read from the device with no ports of its own shows the device's interfaces:
+    // copy those in first, so the cables on them keep their ports when the groups change.
+    const base = panel ? { ...panel, ...resolvePanel(panel, device) } : emptyPanel();
+    setPanel(regeneratePorts({ ...base, source: "manual", groups }));
+  };
   const setPorts = (ports: MapPort[]) => panel && setPanel({ ...panel, ports });
   const setShape = (next: NonNullable<MapBox["shape"]>) =>
     patch({
@@ -190,8 +195,14 @@ export function LookAndPorts({
     });
 
   const startFrom = (choice: string) => {
+    let next: MapDocument;
     if (choice === "blank") {
-      setPanel({ ...(panel ?? emptyPanel()), source: "manual", groups: [], ports: [] });
+      next = setBoxPorts(doc, box.id, {
+        ...(panel ?? emptyPanel()),
+        source: "manual",
+        groups: [],
+        ports: [],
+      });
     } else if (choice === "device") {
       const cabled = new Set(
         doc.elements.flatMap((e) =>
@@ -203,13 +214,27 @@ export function LookAndPorts({
         ),
       );
       const read = fromDevice(device, panel?.ports ?? [], cabled);
-      setPanel({ ...(panel ?? emptyPanel("device")), source: "device", ...read });
+      next = setBoxPorts(doc, box.id, {
+        ...(panel ?? emptyPanel("device")),
+        source: "device",
+        ...read,
+      });
     } else {
       const preset = PRESETS.find((p) => p.id === choice);
       if (!preset) return;
-      const { panel: next, ...rest } = applyPreset(box, preset);
-      edit(setBoxPorts(patchElement(doc, box.id, rest), box.id, next ?? null));
+      const { panel: made, ...rest } = applyPreset(box, preset);
+      next = setBoxPorts(patchElement(doc, box.id, rest), box.id, made ?? null);
     }
+    const lost = portsLost(doc, next);
+    if (
+      lost > 0 &&
+      !window.confirm(
+        `${lost} cable${lost === 1 ? " is" : "s are"} attached to ports that this replaces. They keep their box but lose their port. Continue?`,
+      )
+    ) {
+      return;
+    }
+    edit(next);
   };
 
   const groups = panel?.groups ?? [];
@@ -275,7 +300,10 @@ export function LookAndPorts({
         </select>
         <p className="text-xs text-muted">
           A model is only a starting point: it is copied into the map and stays editable. Reading
-          from the device lists its interfaces (MikroTik, SNMP, pfSense, Linux).
+          from the device lists its interfaces (MikroTik, SNMP, pfSense, Linux).{" "}
+          <span data-hint="replaces-ports">
+            Replaces the current ports; cables keep their box but lose their port.
+          </span>
         </p>
         {panel && (
           <>

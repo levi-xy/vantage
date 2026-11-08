@@ -10,7 +10,16 @@ import { buttonSecondary } from "../../../components/styles";
 import { boxRate, portCables } from "../cableLive";
 import { cableRoutes } from "../cableRoutes";
 import { MeasureProvider, useMeasuredDoc } from "../measure";
-import { BoxView, CablesLayer, FrameView, LegendView, TableView, TextView } from "../MapElements";
+import { contentSized } from "../boxFacts";
+import {
+  BoxView,
+  CablesLayer,
+  FrameView,
+  LegendView,
+  NetworksView,
+  TableView,
+  TextView,
+} from "../MapElements";
 import type { MapLive } from "../mapLive";
 import type { useViewport } from "../useViewport";
 import { bendIndexAt, insertBend, moveBend, removeBend } from "./mapOps";
@@ -94,10 +103,10 @@ function endAt(e: { clientX: number; clientY: number; target: EventTarget }): Ma
 }
 
 /** A box is as tall as its content, so only its width can be dragged. */
-const handlesFor = (doc: MapDocument, id: string): readonly Handle[] =>
-  doc.elements.find((e) => e.id === id)?.kind === "box"
-    ? HANDLES.filter((h) => h === "e" || h === "w")
-    : HANDLES;
+const handlesFor = (doc: MapDocument, id: string): readonly Handle[] => {
+  const el = doc.elements.find((e) => e.id === id);
+  return el && contentSized(el) ? HANDLES.filter((h) => h === "e" || h === "w") : HANDLES;
+};
 
 export function EditCanvas({
   doc,
@@ -474,6 +483,8 @@ export function EditCanvas({
                   return <TableView key={el.id} el={el} />;
                 case "legend":
                   return <LegendView key={el.id} el={el} doc={doc} />;
+                case "networks":
+                  return <NetworksView key={el.id} el={el} doc={doc} />;
                 default:
                   return null;
               }

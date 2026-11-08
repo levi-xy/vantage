@@ -29,5 +29,19 @@ export function legendEntries(doc: MapDocument) {
     }
   }
   const vlans = doc.vlans.filter((v) => usedVlans.has(v.id));
-  return { speeds, styles, roles, vlans };
+  // Port VLAN bars and live-figure dots only need explaining where the map uses them.
+  const portVlans = doc.elements.some(
+    (e) =>
+      e.kind === "box" &&
+      (e.panel?.ports ?? []).some((p) => p.vlans.untagged !== null || p.vlans.tagged.length > 0),
+  );
+  const hasFigure = (sections: readonly { items: readonly { figure: string | null }[] }[]) =>
+    sections.some((s) => s.items.some((i) => i.figure));
+  const liveFigure = doc.elements.some(
+    (e) =>
+      (e.kind === "box" && hasFigure(e.sections ?? [])) ||
+      (e.kind === "frame" && hasFigure(e.side?.sections ?? [])),
+  );
+  const networks = doc.elements.some((e) => e.kind === "networks");
+  return { speeds, styles, roles, vlans, portVlans, liveFigure, networks };
 }
