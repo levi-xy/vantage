@@ -245,6 +245,19 @@ describe("port groups and presets", () => {
     expect(edited.ports[0]?.caption).toBe("keep");
   });
 
+  it("has a CRS328-24P-4S+ preset: 24 RJ45 in two rows and 4 SFP+", () => {
+    const preset = PRESETS.find((x) => x.id === "crs328-24p-4s");
+    if (!preset) throw new Error("preset missing");
+    const copied = applyPreset(make({}), preset);
+    const next = copied.panel as MapPanel;
+    expect(next.groups.map((g) => [g.kind, g.count, g.rows])).toEqual([
+      ["rj45", 24, 2],
+      ["sfp_plus", 4, 1],
+    ]);
+    expect(next.ports).toHaveLength(28);
+    expect(copied.model).toBe("CRS328-24P-4S+");
+  });
+
   it("builds groups from a device's interfaces and keeps the ports cables name", () => {
     const device: DevicePort[] = ["ether1", "ether2", "sfp-sfpplus1"].map((id, order) => ({
       id,

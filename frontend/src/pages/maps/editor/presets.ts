@@ -43,6 +43,15 @@ export const PRESETS: readonly Preset[] = [
     groups: [rj45(24, { ...twoRows, prefix: "ether" }), sfpPlus(2, { prefix: "sfp-sfpplus" })],
   },
   {
+    id: "crs328-24p-4s",
+    label: "MikroTik CRS328-24P-4S+",
+    model: "CRS328-24P-4S+",
+    shape: "device",
+    look: "rack",
+    place: "side",
+    groups: [rj45(24, { ...twoRows, prefix: "ether" }), sfpPlus(4, { prefix: "sfp-sfpplus" })],
+  },
+  {
     id: "crs310-8g-2s",
     label: "MikroTik CRS310-8G+2S+",
     model: "CRS310-8G+2S+",
