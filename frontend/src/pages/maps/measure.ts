@@ -43,9 +43,11 @@ export function withHeights(
   return {
     ...doc,
     elements: doc.elements.map((e) => {
-      if (e.kind !== "box") return e;
+      if (e.kind !== "box" && e.kind !== "frame" && e.kind !== "networks" && e.kind !== "legend") {
+        return e;
+      }
       const h = heights.get(e.id);
-      const panelOrigin = origins.get(e.id);
+      const panelOrigin = e.kind === "box" ? origins.get(e.id) : undefined;
       if ((h === undefined || h === e.h) && !panelOrigin) return e;
       return { ...e, h: h ?? e.h, ...(panelOrigin ? { panelOrigin } : {}) };
     }),

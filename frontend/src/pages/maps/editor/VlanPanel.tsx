@@ -62,6 +62,32 @@ export function VlanPanel({
                 }
               />
             </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              <CommitText
+                label={`VLAN ${v.id} subnet`}
+                value={v.subnet ?? ""}
+                maxLength={43}
+                accept={() => true}
+                onCommit={(subnet) =>
+                  edit({
+                    ...doc,
+                    vlans: doc.vlans.map((o) => (o.id === v.id ? { ...o, subnet } : o)),
+                  })
+                }
+              />
+              <CommitText
+                label={`VLAN ${v.id} note`}
+                value={v.note ?? ""}
+                maxLength={64}
+                accept={() => true}
+                onCommit={(note) =>
+                  edit({
+                    ...doc,
+                    vlans: doc.vlans.map((o) => (o.id === v.id ? { ...o, note } : o)),
+                  })
+                }
+              />
+            </div>
             <div className="flex gap-1.5">
               <select
                 className={input}

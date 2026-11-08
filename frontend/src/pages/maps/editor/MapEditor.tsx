@@ -42,6 +42,7 @@ const TOOLS: { id: "select" | "device" | "cable" | NewKind; label: string }[] = 
   { id: "frame", label: "Frame" },
   { id: "text", label: "Text" },
   { id: "table", label: "Table" },
+  { id: "networks", label: "Networks" },
   { id: "legend", label: "Legend" },
   { id: "cable", label: "Cable" },
 ];

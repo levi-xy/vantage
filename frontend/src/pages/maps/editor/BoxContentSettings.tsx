@@ -22,7 +22,7 @@ import {
 
 type Patch = (patch: Record<string, unknown>, key?: string) => void;
 
-function Row({
+export function Row({
   label,
   value,
   max,

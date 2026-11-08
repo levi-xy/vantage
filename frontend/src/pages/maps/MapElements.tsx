@@ -2,20 +2,20 @@
 // device names, so it is only ever rendered as React text (never as HTML, never as a link).
 
 import { useUnits } from "../../app/units";
-import type { MapCable, MapDocument, MapFrame, MapLegend, MapTable, MapText } from "../../api";
-import { deviceColor, tint } from "../../app/deviceColors";
-import { useProxmoxGuests } from "../../cards/proxmox-guests/useProxmoxGuests";
+import type { MapCable, MapDocument, MapLegend, MapNetworks, MapTable, MapText } from "../../api";
 import { cableLive, endElements } from "./cableLive";
+import { useMemo, useState } from "react";
 import { cableRoutes } from "./cableRoutes";
+import type { RouteCache } from "./cableRoutes";
 import type { CableLive } from "./cableLive";
 import { bounds, cableWidth, labelPoint, pathData, speedLabel, tagPoint } from "./geometry";
-import { guestTiles } from "./guests";
 import { legendEntries, STYLE_NAME } from "./legend";
-import type { GuestTile } from "./guests";
 import { BoxView } from "./BoxView";
-import { paint, selectable } from "./boxFacts";
-import { StatusWord } from "./boxParts";
+import { paint } from "./boxFacts";
+import { Clip, StatusWord } from "./boxParts";
+import { FrameView } from "./FrameView";
 import type { MapLive } from "./mapLive";
+import { useReportHeight } from "./measure";
 
 const place = (e: { x: number; y: number; w: number; h: number }) => ({
   left: e.x,
@@ -24,85 +24,7 @@ const place = (e: { x: number; y: number; w: number; h: number }) => ({
   height: e.h,
 });
 
-export { BoxView, StatusWord };
-
-export function FrameView({
-  frame,
-  live,
-  onSelect,
-}: {
-  frame: MapFrame;
-  live: MapLive;
-  onSelect?: (id: string) => void;
-}) {
-  const instance = live.instance(frame.instance_id);
-  const state = live.state(frame.instance_id);
-  const down = state === "down";
-  const color = paint(frame.color) ?? deviceColor(instance);
-  return (
-    <div
-      data-element={frame.id}
-      data-kind="frame"
-      data-down={down ? "true" : undefined}
-      className={`absolute box-border overflow-hidden rounded-xl border px-4 py-3 focus-visible:ring-2 focus-visible:ring-in focus-visible:outline-none ${down ? "border-crit" : "border-line"} ${instance && onSelect ? "cursor-pointer" : ""}`}
-      {...selectable(
-        frame.id,
-        instance !== undefined && state !== "removed",
-        onSelect,
-        frame.label || instance?.name || "",
-      )}
-      style={{
-        ...place(frame),
-        borderTop: `3px solid ${down ? "var(--vt-crit)" : (color ?? "var(--vt-line)")}`,
-        background: color ? tint(color, 4) : undefined,
-      }}
-    >
-      <div className="truncate">
-        <b className={`text-[15px] ${down ? "text-crit-text" : ""}`}>
-          {frame.label || instance?.name || ""}
-        </b>{" "}
-        <StatusWord state={state} />
-      </div>
-      {instance?.type_id === "proxmox" ? (
-        <FrameGuests frame={frame} instanceId={instance.id} />
-      ) : (
-        frame.guests.manual.length > 0 && (
-          <GuestTiles frame={frame} tiles={guestTiles([], frame.guests)} />
-        )
-      )}
-      {state === "removed" && <div className="text-[12px] text-muted">Device removed</div>}
-    </div>
-  );
-}
-
-function FrameGuests({ frame, instanceId }: { frame: MapFrame; instanceId: string }) {
-  const { guests } = useProxmoxGuests(instanceId);
-  return <GuestTiles frame={frame} tiles={guestTiles(guests, frame.guests)} />;
-}
-
-function GuestTiles({ frame, tiles }: { frame: MapFrame; tiles: GuestTile[] }) {
-  return (
-    <div
-      className="mt-2 grid gap-2 overflow-hidden"
-      style={{ gridTemplateColumns: "repeat(auto-fill, 150px)", maxHeight: frame.h - 52 }}
-    >
-      {tiles.map((t) => (
-        <div
-          key={t.key}
-          data-guest={t.key}
-          className={`box-border h-[54px] overflow-hidden rounded-lg border bg-inset px-2.5 py-2 text-[12px] text-muted ${t.running === false ? "border-dashed border-line" : "border-line"}`}
-        >
-          <b className={`text-[14px] ${t.running === false ? "text-muted" : "text-ink"}`}>
-            {t.name}
-          </b>{" "}
-          {t.running === true && <b className="text-ok-text">UP</b>}
-          {t.running === false && <span>Stopped</span>}
-          <span className="block truncate">{t.subtitle}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
+export { BoxView, FrameView, StatusWord };
 
 const fontSize = { s: 12, m: 14, l: 18 } as const;
 
@@ -155,7 +77,16 @@ export function TableView({ el }: { el: MapTable }) {
               </td>
               {row.cells.map((cell, c) => (
                 <td key={c} className="py-1.5 pr-2">
-                  {cell}
+                  {(el.badges ?? []).includes(c) && cell !== "" ? (
+                    <span
+                      data-badge=""
+                      className="inline-block rounded-full border border-in px-2 py-px text-[11px] font-bold text-in"
+                    >
+                      {cell}
+                    </span>
+                  ) : (
+                    cell
+                  )}
                 </td>
               ))}
             </tr>
@@ -166,7 +97,17 @@ export function TableView({ el }: { el: MapTable }) {
   );
 }
 
-function Sample({ width, dash, trunk }: { width: number; dash?: string; trunk?: boolean }) {
+function Sample({
+  width,
+  dash,
+  trunk,
+  color,
+}: {
+  width: number;
+  dash?: string;
+  trunk?: boolean;
+  color?: string;
+}) {
   return (
     <svg width="44" height="10" viewBox="0 0 44 10" aria-hidden="true">
       {trunk && (
@@ -174,7 +115,7 @@ function Sample({ width, dash, trunk }: { width: number; dash?: string; trunk?: 
       )}
       <path
         d="M 2 5 L 42 5"
-        stroke={trunk ? "var(--vt-ink)" : "var(--vt-muted)"}
+        stroke={trunk ? "var(--vt-ink)" : (color ?? "var(--vt-muted)")}
         strokeWidth={width}
         strokeDasharray={dash}
         strokeLinecap="round"
@@ -187,14 +128,16 @@ function Sample({ width, dash, trunk }: { width: number; dash?: string; trunk?: 
 const DASH = { solid: undefined, dotted: "1.5 4", dashed: "7 5" } as const;
 
 export function LegendView({ el, doc }: { el: MapLegend; doc: MapDocument }) {
-  const { speeds, styles, roles, vlans } = legendEntries(doc);
+  const ref = useReportHeight(el.id);
+  const { speeds, styles, roles, vlans, portVlans, liveFigure, networks } = legendEntries(doc);
   const row = "flex items-center gap-3";
   return (
     <div
+      ref={ref}
       data-element={el.id}
       data-kind="legend"
-      className="absolute box-border flex flex-col gap-2 overflow-hidden rounded-[10px] border border-line bg-panel px-4 py-3.5 text-[13px]"
-      style={place(el)}
+      className="absolute box-border flex flex-col gap-2 rounded-[10px] border border-line bg-panel px-4 py-3.5 text-[13px]"
+      style={{ left: el.x, top: el.y, width: el.w }}
     >
       <b className="text-[15px]">Legend</b>
       {speeds.map((s) => (
@@ -211,20 +154,91 @@ export function LegendView({ el, doc }: { el: MapLegend; doc: MapDocument }) {
       ))}
       {roles.map((r) => (
         <span key={r} className={row}>
-          <Sample width={1.5} trunk={r === "trunk"} />
-          {r === "trunk" ? "Trunk" : "Access"}
-        </span>
-      ))}
-      {vlans.map((v) => (
-        <span key={v.id} className={row}>
-          <span
-            aria-hidden="true"
-            className="ml-1 block h-2.5 w-2.5 rounded-[2px]"
-            style={{ background: paint(v.color) }}
+          <Sample
+            width={r === "trunk" ? 1.5 : 2.5}
+            trunk={r === "trunk"}
+            color={r === "access" ? "var(--vt-in)" : undefined}
           />
-          VLAN {v.id} · {v.name}
+          {r === "trunk" ? "Trunk (tagged VLANs)" : "Access port, in its VLAN colour"}
         </span>
       ))}
+      {portVlans && (
+        <span data-legend="port-vlans" className={row}>
+          <svg width="44" height="10" viewBox="0 0 44 10" aria-hidden="true">
+            <rect x="14" y="3" width="5" height="7" rx="1" fill="var(--vt-in)" />
+            <rect x="21" y="6" width="5" height="4" rx="1" fill="var(--vt-out)" />
+            <rect x="28" y="6" width="5" height="4" rx="1" fill="var(--vt-muted)" />
+          </svg>
+          Port VLANs · tall = untagged
+        </span>
+      )}
+      {liveFigure && (
+        <span data-legend="live-figure" className={row}>
+          <span className="flex w-11 justify-center">
+            <span aria-hidden="true" className="block h-1.5 w-1.5 rounded-full bg-ok" />
+          </span>
+          Live figure from Vantage
+        </span>
+      )}
+      {!networks &&
+        vlans.map((v) => (
+          <span key={v.id} className={row}>
+            <span
+              aria-hidden="true"
+              className="ml-1 block h-2.5 w-2.5 rounded-[2px]"
+              style={{ background: paint(v.color) }}
+            />
+            VLAN {v.id} · {v.name}
+          </span>
+        ))}
+    </div>
+  );
+}
+
+/** The map's VLANs as a panel: colour bar, "VLAN id", name, note and subnet. */
+export function NetworksView({ el, doc }: { el: MapNetworks; doc: MapDocument }) {
+  const ref = useReportHeight(el.id);
+  return (
+    <div
+      ref={ref}
+      data-element={el.id}
+      data-kind="networks"
+      className="absolute box-border flex flex-col gap-2 rounded-[10px] border border-line bg-panel px-4 py-3.5"
+      style={{ left: el.x, top: el.y, width: el.w }}
+    >
+      <b className="text-[15px]">Networks</b>
+      {doc.vlans.length === 0 && <span className="text-[12px] text-muted">No VLANs yet.</span>}
+      {doc.vlans.map((v) => {
+        const c = paint(v.color) ?? "var(--vt-muted)";
+        return (
+          <div
+            key={v.id}
+            data-vlan-row={v.id}
+            className="flex min-w-0 items-stretch overflow-hidden rounded-md border border-line bg-inset"
+          >
+            <span aria-hidden="true" className="w-1 shrink-0" style={{ background: c }} />
+            <span className="min-w-0 flex-1 px-2.5 py-1.5 leading-[16px]">
+              <span className="flex min-w-0 items-baseline gap-2">
+                <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+                  <span
+                    className="shrink-0 font-mono text-[10px] font-bold tracking-wide uppercase"
+                    style={{ color: c }}
+                  >
+                    VLAN {v.id}
+                  </span>
+                  <Clip className="text-[13px] font-bold">{v.name}</Clip>
+                </span>
+                {v.subnet && (
+                  <Clip className="max-w-[45%] shrink-0 font-mono text-[11px] text-muted">
+                    {v.subnet}
+                  </Clip>
+                )}
+              </span>
+              {v.note && <Clip className="text-[11px] text-muted">{v.note}</Clip>}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -276,7 +290,8 @@ export function CablesLayer({
   const owners = endElements(doc);
   const b = bounds(doc);
   const cables = doc.elements.filter((e): e is MapCable => e.kind === "cable");
-  const routes = cableRoutes(doc, live);
+  const [cache] = useState<RouteCache>(() => new Map());
+  const routes = useMemo(() => cableRoutes(doc, live, cache), [doc, live, cache]);
   return (
     <svg
       className="pointer-events-none absolute top-0 left-0 overflow-visible"
@@ -293,7 +308,7 @@ export function CablesLayer({
         const w = cableWidth(cable.speed);
         const color = down ? "var(--vt-crit)" : cableColor(cable, doc);
         const dash = down ? "6 5" : DASH[cable.style];
-        const [lx, ly] = labelPoint(pts);
+        const [lx, ly] = routes.labelAt(cable) ?? labelPoint(pts);
         const [tx, ty] = tagPoint(pts);
         const text = {
           fill: down ? "var(--vt-crit-text)" : "var(--vt-muted)",

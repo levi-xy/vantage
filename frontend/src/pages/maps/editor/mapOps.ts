@@ -144,6 +144,23 @@ export function setBoxPorts(doc: MapDocument, boxId: string, ports: MapPanel | n
   };
 }
 
+/** How many cable ends had a port in `before` and have none in `after` (the ports it replaced). */
+export function portsLost(before: MapDocument, after: MapDocument): number {
+  const was = new Map(
+    before.elements.flatMap((e) =>
+      e.kind === "cable" ? [[e.id, [e.from.port, e.to.port]] as const] : [],
+    ),
+  );
+  let n = 0;
+  for (const e of after.elements) {
+    if (e.kind !== "cable") continue;
+    const old = was.get(e.id);
+    if (old?.[0] && e.from.port === null) n++;
+    if (old?.[1] && e.to.port === null) n++;
+  }
+  return n;
+}
+
 // --- VLANs ----------------------------------------------------------------------------
 
 /** How many ports and cables use a VLAN. */

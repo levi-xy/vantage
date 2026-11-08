@@ -54,6 +54,9 @@ export function useMapLive(doc: MapDocument | undefined, drawing = true): MapLiv
     for (const def of boxFigures(named, inst.type_id)) wanted.add(def);
     // The items of a box's sections ask for their figures in the same combined queries.
     if (el.kind === "box") for (const def of sectionFigures(el, inst.type_id)) wanted.add(def);
+    if (el.kind === "frame" && el.side) {
+      for (const def of sectionFigures(el.side, inst.type_id)) wanted.add(def);
+    }
   }
   const values = useFigureValues([...wanted]);
 

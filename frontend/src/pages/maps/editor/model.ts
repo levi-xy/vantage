@@ -64,7 +64,7 @@ export function newId(doc: MapDocument, prefix: string): string {
   }
 }
 
-export type NewKind = "box" | "frame" | "text" | "table" | "legend";
+export type NewKind = "box" | "frame" | "text" | "table" | "legend" | "networks";
 
 const PREFIX: Record<NewKind, string> = {
   box: "b",
@@ -72,6 +72,7 @@ const PREFIX: Record<NewKind, string> = {
   text: "t",
   table: "tb",
   legend: "l",
+  networks: "n",
 };
 
 /** A new element with its default size, its top-left corner at (x, y). */
@@ -138,6 +139,7 @@ export function makeElement(
         badges: [],
       };
     case "legend":
+    case "networks":
       return { ...base, kind };
   }
 }

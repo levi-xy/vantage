@@ -21,12 +21,15 @@ export interface ProxmoxGuest {
 }
 
 /** One Proxmox instance's guests (running first); shared by the guests card and the network map. */
-export function useProxmoxGuests(instanceId: string) {
+export function useProxmoxGuests(instanceId: string, { bars = true }: { bars?: boolean } = {}) {
   const running = useInstantQuery(instanceId, (sel: Sel) => `${P}guest_running${sel()}`);
-  const cpu = useInstantQuery(instanceId, (sel: Sel) => `100 * ${P}guest_cpu_ratio${sel()}`);
+  const cpu = useInstantQuery(instanceId, (sel: Sel) => `100 * ${P}guest_cpu_ratio${sel()}`, {
+    enabled: bars,
+  });
   const mem = useInstantQuery(
     instanceId,
     (sel: Sel) => `100 * ${P}guest_memory_used_bytes${sel()} / ${P}guest_memory_max_bytes${sel()}`,
+    { enabled: bars },
   );
   const info = useInstantQuery(instanceId, (sel: Sel) => `${P}guest_info${sel()}`);
   const omitted = useInstantQuery(instanceId, (sel: Sel) => `${P}guests_omitted${sel()}`);

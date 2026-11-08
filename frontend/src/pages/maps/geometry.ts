@@ -3,6 +3,7 @@
 // horizontal and vertical segments only.
 
 import type { MapCable, MapDocument, MapSpeed } from "../../api";
+import { avoidingRoute } from "./cableAvoid";
 
 export interface Rect {
   x: number;
@@ -80,6 +81,8 @@ export function cablePath(
   /** The boxes the ends sit on, when `a` or `b` is a port: they decide the direction. */
   aBox: Rect = a,
   bBox: Rect = b,
+  /** The other elements on the map (with their room): an automatic route keeps clear of them. */
+  avoid: readonly Rect[] = [],
 ): Point[] {
   if (bends.length > 0) {
     const first = bends[0] as Point;
@@ -93,6 +96,16 @@ export function cablePath(
   const horizontal =
     Math.abs(box - aox) * Math.max(aBox.h, bBox.h) >=
     Math.abs(boy - aoy) * Math.max(aBox.w, bBox.w);
+  if (avoid.length > 0) {
+    const routed = avoidingRoute(a, b, {
+      horizontal,
+      forward: horizontal ? box >= aox : boy >= aoy,
+      aWhole: a === aBox,
+      bWhole: b === bBox,
+      avoid,
+    });
+    if (routed) return routed;
+  }
   if (horizontal) {
     const start: Point = [box >= aox ? a.x + a.w : a.x, acy];
     const end: Point = [box >= aox ? b.x : b.x + b.w, bcy];

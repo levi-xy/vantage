@@ -248,6 +248,12 @@ describe("Proxmox frame guests", () => {
     instance_id: "i1",
     color: null,
     guests: { auto: true, hidden: [], order: [], manual: [] },
+    groups: [],
+    bars: true,
+    side: null,
+    model: "",
+    address: "",
+    version: "",
   };
   const guests = () =>
     json({

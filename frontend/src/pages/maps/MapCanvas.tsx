@@ -5,7 +5,15 @@ import { buttonSecondary } from "../../components/styles";
 import { boxRate, portCables } from "./cableLive";
 import { CableCard, DetailsDrawer } from "./MapDetails";
 import { MeasureProvider, useMeasuredDoc } from "./measure";
-import { BoxView, CablesLayer, FrameView, LegendView, TableView, TextView } from "./MapElements";
+import {
+  BoxView,
+  CablesLayer,
+  FrameView,
+  LegendView,
+  NetworksView,
+  TableView,
+  TextView,
+} from "./MapElements";
 import type { CableHover } from "./MapElements";
 import type { MapLive } from "./mapLive";
 import { useViewport } from "./useViewport";
@@ -124,6 +132,8 @@ export function MapCanvas({ doc: saved, live }: { doc: MapDocument; live: MapLiv
                   return <TableView key={el.id} el={el} />;
                 case "legend":
                   return <LegendView key={el.id} el={el} doc={doc} />;
+                case "networks":
+                  return <NetworksView key={el.id} el={el} doc={doc} />;
                 default:
                   return null;
               }
