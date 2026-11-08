@@ -272,6 +272,27 @@ describe("port groups and presets", () => {
     expect(copied.model).toBe("CRS328-24P-4S+");
   });
 
+  it("reads a switch like its dashboard card: blocks of 8, cages on their own, odd below", () => {
+    // SwOS on a CRS328: port1..port28, the last four are 10G cages.
+    const device: DevicePort[] = Array.from({ length: 28 }, (_, i) => ({
+      id: `port${i + 1}`,
+      name: `Port${i + 1}`,
+      state: "up",
+      speed: i >= 24 ? 10e9 : 1e9,
+      ref: { source: "snmp", instanceId: "sw", iface: `port${i + 1}` },
+      order: i + 1,
+    }));
+    const read = fromDevice(device, [], "all");
+    expect(read.groups.map((g) => [g.kind, g.count, g.first, g.order])).toEqual([
+      ["rj45", 8, 1, "odd_bottom"],
+      ["rj45", 8, 9, "odd_bottom"],
+      ["rj45", 8, 17, "odd_bottom"],
+      ["sfp_plus", 4, 1, "odd_bottom"],
+    ]);
+    expect(read.ports.find((p) => p.id === "port25")).toMatchObject({ group: "g4", n: 1 });
+    expect(read.ports.find((p) => p.id === "port10")).toMatchObject({ group: "g2", n: 2 });
+  });
+
   it("builds groups from a device's interfaces and keeps the ports cables name", () => {
     const device: DevicePort[] = ["ether1", "ether2", "sfp-sfpplus1"].map((id, order) => ({
       id,
