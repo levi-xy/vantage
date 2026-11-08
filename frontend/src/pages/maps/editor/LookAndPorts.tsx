@@ -365,11 +365,16 @@ export function LookAndPorts({
                     />
                   </div>
                   {g.rows === 2 && (
-                    <Check
-                      label={`${name}: odd numbers on top`}
-                      checked={g.odd_top}
-                      onChange={(odd_top) => changeGroup(i, { odd_top })}
-                    />
+                    <select
+                      className={input}
+                      aria-label={`${name} numbering`}
+                      value={g.order}
+                      onChange={(e) => changeGroup(i, { order: e.target.value as typeof g.order })}
+                    >
+                      <option value="rows">Top row first (1 2 3 / 4 5 6)</option>
+                      <option value="odd_top">Odd on top (1 3 5 / 2 4 6)</option>
+                      <option value="odd_bottom">Odd on bottom (2 4 6 / 1 3 5)</option>
+                    </select>
                   )}
                   <div className="flex gap-1.5">
                     <button

@@ -11,12 +11,16 @@ import { bays } from "./maps/smartDisks";
 import type { SmartDisk } from "./maps/smartDisks";
 import { applyPreset, PRESETS } from "./maps/editor/presets";
 
-const group = (id: string, kind: MapPortGroup["kind"], patch: Partial<MapPortGroup> = {}) => ({
+const group = (
+  id: string,
+  kind: MapPortGroup["kind"],
+  patch: Partial<MapPortGroup> = {},
+): MapPortGroup => ({
   id,
   kind,
   count: 1,
   rows: 1 as const,
-  odd_top: false,
+  order: "rows",
   first: 1,
   prefix: "",
   ...patch,
@@ -96,7 +100,7 @@ describe("front panel jacks", () => {
   });
 
   it("draws the top row of an odd_top group upside down, odd numbers on top", () => {
-    const p = panel([group("g1", "rj45", { count: 4, rows: 2, odd_top: true })]);
+    const p = panel([group("g1", "rj45", { count: 4, rows: 2, order: "odd_top" })]);
     const { container } = draw(make({ panel: p }));
     const flipped = (n: number) =>
       container.querySelector(`[data-port="g1-${n}"]`)?.hasAttribute("data-flip");
@@ -107,6 +111,16 @@ describe("front panel jacks", () => {
     expect(one && two && one.y < two.y).toBe(true);
     expect(one && one.numberY > one.jackY).toBe(true);
     expect(two && two.numberY < two.jackY).toBe(true);
+  });
+
+  it("puts odd numbers on the bottom row of an odd_bottom group", () => {
+    const p = panel([group("g1", "rj45", { count: 4, rows: 2, order: "odd_bottom" })]);
+    const jacks = panelGeometry(p, undefined, 500)?.jacks ?? [];
+    const y = (n: number) => jacks.find((j) => j.port.n === n)?.y ?? -1;
+    expect(y(1)).toBeGreaterThan(y(2));
+    expect(y(3)).toBe(y(1));
+    expect(y(4)).toBe(y(2));
+    expect(jacks.find((j) => j.port.n === 2)?.flip).toBe(true);
   });
 
   it("lights the link LED red only on a port with a cable, green when up", () => {

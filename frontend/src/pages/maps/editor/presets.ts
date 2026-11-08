@@ -23,14 +23,14 @@ const rj45 = (count: number, patch: Partial<GroupPreset> = {}): GroupPreset => (
   kind: "rj45",
   count,
   rows: 1,
-  odd_top: false,
+  order: "rows",
   first: 1,
   prefix: "",
   ...patch,
 });
 const sfpPlus = (count: number, patch: Partial<GroupPreset> = {}): GroupPreset =>
   rj45(count, { kind: "sfp_plus", ...patch });
-const twoRows: Partial<GroupPreset> = { rows: 2, odd_top: true };
+const twoRows: Partial<GroupPreset> = { rows: 2, order: "odd_top" };
 
 export const PRESETS: readonly Preset[] = [
   {

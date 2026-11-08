@@ -24,7 +24,8 @@ export interface MapPortGroup {
   kind: MapPortKind;
   count: number;
   rows: 1 | 2;
-  odd_top: boolean;
+  /** Two rows: fill the top row first, or number columns in pairs with odd on top / bottom. */
+  order: "rows" | "odd_top" | "odd_bottom";
   first: number;
   prefix: string;
 }
