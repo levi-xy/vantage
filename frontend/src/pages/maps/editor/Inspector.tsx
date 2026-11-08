@@ -20,7 +20,7 @@ import { Check, ColorPicker, Field, labelText, section } from "./fields";
 import { ManualTiles, ProxmoxGuestList } from "./GuestsSettings";
 import { IconPicker } from "./IconPicker";
 import { clamp, MAX_SIZE, MIN_SIZE } from "./model";
-import { PortsSettings } from "./PortsSettings";
+import { LookAndPorts } from "./LookAndPorts";
 
 const MAX_COLUMNS = 8;
 const MAX_ROWS = 100;
@@ -106,14 +106,54 @@ function BoxSettings({
   patch: Patch;
   edit: (next: MapDocument) => void;
 }) {
+  const [tab, setTab] = useState<"box" | "look">("box");
   const instance = instances.find((i) => i.id === box.instance_id);
   const defs = instance ? (FIGURES[instance.type_id] ?? []) : [];
   const toggleFigure = (id: string, on: boolean) => {
     const next = on ? [...box.figures, id] : box.figures.filter((f) => f !== id);
     patch({ figures: next });
   };
+  const tabs = (
+    <div role="tablist" aria-label="Box settings" className="flex gap-4 border-b border-line">
+      {(
+        [
+          ["box", "Box"],
+          ["look", "Look and ports"],
+        ] as const
+      ).map(([id, text]) => (
+        <button
+          key={id}
+          type="button"
+          role="tab"
+          aria-selected={tab === id}
+          onClick={() => setTab(id)}
+          className={`-mb-px border-b-2 py-1.5 text-sm focus-visible:ring-2 focus-visible:ring-in focus-visible:outline-none ${
+            tab === id ? "border-in font-bold text-ink" : "border-transparent text-muted"
+          }`}
+        >
+          {text}
+        </button>
+      ))}
+    </div>
+  );
+  if (tab === "look") {
+    return (
+      <>
+        {tabs}
+        <LookAndPorts
+          doc={doc}
+          box={box}
+          instance={instance}
+          live={live}
+          patch={patch}
+          edit={edit}
+        />
+      </>
+    );
+  }
   return (
     <>
+      {tabs}
       <Field label="Linked device">
         <DevicePicker
           value={box.instance_id}
@@ -154,7 +194,6 @@ function BoxSettings({
         <IconPicker value={box.icon} onChange={(icon) => patch({ icon })} />
       </div>
       <BoxContentSettings box={box} instance={instance} patch={patch} />
-      <PortsSettings doc={doc} box={box} instance={instance} live={live} edit={edit} />
       {box.instance_id && (
         <fieldset className="flex flex-col gap-1.5">
           <legend className={labelText}>Show on the box</legend>

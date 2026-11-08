@@ -9,37 +9,69 @@ import { useUnits } from "../../app/units";
 import { boxIdentity, paint, selectable } from "./boxFacts";
 import { BoxRoot, FigureLine, IdentityBlock, NameTab, SectionsView } from "./boxParts";
 import type { BoxModel } from "./boxParts";
-import { PortStrip } from "./PortStrip";
-import { boxStrip, STRIP_PAD } from "./strip";
 import type { MapLive } from "./mapLive";
+import { NasBays } from "./NasBays";
+import { PanelView } from "./PanelView";
+import { boxPadX, panelGeometry, panelRoom } from "./panelGeometry";
 
-/** The jacks of a box, in flow along the bottom (the cables anchor at the same place). */
-function StripSlot({ m }: { m: BoxModel }) {
-  const strip = boxStrip(m.box, m.live.ports(m.box.instance_id));
-  if (!strip || m.removed) return null;
-  return (
-    <div
-      data-strip-slot=""
-      className="relative shrink-0"
-      style={{
-        margin: `0 ${STRIP_PAD}px 5px`,
-        width: strip.layout.width,
-        height: strip.layout.height,
-      }}
-    >
-      <PortStrip layout={strip.layout} origin={{ x: 0, y: 0 }} vlans={m.vlans} />
-    </div>
-  );
+/** The panel of a box, ready to draw (null without ports, or for a removed device). */
+function panelOf(m: BoxModel) {
+  if (m.removed || !m.box.panel) return null;
+  return panelGeometry(m.box.panel, m.live.ports(m.box.instance_id), panelRoom(m.box));
 }
 
 /** Identity, figures and sections, in the padding every shape shares. */
-function Content({ m, padX = "px-3.5" }: { m: BoxModel; padX?: string }) {
+function Content({
+  m,
+  padX = "px-3.5",
+  top = "pt-6",
+}: {
+  m: BoxModel;
+  padX?: string;
+  top?: string;
+}) {
   return (
-    <div className={`flex min-w-0 flex-col gap-2.5 overflow-hidden pt-6 pb-3 ${padX}`}>
+    <div className={`flex min-w-0 flex-col gap-2.5 overflow-hidden pb-3 ${top} ${padX}`}>
       <IdentityBlock m={m} />
       <FigureLine m={m} />
       <SectionsView m={m} />
     </div>
+  );
+}
+
+/**
+ * The content of a box with its front panel in the inset strip: below the content, above it,
+ * or in a column beside it. `lead` is a column before the content (a NAS's drive bays).
+ */
+function Body({ m, padX, lead }: { m: BoxModel; padX?: string; lead?: ReactNode }) {
+  const geometry = panelOf(m);
+  const place = m.box.panel?.place ?? "bottom";
+  const pad = boxPadX(m.box);
+  const panel = geometry ? <PanelView m={m} geometry={geometry} /> : null;
+  return (
+    <>
+      {place === "top" && panel && (
+        <div className="flex" style={{ margin: `12px ${pad}px 0` }}>
+          {panel}
+        </div>
+      )}
+      <div className="flex min-w-0 items-start">
+        {lead}
+        <div className="min-w-0 flex-1">
+          <Content m={m} padX={padX} top={place === "top" && panel ? "pt-3" : undefined} />
+        </div>
+        {place === "side" && panel && (
+          <div className="shrink-0" style={{ margin: `24px ${pad}px 12px 0` }}>
+            {panel}
+          </div>
+        )}
+      </div>
+      {place === "bottom" && panel && (
+        <div className="flex" style={{ margin: `0 ${pad}px 12px` }}>
+          {panel}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -58,8 +90,7 @@ function CardBox({ m }: { m: BoxModel }) {
   return (
     <BoxRoot m={m} className="rounded-[10px] border bg-panel" style={topBar(m)}>
       <NameTab m={m} />
-      <Content m={m} />
-      <StripSlot m={m} />
+      <Body m={m} />
     </BoxRoot>
   );
 }
@@ -81,7 +112,6 @@ function RackEar({ side }: { side: "left" | "right" }) {
 
 /** Metal faceplate; `rack` adds ears with screw slots, `desktop` adds two feet, `flat` neither. */
 function DeviceBox({ m, look }: { m: BoxModel; look: "rack" | "desktop" | "flat" }) {
-  const strip = boxStrip(m.box, m.live.ports(m.box.instance_id));
   return (
     <BoxRoot m={m} className="rounded-lg border" style={{ ...FACEPLATE, ...topBar(m) }}>
       {look === "rack" && (
@@ -91,16 +121,7 @@ function DeviceBox({ m, look }: { m: BoxModel; look: "rack" | "desktop" | "flat"
         </>
       )}
       <NameTab m={m} />
-      <Content m={m} padX={look === "rack" ? "px-5" : "px-3.5"} />
-      {strip && !m.removed && (
-        <span
-          aria-hidden="true"
-          data-inset=""
-          className="pointer-events-none absolute inset-x-2.5 rounded-md border border-line bg-inset"
-          style={{ bottom: 3, height: strip.layout.height + 4 }}
-        />
-      )}
-      <StripSlot m={m} />
+      <Body m={m} padX={look === "rack" ? "px-5" : "px-3.5"} />
       {look === "desktop" && (
         <>
           <span
@@ -124,32 +145,17 @@ function ApBox({ m }: { m: BoxModel }) {
   return (
     <BoxRoot m={m} className="rounded-t-[40px] rounded-b-[14px] border bg-panel" style={topBar(m)}>
       <NameTab m={m} />
-      <Content m={m} padX="px-5" />
-      <StripSlot m={m} />
+      <Body m={m} padX="px-5" />
     </BoxRoot>
   );
 }
 
-/**
- * Where the drive bays go (M11.3). The faceplate already has a left column reserved for it;
- * it stays empty (and takes no room) until the bays are drawn.
- */
-function NasBays(): ReactNode {
-  return null;
-}
-
-/** A NAS: faceplate with the (future) drive bays on the left, identity and sections right. */
+/** A NAS: faceplate with the drive bays on the left, identity and sections on the right. */
 function NasBox({ m }: { m: BoxModel }) {
   return (
     <BoxRoot m={m} className="rounded-lg border" style={{ ...FACEPLATE, ...topBar(m) }}>
       <NameTab m={m} />
-      <div className="flex min-w-0">
-        <NasBays />
-        <div className="min-w-0 flex-1">
-          <Content m={m} />
-        </div>
-      </div>
-      <StripSlot m={m} />
+      <Body m={m} lead={<NasBays m={m} />} />
     </BoxRoot>
   );
 }
@@ -211,12 +217,15 @@ function CloudBox({ m }: { m: BoxModel }) {
   );
 }
 
+const NO_CABLES: BoxModel["cabled"] = new Map();
+
 export function BoxView({
   box,
   live,
   vlans,
   onSelect,
   rate = null,
+  cabled = NO_CABLES,
 }: {
   box: MapBox;
   live: MapLive;
@@ -224,6 +233,8 @@ export function BoxView({
   onSelect?: (id: string) => void;
   /** Live in/out of the cables on this box, for the cloud shape. */
   rate?: BoxModel["rate"];
+  /** Port id to the name of the box at the other end of its cable (captions from cables). */
+  cabled?: BoxModel["cabled"];
 }) {
   const instance = live.instance(box.instance_id);
   const state = live.state(box.instance_id);
@@ -242,6 +253,7 @@ export function BoxView({
     live,
     vlans,
     rate,
+    cabled,
     select: selectable(box.id, instance !== undefined && !removed, onSelect, name),
   };
   switch (box.shape ?? "card") {

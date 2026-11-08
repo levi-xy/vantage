@@ -56,6 +56,8 @@ export interface BoxModel {
   vlans: ReadonlyMap<string, MapVlan>;
   /** Live in/out of the cables on this box (the cloud shows it), bits per second. */
   rate: { inBps?: number; outBps?: number } | null;
+  /** Port id to the name at the other end of its cable: the ports that have a cable. */
+  cabled: ReadonlyMap<string, string>;
   /** Opens the details drawer (only for a linked, existing device). */
   select: Record<string, unknown>;
 }

@@ -1,26 +1,33 @@
-// A box's front panel (document `panel`, M11.1): what the old port strip looked like,
-// read from the new group/port shape. The new jacks are drawn from M11.3 on.
+// A box's front panel (document `panel`, M11): port groups, the ports they make, and the few
+// pure operations the editor and the drawing share. Everything here is data in the map: no
+// device or vendor is known to the code (the model list is presets, in editor/presets.ts).
 
-import type { MapPanel, MapPort, MapPortKind } from "../../api";
+import type { MapPanel, MapPort, MapPortGroup, MapPortKind } from "../../api";
+import { isSfp } from "../../cards/switch-panel/panel";
+import type { DevicePort } from "./devicePorts";
 
-/** Cages (any SFP or QSFP) are drawn wider than RJ45 jacks; console and USB look like RJ45. */
+export const MAX_GROUPS = 8;
+export const MAX_PANEL_PORTS = 128;
+export const MAX_GROUP_COUNT = 64;
+
+export const KIND_LABEL: Record<MapPortKind, string> = {
+  rj45: "RJ45",
+  sfp: "SFP",
+  sfp_plus: "SFP+",
+  sfp28: "SFP28",
+  qsfp: "QSFP",
+  console: "Console",
+  usb: "USB",
+};
+
+/** Cages (any SFP or QSFP) are drawn wider than RJ45 jacks. */
 export function isCage(kind: MapPortKind | undefined): boolean {
   return kind === "sfp" || kind === "sfp_plus" || kind === "sfp28" || kind === "qsfp";
 }
 
-/** How a port is drawn: a cage or a jack, from its group's kind. */
-export function portKind(panel: MapPanel, port: MapPort): "rj45" | "sfp" {
-  return isCage(panel.groups.find((g) => g.id === port.group)?.kind) ? "sfp" : "rj45";
-}
-
-/** The single-row or two-row layout the strip shows today. */
-export function panelLayout(panel: MapPanel): "row" | "panel" {
-  return panel.groups.some((g) => g.rows === 2) ? "panel" : "row";
-}
-
 export const NO_VLANS: MapPort["vlans"] = { untagged: null, tagged: [] };
 
-export function emptyPanel(source: MapPanel["source"]): MapPanel {
+export function emptyPanel(source: MapPanel["source"] = "manual"): MapPanel {
   return {
     look: "flat",
     place: "bottom",
@@ -47,45 +54,132 @@ export function newPort(id: string, patch: Partial<MapPort> = {}): MapPort {
   };
 }
 
-/**
- * Typed ports, in order: each goes into the group of its kind (made on demand; `kinds`
- * overrides the kind of a port that is new or changed), then the groups agree with the ports:
- * counts follow the ports, numbers follow the order, empty groups go.
- */
-export function withTypedPorts(
-  panel: MapPanel,
-  ports: readonly MapPort[],
-  kinds: ReadonlyMap<string, "rj45" | "sfp"> = new Map(),
-): MapPanel {
-  const rows = panelLayout(panel) === "panel" ? 2 : 1;
-  const groups = [...panel.groups];
-  const groupFor = (kind: "rj45" | "sfp"): string => {
-    const found = groups.find((g) => (kind === "sfp" ? isCage(g.kind) : g.kind === "rj45"));
-    if (found) return found.id;
-    const id = `g-${kind}`;
-    groups.push({ id, kind, count: 1, rows, odd_top: false, first: 1, prefix: "" });
-    return id;
-  };
-  const counts = new Map<string, number>();
-  const placed = ports.map((p) => {
-    const kind = kinds.get(p.id);
-    const group =
-      !kind && groups.some((g) => g.id === p.group) ? p.group : groupFor(kind ?? "rj45");
-    const n = (counts.get(group) ?? 0) + 1;
-    counts.set(group, n);
-    return { ...p, group, n };
-  });
+/** The number a port shows: its group's first number plus its place in the group. */
+export const portNumber = (group: MapPortGroup, port: MapPort): number => group.first + port.n - 1;
+
+/** The lowest unused group id (`g1`, `g2`, ...). */
+export function newGroupId(groups: readonly { id: string }[]): string {
+  const used = new Set(groups.map((g) => g.id));
+  for (let n = 1; ; n++) if (!used.has(`g${n}`)) return `g${n}`;
+}
+
+export function newGroup(
+  groups: readonly MapPortGroup[],
+  kind: MapPortKind,
+  patch: Partial<MapPortGroup> = {},
+): MapPortGroup {
   return {
-    ...panel,
-    groups: groups
-      .filter((g) => counts.has(g.id))
-      .map((g) => ({ ...g, count: counts.get(g.id) ?? 1 })),
-    ports: placed,
+    id: newGroupId(groups),
+    kind,
+    count: kind === "console" || kind === "usb" ? 1 : 4,
+    rows: 1,
+    odd_top: false,
+    first: 1,
+    prefix: "",
+    ...patch,
   };
 }
 
-/** The same panel with every group on one row or two. */
-export function withLayout(panel: MapPanel, layout: "row" | "panel"): MapPanel {
-  const rows = layout === "panel" ? 2 : 1;
-  return { ...panel, groups: panel.groups.map((g) => ({ ...g, rows })) };
+/**
+ * The ports the groups describe. A port of a number that still exists keeps its id, caption,
+ * VLANs and interface (so cables stay attached); new numbers get `<group>-<n>`; ports of
+ * numbers or groups that are gone drop out.
+ */
+export function regeneratePorts(panel: MapPanel): MapPanel {
+  const old = new Map(panel.ports.map((p) => [`${p.group}\u0000${p.n}`, p] as const));
+  const ports: MapPort[] = [];
+  for (const g of panel.groups) {
+    for (let n = 1; n <= g.count; n++) {
+      const prev = old.get(`${g.id}\u0000${n}`);
+      ports.push(
+        prev ??
+          newPort(`${g.id}-${n}`, {
+            group: g.id,
+            n,
+            interface: g.prefix ? `${g.prefix}${g.first + n - 1}` : "",
+          }),
+      );
+    }
+  }
+  return { ...panel, ports: ports.slice(0, MAX_PANEL_PORTS) };
+}
+
+/** The letters a list of interface names starts with in common (`ether` for ether1, ether2). */
+function commonPrefix(names: readonly string[]): string {
+  const first = names[0] ?? "";
+  let end = 0;
+  while (end < first.length && names.every((n) => n[end] === first[end])) end++;
+  return first
+    .slice(0, end)
+    .replace(/[\d.]+$/, "")
+    .slice(0, 16);
+}
+
+/**
+ * Groups and ports for a device's own interfaces: copper in one group (two rows, odd numbers
+ * on top, past 8 ports), cages in one group of their own. Existing ports that name an
+ * interface keep their id, caption and VLANs; `interfaceIds` makes new ports take the
+ * interface name as their id (what a cable to an unlisted device port already holds).
+ */
+export function fromDevice(
+  device: readonly DevicePort[],
+  existing: readonly MapPort[],
+  interfaceIds: ReadonlySet<string> | "all" = new Set(),
+): Pick<MapPanel, "groups" | "ports"> {
+  const cages = device.filter((d) => isSfp(d));
+  const copper = device.filter((d) => !isSfp(d));
+  const groups: MapPortGroup[] = [];
+  const ports: MapPort[] = [];
+  const add = (list: readonly DevicePort[], kind: MapPortKind, rows: 1 | 2) => {
+    if (list.length === 0) return;
+    const group = newGroup(groups, kind, {
+      count: list.length,
+      rows,
+      odd_top: rows === 2,
+      prefix: commonPrefix(list.map((d) => d.id)),
+    });
+    groups.push(group);
+    list.forEach((d, i) => {
+      const prev = existing.find((p) => p.interface === d.id || p.id === d.id);
+      const byName = interfaceIds === "all" || interfaceIds.has(d.id);
+      ports.push(
+        newPort(prev?.id ?? (byName ? d.id : `${group.id}-${i + 1}`), {
+          group: group.id,
+          n: i + 1,
+          interface: d.id,
+          caption: prev?.caption ?? "",
+          vlans: prev?.vlans ?? NO_VLANS,
+          hidden: prev?.hidden ?? false,
+        }),
+      );
+    });
+  };
+  add(copper, "rj45", copper.length > 8 ? 2 : 1);
+  add(cages, cages.some((d) => (d.speed ?? 0) >= 25e9) ? "sfp28" : "sfp_plus", 1);
+  return { groups, ports: ports.slice(0, MAX_PANEL_PORTS) };
+}
+
+/**
+ * What the drawing shows: the document's groups and ports. A panel read from the device
+ * that has no ports of its own yet (an older map) shows the device's interfaces, with the
+ * interface name as the port id (what its cables hold).
+ */
+export function resolvePanel(
+  panel: MapPanel,
+  device: readonly DevicePort[] | undefined,
+): Pick<MapPanel, "groups" | "ports"> {
+  if (panel.source === "device" && panel.ports.length === 0 && device && device.length > 0) {
+    return fromDevice(device, [], "all");
+  }
+  return { groups: panel.groups, ports: panel.ports };
+}
+
+/** The name a port shows: from the cable's other end, else the typed caption. */
+export function portCaption(
+  captions: "cables" | "typed" | "off",
+  typed: string,
+  fromCable: string | undefined,
+): string {
+  if (captions === "off") return "";
+  return captions === "cables" ? (fromCable ?? typed) : typed;
 }

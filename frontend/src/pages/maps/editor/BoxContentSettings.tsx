@@ -1,11 +1,10 @@
-// The inspector's fields for what a box says about itself: its shape and look, role, the
+// The inspector's fields for what a box says about itself: role, the
 // identity lines and the sections (tiles / services / list) with their items. Every field is
 // plain text; the caps are the backend's (map_document.py).
 
 import type { Instance, MapBox, MapItem, MapSection } from "../../../api";
 import { buttonSecondary, input } from "../../../components/styles";
 import { FIGURES } from "../figures";
-import { emptyPanel } from "../panel";
 import { Field, ColorPicker, labelText } from "./fields";
 import { IconPicker } from "./IconPicker";
 import {
@@ -22,20 +21,6 @@ import {
 } from "./sectionOps";
 
 type Patch = (patch: Record<string, unknown>, key?: string) => void;
-
-const SHAPES: readonly { id: MapBox["shape"]; label: string }[] = [
-  { id: "card", label: "Card" },
-  { id: "device", label: "Device (faceplate)" },
-  { id: "nas", label: "NAS" },
-  { id: "ap", label: "Access point" },
-  { id: "cloud", label: "Cloud" },
-];
-
-const LOOKS = [
-  { id: "flat", label: "Flat" },
-  { id: "rack", label: "Rack unit (with ears)" },
-  { id: "desktop", label: "Desktop unit (with feet)" },
-] as const;
 
 function Row({
   label,
@@ -298,7 +283,7 @@ export function SectionsEditor({
   );
 }
 
-/** Shape, look, role, identity lines and sections of one box. */
+/** Role, identity lines and sections of one box (shape and panel are on the "Look and ports" tab). */
 export function BoxContentSettings({
   box,
   instance,
@@ -311,32 +296,6 @@ export function BoxContentSettings({
   const shape = box.shape ?? "card";
   return (
     <>
-      <Field label="Shape">
-        <select className={input} value={shape} onChange={(e) => patch({ shape: e.target.value })}>
-          {SHAPES.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.label}
-            </option>
-          ))}
-        </select>
-      </Field>
-      {shape === "device" && (
-        <Field label="Look">
-          <select
-            className={input}
-            value={box.panel?.look ?? "flat"}
-            onChange={(e) =>
-              patch({ panel: { ...(box.panel ?? emptyPanel("manual")), look: e.target.value } })
-            }
-          >
-            {LOOKS.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.label}
-              </option>
-            ))}
-          </select>
-        </Field>
-      )}
       {shape !== "cloud" && (
         <>
           <Row

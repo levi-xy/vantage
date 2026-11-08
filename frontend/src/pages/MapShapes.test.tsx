@@ -44,6 +44,7 @@ function fakeLive(figures: Record<string, string> = {}): MapLive {
     port: () => undefined,
     figure: (_id, key) => figures[key],
     figures: () => [],
+    smartDisks: () => [],
   };
 }
 

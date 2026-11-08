@@ -243,6 +243,33 @@ const cable = (id: string, from: [string, string | null], to: [string, string | 
   bends: [],
 });
 
+const PANEL = {
+  look: "flat",
+  place: "bottom",
+  size: "m",
+  numbers: true,
+  captions: "typed",
+  source: "manual",
+};
+const GROUP = (id: string, kind: string) => ({
+  id,
+  kind,
+  count: 1,
+  rows: 1,
+  odd_top: false,
+  first: 1,
+  prefix: "",
+});
+const PORT = (id: string, group: string, vlans: unknown) => ({
+  id,
+  group,
+  n: 1,
+  caption: "",
+  interface: "",
+  vlans,
+  hidden: false,
+});
+
 // "sw" shows the switch's own ports; "man" has two typed ports with VLANs.
 const PORT_DOC = {
   version: 1,
@@ -254,25 +281,19 @@ const PORT_DOC = {
     box("sw", 40, 40, {
       instance_id: "i-sw",
       h: 120,
-      panel: {
-        source: "device",
-        groups: [{ id: "g1", kind: "rj45", count: 1, rows: 2 }],
-        ports: [],
-      },
+      // Read from the device, with no ports of its own yet: the interfaces are listed live.
+      panel: { ...PANEL, source: "device", groups: [], ports: [] },
     }),
     box("edge", 40, 400, { instance_id: "i-edge" }),
     box("man", 400, 40, {
       label: "Patch panel",
       h: 120,
       panel: {
-        source: "manual",
-        groups: [
-          { id: "g1", kind: "rj45", count: 1, rows: 1 },
-          { id: "g2", kind: "sfp_plus", count: 1, rows: 1 },
-        ],
+        ...PANEL,
+        groups: [GROUP("g1", "rj45"), GROUP("g2", "sfp_plus")],
         ports: [
-          { id: "a", group: "g1", n: 1, caption: "", vlans: { untagged: "10", tagged: ["20"] } },
-          { id: "b", group: "g2", n: 1, caption: "", vlans: { untagged: null, tagged: [] } },
+          PORT("a", "g1", { untagged: "10", tagged: ["20"] }),
+          PORT("b", "g2", { untagged: null, tagged: [] }),
         ],
       },
     }),
@@ -289,9 +310,10 @@ describe("map page, live view", () => {
     expect(man.querySelectorAll("[data-port]")).toHaveLength(2);
     expect(man.querySelector('[data-port="a"] [data-vlan="10"]')).not.toBeNull(); // untagged
     expect(man.querySelector('[data-port="a"] [data-vlan="20"]')).not.toBeNull(); // tagged
-    // No port name is drawn unless typed; it is the tooltip.
-    expect(man.querySelector('[data-port="a"]')).toHaveAttribute("title", "a");
-    expect(man.querySelector('[data-port="a"]')?.textContent).toBe("");
+    // An RJ45 jack and an SFP+ cage, each with its number above.
+    expect(man.querySelector('[data-port="a"]')).toHaveAttribute("data-jack", "rj45");
+    expect(man.querySelector('[data-port="b"]')).toHaveAttribute("data-jack", "cage");
+    expect(man.querySelector('[data-port="a"] [data-number]')?.textContent).toBe("1");
   });
 
   it("turns the cable of a port without link red, and leaves the others", async () => {

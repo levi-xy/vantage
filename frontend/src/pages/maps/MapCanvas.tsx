@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { MapDocument } from "../../api";
 import { buttonSecondary } from "../../components/styles";
-import { boxRate } from "./cableLive";
+import { boxRate, portCables } from "./cableLive";
 import { CableCard, DetailsDrawer } from "./MapDetails";
 import { MeasureProvider, useMeasuredDoc } from "./measure";
 import { BoxView, CablesLayer, FrameView, LegendView, TableView, TextView } from "./MapElements";
@@ -18,6 +18,7 @@ export function MapCanvas({ doc: saved, live }: { doc: MapDocument; live: MapLiv
   const box = useRef<HTMLDivElement>(null);
   // Boxes are as tall as their content: cables and the fit use the measured heights.
   const { shown: doc, heights, report } = useMeasuredDoc(saved);
+  const cables = portCables(doc, live);
   // Fit once at first, and again when the first measurement arrives or the map changes.
   const { view, setView, fit, centerZoom } = useViewport(box, doc, heights.size > 0 ? saved : null);
   const drag = useRef<{ px: number; py: number; vx: number; vy: number } | null>(null);
@@ -114,6 +115,7 @@ export function MapCanvas({ doc: saved, live }: { doc: MapDocument; live: MapLiv
                       vlans={vlans}
                       onSelect={select}
                       rate={el.shape === "cloud" ? boxRate(doc, el.id, live) : null}
+                      cabled={cables.get(el.id)}
                     />
                   );
                 case "text":
