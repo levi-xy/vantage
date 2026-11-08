@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import type { NetworkMap, NetworkMapSummary } from "../api";
@@ -36,7 +36,7 @@ function MapTabs({
   isAdmin: boolean;
   /** The current map is being edited: the tabs can't change under the editor. */
   editing: boolean;
-  onCreated: (map: NetworkMap) => void;
+  onCreated: (map: NetworkMap, warning?: string) => void;
 }) {
   const api = useApiClient();
   const queryClient = useQueryClient();
@@ -306,13 +306,26 @@ export function MapPage() {
   const navigate = useNavigate();
   // The map being edited, if any (it stays set while the address changes to the new map).
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [createWarning, setCreateWarning] = useState<string | null>(null);
   const list = maps.data ?? [];
   const wanted =
     id === undefined ? (list[0]?.id ?? null) : /^[1-9]\d{0,9}$/.test(id) ? Number(id) : null;
   const known = wanted !== null && list.some((m) => m.id === wanted);
 
   const queryClient = useQueryClient();
-  const onCreated = async (created: NetworkMap) => {
+  // Leaving the map that is being edited (a tab, after confirming) ends the editing, so
+  // coming back shows the map, not a fresh editor.
+  const lastWanted = useRef(wanted);
+  useEffect(() => {
+    if (lastWanted.current !== wanted && lastWanted.current === editingId) {
+      setEditingId(null);
+      setCreateWarning(null);
+    }
+    lastWanted.current = wanted;
+  }, [wanted, editingId]);
+
+  const onCreated = async (created: NetworkMap, warning?: string) => {
+    setCreateWarning(warning ?? null);
     queryClient.setQueryData(mapKey(created.id), created);
     await queryClient.invalidateQueries({ queryKey: MAPS_KEY });
     setEditingId(created.id);
@@ -339,7 +352,10 @@ export function MapPage() {
         isAdmin={isAdmin}
         editing={editingId === wanted}
         onEdit={() => setEditingId(wanted)}
-        onStopEdit={() => setEditingId(null)}
+        onStopEdit={() => {
+          setEditingId(null);
+          setCreateWarning(null);
+        }}
       />
     );
   }
@@ -355,6 +371,12 @@ export function MapPage() {
           onCreated={onCreated}
         />
       )}
+      {createWarning && editingId !== null && (
+        <p role="alert" className={`mb-3 ${alertError}`}>
+          The map was created, but its devices could not be added: {createWarning}. Add them from
+          the list, or press Cancel and try again from a blank map.
+        </p>
+      )}
       {body}
     </>
   );
@@ -365,7 +387,7 @@ function NoMaps({
   onCreated,
 }: {
   isAdmin: boolean;
-  onCreated: (map: NetworkMap) => void;
+  onCreated: (map: NetworkMap, warning?: string) => void;
 }) {
   const [creating, setCreating] = useState(false);
   if (creating) {

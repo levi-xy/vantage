@@ -15,19 +15,12 @@ import type {
 import { colorVar, deviceColor, isDeviceColor, tint } from "../../app/deviceColors";
 import { useProxmoxGuests } from "../../cards/proxmox-guests/useProxmoxGuests";
 import { cableLive, endElements } from "./cableLive";
+import { cableRoutes } from "./cableRoutes";
 import type { CableLive } from "./cableLive";
-import {
-  bounds,
-  cablePath,
-  cableWidth,
-  endRects,
-  labelPoint,
-  pathData,
-  SPEED_ORDER,
-  speedLabel,
-  tagPoint,
-} from "./geometry";
+import { bounds, cableWidth, labelPoint, pathData, speedLabel, tagPoint } from "./geometry";
 import { guestTiles } from "./guests";
+import { legendEntries, STYLE_NAME } from "./legend";
+import type { GuestTile } from "./guests";
 import { PortStrip } from "./PortStrip";
 import { boxStrip } from "./strip";
 import { MapIcon } from "./MapIcon";
@@ -222,7 +215,13 @@ export function FrameView({
         </b>{" "}
         <StatusWord state={state} />
       </div>
-      {instance?.type_id === "proxmox" && <FrameGuests frame={frame} instanceId={instance.id} />}
+      {instance?.type_id === "proxmox" ? (
+        <FrameGuests frame={frame} instanceId={instance.id} />
+      ) : (
+        frame.guests.manual.length > 0 && (
+          <GuestTiles frame={frame} tiles={guestTiles([], frame.guests)} />
+        )
+      )}
       {state === "removed" && <div className="text-[12px] text-muted">Device removed</div>}
     </div>
   );
@@ -230,7 +229,10 @@ export function FrameView({
 
 function FrameGuests({ frame, instanceId }: { frame: MapFrame; instanceId: string }) {
   const { guests } = useProxmoxGuests(instanceId);
-  const tiles = guestTiles(guests, frame.guests);
+  return <GuestTiles frame={frame} tiles={guestTiles(guests, frame.guests)} />;
+}
+
+function GuestTiles({ frame, tiles }: { frame: MapFrame; tiles: GuestTile[] }) {
   return (
     <div
       className="mt-2 grid gap-2 overflow-hidden"
@@ -316,17 +318,6 @@ export function TableView({ el }: { el: MapTable }) {
   );
 }
 
-/** Speeds, line styles, roles and VLANs that the cables of this map actually use. */
-function legendEntries(doc: MapDocument) {
-  const cables = doc.elements.filter((e): e is MapCable => e.kind === "cable");
-  const speeds = SPEED_ORDER.filter((s) => cables.some((c) => c.speed === s));
-  const styles = (["dotted", "dashed"] as const).filter((s) => cables.some((c) => c.style === s));
-  const roles = (["access", "trunk"] as const).filter((r) => cables.some((c) => c.role === r));
-  const usedVlans = new Set(cables.map((c) => c.vlan));
-  const vlans = doc.vlans.filter((v) => usedVlans.has(v.id));
-  return { speeds, styles, roles, vlans };
-}
-
 function Sample({ width, dash, trunk }: { width: number; dash?: string; trunk?: boolean }) {
   return (
     <svg width="44" height="10" viewBox="0 0 44 10" aria-hidden="true">
@@ -367,7 +358,7 @@ export function LegendView({ el, doc }: { el: MapLegend; doc: MapDocument }) {
       {styles.map((s) => (
         <span key={s} className={row}>
           <Sample width={1.5} dash={DASH[s]} />
-          {s === "dotted" ? "Dotted" : "Dashed"}
+          {STYLE_NAME[s]}
         </span>
       ))}
       {roles.map((r) => (
@@ -434,18 +425,10 @@ export function CablesLayer({
   onPick?: (id: string) => void;
   pickedId?: string | null;
 }) {
-  const rects = endRects(doc);
   const owners = endElements(doc);
   const b = bounds(doc);
   const cables = doc.elements.filter((e): e is MapCable => e.kind === "cable");
-  // A cable that names a port of a box with a strip meets that jack; otherwise the box edge.
-  const strips = new Map<string, ReturnType<typeof boxStrip>>();
-  for (const el of owners.values()) {
-    if (el.kind === "box") strips.set(el.id, boxStrip(el, live.ports(el.instance_id)));
-  }
-  const endRect = (end: MapCable["from"]) =>
-    (end.port !== null ? strips.get(end.element)?.rects.get(end.port) : undefined) ??
-    rects.get(end.element);
+  const routes = cableRoutes(doc, live);
   return (
     <svg
       className="pointer-events-none absolute top-0 left-0 overflow-visible"
@@ -454,10 +437,8 @@ export function CablesLayer({
       fill="none"
     >
       {cables.map((cable) => {
-        const [boxA, boxB] = [rects.get(cable.from.element), rects.get(cable.to.element)];
-        const [a, z] = [endRect(cable.from), endRect(cable.to)];
-        if (!boxA || !boxB || !a || !z) return null;
-        const pts = cablePath(a, z, cable.bends, boxA, boxB);
+        const pts = routes.points(cable);
+        if (!pts) return null;
         const d = pathData(pts);
         const state = cableLive(cable, owners, live);
         const down = state.down;

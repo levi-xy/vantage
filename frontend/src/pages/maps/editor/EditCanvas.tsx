@@ -3,13 +3,15 @@
 // press on an element selects and drags it, press on a handle resizes, press on the
 // background pans (or places the tool's new element).
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, RefObject } from "react";
-import type { MapDocument } from "../../../api";
+import type { MapCable, MapCableEnd, MapDocument } from "../../../api";
 import { buttonSecondary } from "../../../components/styles";
+import { cableRoutes } from "../cableRoutes";
 import { BoxView, CablesLayer, FrameView, LegendView, TableView, TextView } from "../MapElements";
 import type { MapLive } from "../mapLive";
 import type { useViewport } from "../useViewport";
+import { bendIndexAt, insertBend, moveBend, removeBend } from "./mapOps";
 import {
   alignTo,
   applyRects,
@@ -17,6 +19,7 @@ import {
   GRID,
   HANDLES,
   MAX_COORD,
+  patchElement,
   rectsOf,
   resizeRect,
   snapTo,
@@ -47,7 +50,46 @@ type Drag =
       base: MapDocument;
       id: string;
       rect: Rect;
+    }
+  | { mode: "cable"; from: MapCableEnd }
+  | { mode: "reattach"; cableId: string; end: "from" | "to"; other: MapCableEnd }
+  | {
+      mode: "bend";
+      sx: number;
+      sy: number;
+      base: MapDocument;
+      cableId: string;
+      /** The bend being moved, or null: a new one is made at `insertAt` once the drag starts. */
+      index: number | null;
+      insertAt: number;
+      moved: boolean;
     };
+
+/** A cable being drawn or re-attached: from a fixed point to the pointer. */
+interface Draft {
+  from: readonly [number, number];
+  x: number;
+  y: number;
+  /** The element at the fixed end: dropping on it is refused. */
+  fixed: string;
+  over: MapCableEnd | null;
+}
+
+/** The box or frame (and its port jack, if any) under a pointer event. */
+function endAt(e: { clientX: number; clientY: number; target: EventTarget }): MapCableEnd | null {
+  const found = (document as Partial<Document>).elementFromPoint?.call(
+    document,
+    e.clientX,
+    e.clientY,
+  );
+  const node = found ?? (e.target instanceof Element ? e.target : null);
+  const owner = node?.closest("[data-element]");
+  const kind = owner?.getAttribute("data-kind");
+  const element = owner?.getAttribute("data-element");
+  if (!owner || !element || (kind !== "box" && kind !== "frame")) return null;
+  const jack = node?.closest("[data-port]");
+  return { element, port: jack && owner.contains(jack) ? jack.getAttribute("data-port") : null };
+}
 
 export function EditCanvas({
   doc,
@@ -56,11 +98,14 @@ export function EditCanvas({
   live,
   selected,
   placing,
+  cabling,
   snap,
   onSelect,
   onPlace,
+  onConnect,
   onDropInstance,
   preview,
+  commit,
   commitFrom,
 }: {
   doc: MapDocument;
@@ -70,9 +115,13 @@ export function EditCanvas({
   selected: string[];
   /** A tool is armed: a click on the drawing places its element. */
   placing: boolean;
+  /** The cable tool is armed: a drag from a box or port to another draws a cable. */
+  cabling: boolean;
   snap: boolean;
   onSelect: (ids: string[]) => void;
   onPlace: (x: number, y: number) => void;
+  onConnect: (from: MapCableEnd, to: MapCableEnd) => void;
+  commit: (doc: MapDocument) => void;
   onDropInstance: (instanceId: string, x: number, y: number) => void;
   preview: (doc: MapDocument) => void;
   commitFrom: (base: MapDocument) => void;
@@ -82,6 +131,27 @@ export function EditCanvas({
   const [guides, setGuides] = useState<Guides>({ v: [], h: [] });
   const vlans = new Map(doc.vlans.map((v) => [v.id, v] as const));
   const single = selected.length === 1 ? selected[0] : undefined;
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const routes = cableRoutes(doc, live);
+  const selCable = doc.elements.find((e): e is MapCable => e.kind === "cable" && e.id === single);
+  const selPoints = selCable ? routes.points(selCable) : undefined;
+
+  const centreOf = (end: MapCableEnd): [number, number] => {
+    const r = routes.endRect(end);
+    return r ? [r.x + r.w / 2, r.y + r.h / 2] : [0, 0];
+  };
+
+  // Escape cancels a cable being drawn.
+  useEffect(() => {
+    if (!draft) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      drag.current = null;
+      setDraft(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [draft]);
 
   /** The pointer in drawing coordinates. */
   const at = (e: { clientX: number; clientY: number }): [number, number] => {
@@ -105,12 +175,67 @@ export function EditCanvas({
         return;
       }
     }
+    if (selCable && selPoints) {
+      const endHandle = target.closest("[data-end-handle]")?.getAttribute("data-end-handle");
+      if (endHandle === "from" || endHandle === "to") {
+        const other = endHandle === "from" ? selCable.to : selCable.from;
+        drag.current = { mode: "reattach", cableId: selCable.id, end: endHandle, other };
+        setDraft({ from: centreOf(other), x: px, y: py, fixed: other.element, over: null });
+        return;
+      }
+      const bend = target.closest("[data-bend]")?.getAttribute("data-bend");
+      const onSegment = target.closest("[data-hit]")?.getAttribute("data-hit") === selCable.id;
+      if (bend !== null && bend !== undefined) {
+        drag.current = {
+          mode: "bend",
+          sx: px,
+          sy: py,
+          base: doc,
+          cableId: selCable.id,
+          index: Number(bend),
+          insertAt: 0,
+          moved: false,
+        };
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+        return;
+      }
+      if (onSegment && !cabling) {
+        const way = [selPoints[0], ...selCable.bends, selPoints[selPoints.length - 1]].flatMap(
+          (pt) => (pt ? [pt] : []),
+        );
+        drag.current = {
+          mode: "bend",
+          sx: px,
+          sy: py,
+          base: doc,
+          cableId: selCable.id,
+          index: null,
+          insertAt: bendIndexAt(way, px, py),
+          moved: false,
+        };
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+        return;
+      }
+    }
+    if (cabling) {
+      const from = endAt(e);
+      if (from) {
+        drag.current = { mode: "cable", from };
+        setDraft({ from: centreOf(from), x: px, y: py, fixed: from.element, over: null });
+        return;
+      }
+    }
     if (placing) {
       onPlace(px, py);
       return;
     }
+    const hit = target.closest("[data-hit]")?.getAttribute("data-hit");
+    if (hit) {
+      onSelect([hit]);
+      return;
+    }
     const id = target.closest("[data-element]")?.getAttribute("data-element");
-    if (id) {
+    if (id && !cabling) {
       let ids = selected;
       if (e.shiftKey) {
         ids = selected.includes(id) ? selected.filter((s) => s !== id) : [...selected, id];
@@ -155,6 +280,27 @@ export function EditCanvas({
       return;
     }
     const [px, py] = at(e);
+    if (d.mode === "cable" || d.mode === "reattach") {
+      const over = endAt(e);
+      setDraft(
+        (c) => c && { ...c, x: px, y: py, over: over && over.element !== c.fixed ? over : null },
+      );
+      return;
+    }
+    if (d.mode === "bend") {
+      if (!d.moved) {
+        if (Math.hypot(px - d.sx, py - d.sy) * view.z <= DRAG_START_PX) return;
+        d.moved = true;
+      }
+      const cable = d.base.elements.find((el): el is MapCable => el.id === d.cableId);
+      if (!cable) return;
+      const bends =
+        d.index === null
+          ? insertBend(cable.bends, d.insertAt, px, py)
+          : moveBend(cable.bends, d.index, px, py);
+      preview(patchElement(d.base, d.cableId, { bends }));
+      return;
+    }
     if (d.mode === "resize") {
       const next = resizeRect(d.rect, d.handle, px - d.sx, py - d.sy, snap);
       preview(applyRects(d.base, new Map([[d.id, next]])));
@@ -186,11 +332,24 @@ export function EditCanvas({
     preview(applyRects(d.base, moved));
   };
 
-  const onUp = () => {
+  const onUp = (e: ReactPointerEvent<HTMLDivElement>) => {
     const d = drag.current;
     drag.current = null;
     setGuides({ v: [], h: [] });
     if (!d) return;
+    if (d.mode === "cable" || d.mode === "reattach") {
+      setDraft(null);
+      const to = endAt(e);
+      const fixed = d.mode === "cable" ? d.from.element : d.other.element;
+      if (!to || to.element === fixed) return;
+      if (d.mode === "cable") onConnect(d.from, to);
+      else commit(patchElement(doc, d.cableId, { [d.end]: to }));
+      return;
+    }
+    if (d.mode === "bend") {
+      if (d.moved) commitFrom(d.base);
+      return;
+    }
     if (d.mode === "pan") {
       if (!d.moved) onSelect([]);
       return;
@@ -203,7 +362,7 @@ export function EditCanvas({
       ? [{ id: el.id, x: el.x, y: el.y, w: el.w, h: el.h }]
       : [],
   );
-  const cable = selected.length === 1 ? selected[0] : null;
+  const cable = selCable?.id ?? null;
   const handleSize = 10 / view.z;
   const handleAt = (r: Rect, h: Handle) => ({
     left: r.x + (h.includes("w") ? 0 : h.includes("e") ? r.w : r.w / 2) - handleSize / 2,
@@ -249,7 +408,7 @@ export function EditCanvas({
       <div
         ref={box}
         data-testid="edit-viewport"
-        className={`relative h-[calc(100vh-260px)] min-h-[420px] touch-none overflow-hidden rounded-lg border border-line bg-canvas select-none ${placing ? "cursor-crosshair" : ""}`}
+        className={`relative h-[calc(100vh-260px)] min-h-[420px] touch-none overflow-hidden rounded-lg border border-line bg-canvas select-none ${placing || cabling ? "cursor-crosshair" : ""}`}
         style={{
           backgroundImage: "radial-gradient(circle, var(--vt-line) 1px, transparent 1.5px)",
           backgroundSize: `${GRID * view.z}px ${GRID * view.z}px`,
@@ -259,6 +418,13 @@ export function EditCanvas({
         onPointerMove={onMove}
         onPointerUp={onUp}
         onPointerCancel={onUp}
+        onPointerLeave={() => {
+          // A cable dragged out of the drawing is dropped nowhere.
+          if (drag.current?.mode === "cable" || drag.current?.mode === "reattach") {
+            drag.current = null;
+            setDraft(null);
+          }
+        }}
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
           const id = e.dataTransfer.getData(ELEMENT_ID);
@@ -314,6 +480,93 @@ export function EditCanvas({
                 }}
               />
             ))}
+          {selCable && selPoints && (
+            <>
+              {(["from", "to"] as const).map((end) => {
+                const p = end === "from" ? selPoints[0] : selPoints[selPoints.length - 1];
+                const size = 12 / view.z;
+                return (
+                  p && (
+                    <div
+                      key={end}
+                      data-end-handle={end}
+                      title="Drag to connect this end elsewhere"
+                      className="absolute cursor-grab rounded-full border-2 border-in bg-panel"
+                      style={{
+                        left: p[0] - size / 2,
+                        top: p[1] - size / 2,
+                        width: size,
+                        height: size,
+                      }}
+                    />
+                  )
+                );
+              })}
+              {selCable.bends.map((b, i) => {
+                const size = 10 / view.z;
+                return (
+                  <div
+                    key={i}
+                    data-bend={i}
+                    title="Drag to move; double-click to remove"
+                    className="absolute cursor-move rounded-sm border-2 border-in bg-panel"
+                    style={{
+                      left: b[0] - size / 2,
+                      top: b[1] - size / 2,
+                      width: size,
+                      height: size,
+                    }}
+                    onDoubleClick={() =>
+                      commit(
+                        patchElement(doc, selCable.id, { bends: removeBend(selCable.bends, i) }),
+                      )
+                    }
+                  />
+                );
+              })}
+            </>
+          )}
+          {draft && (
+            <>
+              <svg
+                className="pointer-events-none absolute top-0 left-0 overflow-visible"
+                width="1"
+                height="1"
+                aria-hidden="true"
+              >
+                <line
+                  x1={draft.from[0]}
+                  y1={draft.from[1]}
+                  x2={draft.x}
+                  y2={draft.y}
+                  stroke="var(--vt-in)"
+                  strokeWidth={2 / view.z}
+                  strokeDasharray={`${6 / view.z} ${4 / view.z}`}
+                />
+              </svg>
+              {draft.over &&
+                (() => {
+                  const r = routes.endRect(draft.over);
+                  return (
+                    r && (
+                      <>
+                        <div
+                          data-drop-target={draft.over.element}
+                          className="pointer-events-none absolute rounded-[10px] border-2 border-in"
+                          style={{ left: r.x - 3, top: r.y - 3, width: r.w + 6, height: r.h + 6 }}
+                        />
+                        <div
+                          className="pointer-events-none absolute rounded bg-in px-1.5 text-white"
+                          style={{ left: r.x, top: r.y - 22 / view.z, fontSize: 12 / view.z }}
+                        >
+                          Drop to connect
+                        </div>
+                      </>
+                    )
+                  );
+                })()}
+            </>
+          )}
           {guides.v.map((x) => (
             <div
               key={`v${x}`}

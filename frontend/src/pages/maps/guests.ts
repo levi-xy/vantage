@@ -18,14 +18,7 @@ const KIND: Record<string, string> = { qemu: "VM", lxc: "CT" };
  */
 export function guestTiles(guests: ProxmoxGuest[], config: MapGuests): GuestTile[] {
   const shown = config.auto ? guests.filter((g) => !config.hidden.includes(g.vmid)) : [];
-  const rank = (g: ProxmoxGuest) => {
-    const i = config.order.indexOf(g.vmid);
-    return i < 0 ? Infinity : i;
-  };
-  const ordered = [...shown].sort((a, b) => {
-    const [ra, rb] = [rank(a), rank(b)];
-    return ra === rb ? 0 : ra < rb ? -1 : 1;
-  });
+  const ordered = orderGuests(shown, config.order);
   return [
     ...ordered.map((g) => ({
       key: `g${g.vmid}`,
@@ -40,4 +33,16 @@ export function guestTiles(guests: ProxmoxGuest[], config: MapGuests): GuestTile
       subtitle: m.subtitle,
     })),
   ];
+}
+
+/** Guests with those named in `order` first, in that order, then the rest as they come. */
+export function orderGuests(guests: ProxmoxGuest[], order: readonly string[]): ProxmoxGuest[] {
+  const rank = (g: ProxmoxGuest) => {
+    const i = order.indexOf(g.vmid);
+    return i < 0 ? Infinity : i;
+  };
+  return [...guests].sort((a, b) => {
+    const [ra, rb] = [rank(a), rank(b)];
+    return ra === rb ? 0 : ra < rb ? -1 : 1;
+  });
 }
