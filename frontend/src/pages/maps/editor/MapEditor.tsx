@@ -6,7 +6,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useBlocker } from "react-router";
 import { ApiError } from "../../../api";
-import type { Instance, MapDocument, NetworkMap } from "../../../api";
+import type { Instance, MapCableEnd, MapDocument, NetworkMap } from "../../../api";
 import { useApiClient } from "../../../app/session";
 import { alertError, buttonPrimary, buttonSecondary } from "../../../components/styles";
 import { errorText, useInstances, useIntegrations } from "../../devices/queries";
@@ -14,11 +14,15 @@ import { useMapLive } from "../mapLive";
 import { useViewport } from "../useViewport";
 import { DRAG_DEVICE_TYPE, EditCanvas } from "./EditCanvas";
 import { Inspector } from "./Inspector";
+import { makeCable, speedFromBps } from "./mapOps";
+import { VlanPanel } from "./VlanPanel";
 import {
   canAdd,
+  clamp,
   GRID,
   iconFor,
   makeElement,
+  MAX_COORD,
   MAX_ELEMENTS,
   notOnMap,
   patchElement,
@@ -29,9 +33,9 @@ import {
 import type { NewKind } from "./model";
 import { useDocHistory } from "./useDocHistory";
 
-type Tool = { kind: "select" } | { kind: NewKind; instanceId?: string };
+type Tool = { kind: "select" } | { kind: "cable" } | { kind: NewKind; instanceId?: string };
 
-const TOOLS: { id: "select" | "device" | NewKind; label: string }[] = [
+const TOOLS: { id: "select" | "device" | "cable" | NewKind; label: string }[] = [
   { id: "select", label: "Select" },
   { id: "device", label: "Device" },
   { id: "box", label: "Box" },
@@ -39,6 +43,7 @@ const TOOLS: { id: "select" | "device" | NewKind; label: string }[] = [
   { id: "text", label: "Text" },
   { id: "table", label: "Table" },
   { id: "legend", label: "Legend" },
+  { id: "cable", label: "Cable" },
 ];
 
 const STALE = "Someone else saved this map. Reload to see their version.";
@@ -72,6 +77,7 @@ export function MapEditor({
   const [selectedRaw, setSelected] = useState<string[]>([]);
   const [tool, setTool] = useState<Tool>({ kind: "select" });
   const [picking, setPicking] = useState(false);
+  const [vlansOpen, setVlansOpen] = useState(false);
   const [snap, setSnap] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
   const box = useRef<HTMLDivElement>(null);
@@ -119,6 +125,28 @@ export function MapEditor({
     setTool({ kind: "select" });
   };
 
+  /** A cable dragged from one end to another: speed from the port when it reports one. */
+  const connect = (from: MapCableEnd, to: MapCableEnd) => {
+    if (!canAdd(doc)) {
+      setNotice(`A map holds at most ${MAX_ELEMENTS} elements.`);
+      return;
+    }
+    const speedOf = (end: MapCableEnd) => {
+      const owner = doc.elements.find((e) => e.id === end.element);
+      const id = owner && "instance_id" in owner ? owner.instance_id : null;
+      return speedFromBps(live.port(id, end.port)?.speed);
+    };
+    const cable = makeCable(doc, from, to, speedOf(from) ?? speedOf(to));
+    if (!cable) {
+      setNotice("A cable needs two different boxes.");
+      return;
+    }
+    setNotice(null);
+    h.commit(withElement(doc, cable));
+    setSelected([cable.id]);
+    setTool({ kind: "select" });
+  };
+
   /** The middle of what is on screen, for click-to-place from the list. */
   const centre = (): [number, number] => {
     const { x, y, z } = viewport.view;
@@ -139,8 +167,8 @@ export function MapEditor({
       const el = doc.elements.find((e) => e.id === id);
       if (el && el.kind !== "cable") {
         next = patchElement(next, id, {
-          x: Math.max(0, el.x + dx),
-          y: Math.max(0, el.y + dy),
+          x: clamp(el.x + dx, 0, MAX_COORD),
+          y: clamp(el.y + dy, 0, MAX_COORD),
         });
       }
     }
@@ -184,6 +212,8 @@ export function MapEditor({
   const pickTool = (id: (typeof TOOLS)[number]["id"]) => {
     setPicking(id === "device" && !picking);
     if (id === "select") setTool({ kind: "select" });
+    else if (id === "cable")
+      setTool(tool.kind === "cable" ? { kind: "select" } : { kind: "cable" });
     else if (id !== "device") setTool({ kind: id });
     else setTool({ kind: "select" });
   };
@@ -211,6 +241,14 @@ export function MapEditor({
         </button>
         <button type="button" className={buttonSecondary} disabled={!h.canRedo} onClick={h.redo}>
           Redo
+        </button>
+        <button
+          type="button"
+          className={buttonSecondary}
+          aria-pressed={vlansOpen}
+          onClick={() => setVlansOpen(!vlansOpen)}
+        >
+          VLANs
         </button>
         <label className="flex items-center gap-1.5 text-sm">
           <input type="checkbox" checked={snap} onChange={(e) => setSnap(e.target.checked)} />
@@ -277,12 +315,17 @@ export function MapEditor({
           viewport={viewport}
           live={live}
           selected={selected}
-          placing={armed}
+          placing={armed && tool.kind !== "cable"}
+          cabling={tool.kind === "cable"}
           snap={snap}
           onSelect={setSelected}
           onPlace={(x, y) => {
-            if (tool.kind !== "select") add(tool.kind, x, y, tool.instanceId);
+            if (tool.kind !== "select" && tool.kind !== "cable") {
+              add(tool.kind, x, y, tool.instanceId);
+            }
           }}
+          onConnect={connect}
+          commit={h.commit}
           onDropInstance={(id, x, y) => add("box", x, y, id)}
           preview={h.preview}
           commitFrom={h.commitFrom}
@@ -318,11 +361,25 @@ export function MapEditor({
               {instances.find((i) => i.id === tool.instanceId)?.name ?? "the device"}.
             </p>
           )}
+          {vlansOpen && (
+            <VlanPanel
+              doc={doc}
+              edit={(next) => h.commit(next)}
+              onClose={() => setVlansOpen(false)}
+            />
+          )}
+          {tool.kind === "cable" && (
+            <p className="text-xs text-muted">
+              Drag from a port or a box to another one. Escape cancels.
+            </p>
+          )}
           <section aria-label="Settings" className="rounded-lg border border-line bg-panel p-3">
             <Inspector
               doc={doc}
               selected={selected}
               instances={instances}
+              live={live}
+              edit={(next) => h.commit(next)}
               patch={(id, p, key) => h.commit(patchElement(doc, id, p), key ? key : null)}
               remove={removeSelected}
             />

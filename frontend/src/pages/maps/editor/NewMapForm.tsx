@@ -28,7 +28,8 @@ export function NewMapForm({
   onCancel,
 }: {
   maps: readonly NetworkMapSummary[];
-  onCreated: (map: NetworkMap) => void;
+  /** `warning`: the map exists but the starting content could not be saved. */
+  onCreated: (map: NetworkMap, warning?: string) => void;
   onCancel: () => void;
 }) {
   const api = useApiClient();
@@ -37,21 +38,27 @@ export function NewMapForm({
   const [copyFrom, setCopyFrom] = useState<number | null>(maps[0]?.id ?? null);
 
   const create = useMutation({
-    mutationFn: async (): Promise<NetworkMap> => {
+    mutationFn: async (): Promise<{ map: NetworkMap; warning?: string }> => {
       const trimmed = name.trim();
       if (start === "copy" && copyFrom !== null) {
-        return api.createMap({ name: trimmed, copy_from: copyFrom });
+        return { map: await api.createMap({ name: trimmed, copy_from: copyFrom }) };
       }
       const created = await api.createMap({ name: trimmed });
-      if (start !== "devices") return created;
-      const [instances, types] = await Promise.all([api.instances(), api.integrations()]);
-      const document = devicesDocument(
-        instances,
-        (typeId) => types.find((t) => t.type_id === typeId)?.category,
-      );
-      return api.saveMap(created.id, { document, revision: created.revision });
+      if (start !== "devices") return { map: created };
+      // The map exists from here on: if filling it fails, open it blank (a retry from the
+      // form would make a second map).
+      try {
+        const [instances, types] = await Promise.all([api.instances(), api.integrations()]);
+        const document = devicesDocument(
+          instances,
+          (typeId) => types.find((t) => t.type_id === typeId)?.category,
+        );
+        return { map: await api.saveMap(created.id, { document, revision: created.revision }) };
+      } catch (error) {
+        return { map: created, warning: errorText(error) };
+      }
     },
-    onSuccess: onCreated,
+    onSuccess: ({ map, warning }) => onCreated(map, warning),
   });
 
   const submit = (e: FormEvent) => {

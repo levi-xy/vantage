@@ -2,59 +2,26 @@
 // handed to `patch` (one undo step per field while typing). Text is plain text only.
 
 import { useState } from "react";
-import type { ReactNode } from "react";
 import type {
   Instance,
   MapBox,
-  MapCable,
   MapDocument,
   MapElement,
   MapFrame,
   MapTable,
   MapText,
 } from "../../../api";
-import { colorVar, DEVICE_COLORS } from "../../../app/deviceColors";
 import { buttonSecondary, input } from "../../../components/styles";
 import { FIGURES } from "../figures";
+import type { MapLive } from "../mapLive";
+import { CableSettings } from "./CableSettings";
+import { Check, ColorPicker, Field, labelText, section } from "./fields";
+import { ManualTiles, ProxmoxGuestList } from "./GuestsSettings";
 import { clamp, ICONS, MAX_SIZE, MIN_SIZE } from "./model";
+import { PortsSettings } from "./PortsSettings";
 
-const labelText = "mb-1 block text-xs font-medium text-muted";
-const section = "flex flex-col gap-3 border-t border-line pt-3";
 const MAX_COLUMNS = 8;
 const MAX_ROWS = 100;
-
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <label className="block">
-      <span className={labelText}>{label}</span>
-      {children}
-    </label>
-  );
-}
-
-function Check({
-  label,
-  checked,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  disabled?: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <label className="flex items-center gap-2 text-sm">
-      <input
-        type="checkbox"
-        checked={checked}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.checked)}
-      />
-      {label}
-    </label>
-  );
-}
 
 /** A number box that commits on blur or Enter, so typing "2" on the way to "200" is fine. */
 function NumberField({
@@ -85,46 +52,6 @@ function NumberField({
         onKeyDown={(e) => e.key === "Enter" && commit()}
       />
     </Field>
-  );
-}
-
-/** The palette as swatches; `none` is the no-colour choice (device colour, or no colour). */
-export function ColorPicker({
-  value,
-  noneLabel,
-  onChange,
-}: {
-  value: string | null;
-  noneLabel: string;
-  onChange: (v: string | null) => void;
-}) {
-  const chip = (active: boolean) =>
-    `h-6 w-6 rounded-full border-2 focus-visible:ring-2 focus-visible:ring-in focus-visible:outline-none ${active ? "border-ink" : "border-line"}`;
-  return (
-    <div role="group" aria-label="Colour" className="flex flex-wrap items-center gap-1.5">
-      <button
-        type="button"
-        aria-label={noneLabel}
-        aria-pressed={value === null}
-        title={noneLabel}
-        className={`${chip(value === null)} bg-chip text-[10px] text-muted`}
-        onClick={() => onChange(null)}
-      >
-        –
-      </button>
-      {DEVICE_COLORS.map((c) => (
-        <button
-          key={c.name}
-          type="button"
-          aria-label={c.label}
-          aria-pressed={value === c.name}
-          title={c.label}
-          className={chip(value === c.name)}
-          style={{ background: colorVar(c.name) }}
-          onClick={() => onChange(c.name)}
-        />
-      ))}
-    </div>
   );
 }
 
@@ -164,12 +91,18 @@ type Patch = (patch: Record<string, unknown>, key?: string) => void;
 
 function BoxSettings({
   box,
+  doc,
   instances,
+  live,
   patch,
+  edit,
 }: {
   box: MapBox;
+  doc: MapDocument;
   instances: readonly Instance[];
+  live: MapLive;
   patch: Patch;
+  edit: (next: MapDocument) => void;
 }) {
   const instance = instances.find((i) => i.id === box.instance_id);
   const defs = instance ? (FIGURES[instance.type_id] ?? []) : [];
@@ -227,6 +160,7 @@ function BoxSettings({
           ))}
         </select>
       </Field>
+      <PortsSettings doc={doc} box={box} instance={instance} live={live} edit={edit} />
       {box.instance_id && (
         <fieldset className="flex flex-col gap-1.5">
           <legend className={labelText}>Show on the box</legend>
@@ -285,6 +219,7 @@ function FrameSettings({
   instances: readonly Instance[];
   patch: Patch;
 }) {
+  const isProxmox = instances.find((i) => i.id === frame.instance_id)?.type_id === "proxmox";
   return (
     <>
       <Field label="Label">
@@ -309,6 +244,17 @@ function FrameSettings({
         checked={frame.guests.auto}
         onChange={(v) => patch({ guests: { ...frame.guests, auto: v } })}
       />
+      {!frame.guests.auto && (
+        <p className="text-xs text-muted">Auto-fill is off: only your own tiles show.</p>
+      )}
+      {frame.guests.auto && frame.instance_id && isProxmox && (
+        <ProxmoxGuestList
+          guests={frame.guests}
+          instanceId={frame.instance_id}
+          set={(guests, key) => patch({ guests }, key)}
+        />
+      )}
+      <ManualTiles frame={frame} set={(guests, key) => patch({ guests }, key)} />
       <div>
         <span className={labelText}>Colour</span>
         <ColorPicker
@@ -494,13 +440,18 @@ export function Inspector({
   doc,
   selected,
   instances,
+  live,
   patch,
+  edit,
   remove,
 }: {
   doc: MapDocument;
   selected: string[];
   instances: readonly Instance[];
+  live: MapLive;
   patch: (id: string, patch: Record<string, unknown>, key?: string) => void;
+  /** A change to the whole document (ports and VLANs touch cables too). */
+  edit: (next: MapDocument) => void;
   remove: () => void;
 }) {
   const els = selected.flatMap((id) => doc.elements.filter((e) => e.id === id));
@@ -526,11 +477,12 @@ export function Inspector({
     );
   }
   const set: Patch = (p, key) => patch(el.id, p, key);
-  const ends = el.kind === "cable" ? cableEnds(el, doc, instances) : "";
   return (
     <div className="flex flex-col gap-3">
       <h2 className="text-sm font-semibold">{KIND_NAME[el.kind]}</h2>
-      {el.kind === "box" && <BoxSettings box={el} instances={instances} patch={set} />}
+      {el.kind === "box" && (
+        <BoxSettings box={el} doc={doc} instances={instances} live={live} patch={set} edit={edit} />
+      )}
       {el.kind === "frame" && <FrameSettings frame={el} instances={instances} patch={set} />}
       {el.kind === "text" && <TextSettings el={el} patch={set} />}
       {el.kind === "table" && <TableSettings el={el} patch={set} />}
@@ -540,12 +492,7 @@ export function Inspector({
         </p>
       )}
       {el.kind === "cable" && (
-        <p className="text-sm">
-          {ends}
-          <span className="mt-1 block text-xs text-muted">
-            Drawing and editing cables comes with the cable tool.
-          </span>
-        </p>
+        <CableSettings cable={el} doc={doc} instances={instances} live={live} patch={set} />
       )}
       {el.kind !== "cable" && (
         <div className={`${section} grid grid-cols-2 gap-3`}>
@@ -569,13 +516,4 @@ export function Inspector({
       </div>
     </div>
   );
-}
-
-function cableEnds(cable: MapCable, doc: MapDocument, instances: readonly Instance[]): string {
-  const name = (id: string) => {
-    const e = doc.elements.find((x) => x.id === id);
-    if (!e || (e.kind !== "box" && e.kind !== "frame")) return "?";
-    return e.label || instances.find((i) => i.id === e.instance_id)?.name || "Unnamed";
-  };
-  return `${name(cable.from.element)} to ${name(cable.to.element)}`;
 }
