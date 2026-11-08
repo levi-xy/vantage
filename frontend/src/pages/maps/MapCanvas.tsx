@@ -1,23 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { MapDocument } from "../../api";
 import { buttonSecondary } from "../../components/styles";
-import { bounds } from "./geometry";
 import { CableCard, DetailsDrawer } from "./MapDetails";
 import { BoxView, CablesLayer, FrameView, LegendView, TableView, TextView } from "./MapElements";
 import type { CableHover } from "./MapElements";
 import type { MapLive } from "./mapLive";
-
-const MIN_ZOOM = 0.2;
-const MAX_ZOOM = 3;
-const FIT_MARGIN = 32;
-const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
-
-interface View {
-  x: number;
-  y: number;
-  z: number;
-}
+import { useViewport } from "./useViewport";
 
 /**
  * The read-only drawing: elements at their saved x/y/w/h inside a pan (drag) and zoom
@@ -25,7 +14,7 @@ interface View {
  */
 export function MapCanvas({ doc, live }: { doc: MapDocument; live: MapLive }) {
   const box = useRef<HTMLDivElement>(null);
-  const [view, setView] = useState<View>({ x: 0, y: 0, z: 1 });
+  const { view, setView, fit, centerZoom } = useViewport(box, doc, doc);
   const drag = useRef<{ px: number; py: number; vx: number; vy: number } | null>(null);
   // A drag that moved is a pan, not a click on the box under the pointer.
   const moved = useRef(false);
@@ -40,55 +29,6 @@ export function MapCanvas({ doc, live }: { doc: MapDocument; live: MapLive }) {
     setHover(h && r ? { id: h.id, x: h.x - r.left, y: h.y - r.top, w: r.width } : null);
   };
   const vlans = new Map(doc.vlans.map((v) => [v.id, v] as const));
-
-  const fit = useCallback(() => {
-    const el = box.current;
-    const b = bounds(doc);
-    // jsdom (and a hidden pane) reports no size: keep the natural view then.
-    if (!el || el.clientWidth === 0 || b.w === 0) return setView({ x: 0, y: 0, z: 1 });
-    const z = clampZoom(
-      Math.min(
-        (el.clientWidth - 2 * FIT_MARGIN) / b.w,
-        (el.clientHeight - 2 * FIT_MARGIN) / b.h,
-        1,
-      ),
-    );
-    setView({
-      z,
-      x: (el.clientWidth - b.w * z) / 2 - b.x * z,
-      y: (el.clientHeight - b.h * z) / 2 - b.y * z,
-    });
-  }, [doc]);
-
-  // Fit when a map is opened (and when its drawing is replaced), not on every refresh.
-  const docId = useRef<MapDocument | null>(null);
-  useEffect(() => {
-    if (docId.current !== doc) {
-      docId.current = doc;
-      fit();
-    }
-  }, [doc, fit]);
-
-  const zoomAt = useCallback((factor: number, cx: number, cy: number) => {
-    setView((v) => {
-      const z = clampZoom(v.z * factor);
-      const k = z / v.z;
-      return { z, x: cx - (cx - v.x) * k, y: cy - (cy - v.y) * k };
-    });
-  }, []);
-
-  // A wheel listener that can stop the page scrolling (React's onWheel is passive).
-  useEffect(() => {
-    const el = box.current;
-    if (!el) return;
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      const r = el.getBoundingClientRect();
-      zoomAt(e.deltaY < 0 ? 1.1 : 1 / 1.1, e.clientX - r.left, e.clientY - r.top);
-    };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, [zoomAt]);
 
   const onDown = (e: ReactPointerEvent) => {
     if (e.button !== 0) return;
@@ -109,11 +49,6 @@ export function MapCanvas({ doc, live }: { doc: MapDocument; live: MapLive }) {
   };
   const onUp = () => {
     drag.current = null;
-  };
-
-  const centerZoom = (factor: number) => {
-    const el = box.current;
-    zoomAt(factor, (el?.clientWidth ?? 0) / 2, (el?.clientHeight ?? 0) / 2);
   };
 
   return (
@@ -189,7 +124,13 @@ export function MapCanvas({ doc, live }: { doc: MapDocument; live: MapLive }) {
           </div>
         )}
         {selected && (
-          <DetailsDrawer elementId={selected} doc={doc} live={live} onClose={closeDrawer} />
+          <DetailsDrawer
+            key={selected}
+            elementId={selected}
+            doc={doc}
+            live={live}
+            onClose={closeDrawer}
+          />
         )}
       </div>
     </section>

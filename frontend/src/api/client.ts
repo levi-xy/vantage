@@ -37,7 +37,7 @@ import type {
   UserCreate,
   UserInfo,
 } from "./types";
-import type { NetworkMap, NetworkMapSummary } from "./mapTypes";
+import type { MapDocument, NetworkMap, NetworkMapSummary } from "./mapTypes";
 
 export const API_BASE = "/api/v1";
 export const CSRF_HEADER = "X-CSRF-Token";
@@ -365,9 +365,24 @@ export class ApiClient {
     return this.request("GET", `/maps/${encodeURIComponent(String(id))}`);
   }
 
-  /** Admin only: a blank map, appended last. At most 50 (409). */
-  createMap(body: { name: string }): Promise<NetworkMap> {
+  /** Admin only: a blank map, or a copy of `copy_from`, appended last. At most 50 (409). */
+  createMap(body: { name: string; copy_from?: number }): Promise<NetworkMap> {
     return this.request("POST", "/maps", body);
+  }
+
+  /** Admin only. 409 when `revision` is not the stored one (someone else saved meanwhile). */
+  saveMap(id: number, body: { document: MapDocument; revision: number }): Promise<NetworkMap> {
+    return this.request("PUT", `/maps/${encodeURIComponent(String(id))}`, body);
+  }
+
+  /** Admin only: rename or move. */
+  updateMap(id: number, body: { name?: string; position?: number }): Promise<NetworkMapSummary> {
+    return this.request("PATCH", `/maps/${encodeURIComponent(String(id))}`, body);
+  }
+
+  /** Admin only. */
+  deleteMap(id: number): Promise<void> {
+    return this.request("DELETE", `/maps/${encodeURIComponent(String(id))}`);
   }
 
   /** Admin only. */

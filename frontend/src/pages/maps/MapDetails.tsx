@@ -1,7 +1,7 @@
 // The two pop-ups of the live map: the card that follows the pointer over a cable, and the
 // details drawer of a clicked device. Range queries run only while one of them is open.
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Link } from "react-router";
 import type { MapBox, MapDocument, MapFrame } from "../../api";
 import { useUnits } from "../../app/units";
@@ -163,6 +163,18 @@ export function DetailsDrawer({
   live: MapLive;
   onClose: () => void;
 }) {
+  // Focus moves into the drawer on open and back to what opened it on close.
+  const panel = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const trigger = document.activeElement;
+    panel.current?.focus();
+    return () => {
+      const back = trigger instanceof HTMLElement && trigger.isConnected ? trigger : null;
+      (back ?? document.querySelector<HTMLElement>(`[data-element="${elementId}"]`))?.focus();
+    };
+    // Once per opening: another box selected remounts the drawer (keyed by the caller).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -188,8 +200,10 @@ export function DetailsDrawer({
   });
   return (
     <aside
+      ref={panel}
+      tabIndex={-1}
       aria-label={`Details of ${name}`}
-      className="absolute top-0 right-0 bottom-0 z-10 flex w-80 max-w-full cursor-default flex-col gap-4 overflow-y-auto border-l border-line bg-panel p-4 text-ink"
+      className="absolute top-0 right-0 bottom-0 z-10 flex w-80 focus:outline-none max-w-full cursor-default flex-col gap-4 overflow-y-auto border-l border-line bg-panel p-4 text-ink"
       onPointerDown={(e) => e.stopPropagation()}
       onWheel={(e) => e.stopPropagation()}
     >

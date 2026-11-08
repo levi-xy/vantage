@@ -216,6 +216,8 @@ describe("map page", () => {
     const { unmount } = renderApp("/map", admin);
     expect(await screen.findByText("No maps yet")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "New map" }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Home" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create and start editing" }));
     await waitFor(() => expect(admin.requests().map((r) => r.route)).toContain("POST /maps"));
     unmount();
 
@@ -299,8 +301,12 @@ describe("map page, live view", () => {
   it("opens the details drawer on a click, links to the device and closes on Escape", async () => {
     renderApp("/map", backend());
     const canvas = await screen.findByRole("region", { name: "Network map" });
-    fireEvent.click(await within(canvas).findByRole("button", { name: "Details of edge-fw" }));
+    const trigger = await within(canvas).findByRole("button", { name: "Details of edge-fw" });
+    trigger.focus();
+    fireEvent.click(trigger);
     const drawer = await within(canvas).findByRole("complementary", { name: "Details of edge-fw" });
+    // Focus moves into the drawer, and back to the box when it closes.
+    expect(drawer).toHaveFocus();
     expect(within(drawer).getByRole("link", { name: "Open device page" })).toHaveAttribute(
       "href",
       "/devices/i-edge",
@@ -308,5 +314,16 @@ describe("map page, live view", () => {
     expect(within(drawer).getByText(/core-sw/)).toBeInTheDocument(); // the cable's other end
     fireEvent.keyDown(window, { key: "Escape" });
     expect(within(canvas).queryByRole("complementary")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("shows the cable card when a cable gets keyboard focus", async () => {
+    renderApp("/map", backend());
+    const canvas = await screen.findByRole("region", { name: "Network map" });
+    const cable = await within(canvas).findByRole("button", { name: /^Cable .* to /i });
+    fireEvent.focus(cable);
+    expect(await within(canvas).findByRole("tooltip")).toBeInTheDocument();
+    fireEvent.blur(cable);
+    expect(within(canvas).queryByRole("tooltip")).not.toBeInTheDocument();
   });
 });
