@@ -48,7 +48,7 @@ export interface Jack {
   /** The number shown (group's first number + place). */
   number: number;
   shape: JackShape;
-  /** Drawn upside down (top row of an `odd_top` group): number below, caption above. */
+  /** Drawn upside down (top row of a group numbered in pairs): number below, caption above. */
   flip: boolean;
   /** The cell that holds the jack and its texts, relative to the panel. */
   x: number;
@@ -79,8 +79,9 @@ export interface PanelGeometry {
 }
 
 /**
- * The jacks of a panel in a row of groups, left to right. Within a two-row group, an
- * `odd_top` group numbers its columns in pairs (odd on top), another fills the top row first.
+ * The jacks of a panel in a row of groups, left to right. Within a two-row group, `odd_top`
+ * and `odd_bottom` number the columns in pairs (odd on top / bottom); `rows` fills the top
+ * row first.
  * Squeezed horizontally when `room` is too narrow.
  */
 export function panelGeometry(
@@ -131,9 +132,11 @@ export function panelGeometry(
     g.list.forEach((port, k) => {
       let col = k;
       let row = 0;
-      if (rows === 2 && g.group.odd_top) [col, row] = [Math.floor(k / 2), k % 2];
+      const paired = rows === 2 && g.group.order !== "rows";
+      if (paired)
+        [col, row] = [Math.floor(k / 2), g.group.order === "odd_top" ? k % 2 : 1 - (k % 2)];
       else if (rows === 2) [col, row] = [k % cols, Math.floor(k / cols)];
-      const flip = g.group.odd_top && rows === 2 && row === 0;
+      const flip = paired && row === 0;
       // Normal: number, jack, bars, caption. Flipped: caption, bars, jack, number.
       let at = 0;
       const next = (h: number, on: boolean) => {

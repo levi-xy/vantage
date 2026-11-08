@@ -73,7 +73,7 @@ export function newGroup(
     kind,
     count: kind === "console" || kind === "usb" ? 1 : 4,
     rows: 1,
-    odd_top: false,
+    order: "rows",
     first: 1,
     prefix: "",
     ...patch,
@@ -135,7 +135,7 @@ export function fromDevice(
     const group = newGroup(groups, kind, {
       count: list.length,
       rows,
-      odd_top: rows === 2,
+      order: rows === 2 ? "odd_top" : "rows",
       prefix: commonPrefix(list.map((d) => d.id)),
     });
     groups.push(group);

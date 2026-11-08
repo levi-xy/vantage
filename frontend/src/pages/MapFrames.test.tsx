@@ -184,7 +184,7 @@ describe("replacing ports from the Look and ports tab", () => {
       panel: regeneratePorts({
         ...emptyPanel(),
         groups: [
-          { id: "old", kind: "rj45", count: 2, rows: 1, odd_top: false, first: 1, prefix: "" },
+          { id: "old", kind: "rj45", count: 2, rows: 1, order: "rows", first: 1, prefix: "" },
         ],
       }),
     };

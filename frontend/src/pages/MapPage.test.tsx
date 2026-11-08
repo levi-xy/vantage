@@ -256,7 +256,7 @@ const GROUP = (id: string, kind: string) => ({
   kind,
   count: 1,
   rows: 1,
-  odd_top: false,
+  order: "rows",
   first: 1,
   prefix: "",
 });

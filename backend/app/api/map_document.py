@@ -58,9 +58,21 @@ class PortGroup(_Strict):
     kind: Literal["rj45", "sfp", "sfp_plus", "sfp28", "qsfp", "console", "usb"] = "rj45"
     count: Annotated[int, Field(ge=1, le=64)] = 1
     rows: Literal[1, 2] = 1
-    odd_top: bool = False
+    # Two rows: "rows" fills the top row first; "odd_top" / "odd_bottom" number the columns
+    # in pairs with the odd port on top / on the bottom.
+    order: Literal["rows", "odd_top", "odd_bottom"] = "rows"
     first: Annotated[int, Field(ge=0, le=999)] = 1
     prefix: Annotated[str, Field(max_length=16)] = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_odd_top(cls, data: Any) -> Any:
+        """Groups saved before ``order`` carry ``odd_top``; read it as ``order``."""
+        if isinstance(data, dict) and "odd_top" in data:
+            data = dict(data)
+            odd_top = data.pop("odd_top")
+            data.setdefault("order", "odd_top" if odd_top else "rows")
+        return data
 
 
 class Port(_Strict):
@@ -99,7 +111,7 @@ def legacy_ports_to_panel(old: dict[str, Any]) -> dict[str, Any]:
                 "kind": kind,
                 "count": 0,
                 "rows": rows,
-                "odd_top": False,
+                "order": "rows",
                 "first": 1,
                 "prefix": "",
             }
