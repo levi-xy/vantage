@@ -36,12 +36,12 @@ function EndPicker({
       (e.kind === "box" || e.kind === "frame") && (e.id !== otherElement || e.id === end.element),
   );
   const owner = targets.find((e) => e.id === end.element);
-  const strip = owner?.kind === "box" ? owner.ports : null;
+  const strip = owner?.kind === "box" ? owner.panel : null;
   const ports: { id: string; name: string }[] =
     owner?.kind !== "box" || !strip
       ? []
       : strip.source === "manual"
-        ? strip.ports.map((p) => ({ id: p.id, name: p.label || p.id }))
+        ? strip.ports.map((p) => ({ id: p.id, name: p.caption || p.id }))
         : (live.ports(owner.instance_id) ?? []).map((p) => ({ id: p.id, name: p.name }));
   if (end.port !== null && !ports.some((p) => p.id === end.port)) {
     ports.push({ id: end.port, name: end.port });

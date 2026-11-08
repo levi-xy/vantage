@@ -30,3 +30,6 @@ deploy/certs/
 # Claude Code local settings
 .claude/settings.local.json
 .claude/worktrees/
+
+# Icon library fetched at build time (frontend/scripts/fetch-icons.mjs)
+frontend/public/icons/di/

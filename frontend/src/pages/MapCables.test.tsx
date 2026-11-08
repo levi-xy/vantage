@@ -33,7 +33,7 @@ const box = (id: string, x: number, label: string) => ({
   show: { details: true, status: true, figures: true },
   figures: [],
   color: null,
-  ports: null,
+  panel: null,
 });
 
 const cable = {
@@ -177,15 +177,24 @@ describe("ports and VLANs in the editor", () => {
     expect(viewport().querySelector('[data-port="p1"] [data-vlan="1"]')).not.toBeNull();
     const out = await done(saved);
     const a = out.elements.find((e) => e.id === "a");
-    expect(a?.kind === "box" && a.ports).toMatchObject({
+    expect(a?.kind === "box" && a.panel).toMatchObject({
       source: "manual",
-      ports: [{ id: "p1", kind: "rj45", vlans: { untagged: "1", tagged: [] } }],
+      groups: [{ kind: "rj45", count: 1 }],
+      ports: [{ id: "p1", group: "g-rj45", vlans: { untagged: "1", tagged: [] } }],
     });
-    expect(out.vlans).toEqual([{ id: "1", name: "VLAN 1", color: expect.any(String) }]);
+    expect(out.vlans).toEqual([
+      { id: "1", name: "VLAN 1", color: expect.any(String), subnet: "", note: "" },
+    ]);
   });
 
   it("clears a removed VLAN from ports and cables, and a removed port from cables", () => {
-    const port = { id: "p1", label: "", kind: "rj45", vlans: { untagged: "10", tagged: ["20"] } };
+    const port = {
+      id: "p1",
+      group: "g1",
+      n: 1,
+      caption: "",
+      vlans: { untagged: "10", tagged: ["20"] },
+    };
     const withPorts = {
       ...doc({ ...cable, role: "access", vlan: "10", from: { element: "a", port: "p1" } }),
       vlans: [
@@ -193,14 +202,18 @@ describe("ports and VLANs in the editor", () => {
         { id: "20", name: "IoT", color: "teal" },
       ],
     } as MapDocument;
-    const strip = { source: "manual" as const, layout: "row" as const, ports: [port] };
+    const strip = {
+      source: "manual" as const,
+      groups: [{ id: "g1", kind: "rj45", count: 1, rows: 1 }],
+      ports: [port],
+    };
     const d = setBoxPorts(withPorts, "a", strip as never);
     expect(legendEntries(d).vlans.map((v) => v.id)).toEqual(["10", "20"]);
 
     const cleared = removeVlan(d, "10");
     const a = cleared.elements.find((e) => e.id === "a");
     expect(cleared.vlans.map((v) => v.id)).toEqual(["20"]);
-    expect(a?.kind === "box" && a.ports?.ports[0]?.vlans).toEqual({
+    expect(a?.kind === "box" && a.panel?.ports[0]?.vlans).toEqual({
       untagged: null,
       tagged: ["20"],
     });

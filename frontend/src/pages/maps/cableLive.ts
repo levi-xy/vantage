@@ -44,7 +44,7 @@ export function cableLive(
       rate = { inBps: dev.inBps, outBps: dev.outBps, ref: dev.ref };
     }
     const typed =
-      owner?.kind === "box" ? owner.ports?.ports.find((p) => p.id === e.port)?.label : undefined;
+      owner?.kind === "box" ? owner.panel?.ports.find((p) => p.id === e.port)?.caption : undefined;
     return {
       device,
       port: e.port === null ? null : typed || dev?.name || e.port,

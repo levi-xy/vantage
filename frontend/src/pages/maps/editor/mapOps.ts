@@ -2,7 +2,7 @@
 // document the backend accepts: cable ends exist and differ, typed port ids exist, VLAN ids
 // exist, caps respected. Nothing here touches React or the network.
 
-import type { MapCable, MapCableEnd, MapDocument, MapPorts, MapSpeed, MapVlan } from "../../../api";
+import type { MapCable, MapCableEnd, MapDocument, MapPanel, MapSpeed, MapVlan } from "../../../api";
 import { DEVICE_COLORS } from "../../../app/deviceColors";
 import { clamp, MAX_COORD, newId, patchElement, snapTo } from "./model";
 
@@ -111,9 +111,9 @@ export function endIsValid(doc: MapDocument, end: MapCableEnd): boolean {
   const owner = doc.elements.find((e) => e.id === end.element);
   if (owner?.kind !== "box" && owner?.kind !== "frame") return false;
   if (end.port === null) return true;
-  if (owner.kind !== "box" || !owner.ports) return false;
+  if (owner.kind !== "box" || !owner.panel) return false;
   // A device strip names the device's own interfaces, which only the live data knows.
-  return owner.ports.source === "device" || owner.ports.ports.some((p) => p.id === end.port);
+  return owner.panel.source === "device" || owner.panel.ports.some((p) => p.id === end.port);
 }
 
 // --- Ports ----------------------------------------------------------------------------
@@ -122,8 +122,8 @@ export function endIsValid(doc: MapDocument, end: MapCableEnd): boolean {
  * Set (or clear) a box's port strip. A cable that named a typed port that no longer exists
  * keeps its box and loses the port, so the saved document stays valid.
  */
-export function setBoxPorts(doc: MapDocument, boxId: string, ports: MapPorts | null): MapDocument {
-  const next = patchElement(doc, boxId, { ports });
+export function setBoxPorts(doc: MapDocument, boxId: string, ports: MapPanel | null): MapDocument {
+  const next = patchElement(doc, boxId, { panel: ports });
   const known = new Set(ports?.ports.map((p) => p.id));
   const keep = (end: MapCableEnd): MapCableEnd =>
     end.element !== boxId || end.port === null || ports?.source === "device" || known.has(end.port)
@@ -145,9 +145,9 @@ export function renamePort(doc: MapDocument, boxId: string, from: string, to: st
     ...doc,
     elements: doc.elements.map((e) => {
       if (e.kind === "cable") return { ...e, from: rename(e.from), to: rename(e.to) };
-      if (e.id === boxId && e.kind === "box" && e.ports) {
-        const ports = e.ports.ports.map((p) => (p.id === from ? { ...p, id: to } : p));
-        return { ...e, ports: { ...e.ports, ports } };
+      if (e.id === boxId && e.kind === "box" && e.panel) {
+        const ports = e.panel.ports.map((p) => (p.id === from ? { ...p, id: to } : p));
+        return { ...e, panel: { ...e.panel, ports } };
       }
       return e;
     }),
@@ -168,7 +168,7 @@ export function vlanUsage(doc: MapDocument, id: string): number {
   for (const e of doc.elements) {
     if (e.kind === "cable" && e.vlan === id) n++;
     if (e.kind === "box") {
-      for (const p of e.ports?.ports ?? []) {
+      for (const p of e.panel?.ports ?? []) {
         if (p.vlans.untagged === id || p.vlans.tagged.includes(id)) n++;
       }
     }
@@ -183,15 +183,15 @@ function mapVlanRefs(doc: MapDocument, f: (id: string) => string | null): MapDoc
     ...doc,
     elements: doc.elements.map((e) => {
       if (e.kind === "cable") return { ...e, vlan: one(e.vlan) };
-      if (e.kind !== "box" || !e.ports) return e;
-      const ports = e.ports.ports.map((p) => ({
+      if (e.kind !== "box" || !e.panel) return e;
+      const ports = e.panel.ports.map((p) => ({
         ...p,
         vlans: {
           untagged: one(p.vlans.untagged),
           tagged: p.vlans.tagged.flatMap((t) => f(t) ?? []),
         },
       }));
-      return { ...e, ports: { ...e.ports, ports } };
+      return { ...e, panel: { ...e.panel, ports } };
     }),
   };
 }
@@ -215,5 +215,5 @@ export function newVlan(doc: MapDocument): MapVlan {
   while (used.has(String(n))) n++;
   const count = (c: string) => doc.vlans.filter((v) => v.color === c).length;
   const least = [...DEVICE_COLORS].sort((a, b) => count(a.name) - count(b.name))[0];
-  return { id: String(n), name: `VLAN ${n}`, color: least?.name ?? "blue" };
+  return { id: String(n), name: `VLAN ${n}`, color: least?.name ?? "blue", subnet: "", note: "" };
 }

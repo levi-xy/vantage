@@ -21,6 +21,7 @@ const SIZES: Record<Geometry["kind"], [number, number]> = {
   text: [208, 80],
   table: [272, 144],
   legend: [224, 144],
+  networks: [224, 144],
 };
 
 export const ICONS: readonly MapIcon[] = [
@@ -96,12 +97,19 @@ export function makeElement(
         kind,
         label: "",
         subtitle: "",
+        shape: "card",
+        role: "",
         icon: extra.icon ?? "generic",
+        model: "",
+        address: "",
+        version: "",
         instance_id: extra.instanceId ?? null,
         show: { details: true, status: true, figures: true },
         figures: [],
+        sections: [],
         color: null,
-        ports: null,
+        panel: null,
+        nas: null,
       };
     case "frame":
       return {
@@ -111,6 +119,12 @@ export function makeElement(
         instance_id: null,
         color: null,
         guests: { auto: true, hidden: [], order: [], manual: [] },
+        groups: [],
+        bars: true,
+        side: null,
+        model: "",
+        address: "",
+        version: "",
       };
     case "text":
       return { ...base, kind, text: "Note", size: "m", panel: true };
@@ -121,6 +135,7 @@ export function makeElement(
         title: "Table",
         columns: ["Name", "Value"],
         rows: [{ cells: ["", ""], color: null }],
+        badges: [],
       };
     case "legend":
       return { ...base, kind };

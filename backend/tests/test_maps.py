@@ -102,6 +102,15 @@ MANUAL_PORTS = {"source": "manual", "ports": [{"id": "p1"}]}
         ),
         doc(box("a"), box("b"), cable("c", "a", "b", vlan="nope")),
         doc(box("a", surprise=1)),
+        doc(box("a", icon="di:Not A Slug")),
+        doc(box("a", shape="triangle")),
+        doc(box("a", sections=[{"id": f"s{i}"} for i in range(5)])),
+        doc(box("a", sections=[{"id": "s", "items": [{"id": f"i{i}"} for i in range(13)]}])),
+        doc(box("a", panel={"groups": [{"id": f"g{i}"} for i in range(9)]})),
+        doc(box("a", panel={"ports": [{"id": f"p{i}"} for i in range(129)]})),
+        doc(box("a", panel={"ports": [{"id": "p1", "group": "nope"}]})),
+        doc(box("a", nas={"bays": 17})),
+        doc({"id": "t", "kind": "table", "x": 0, "y": 0, "w": 9, "h": 9, "badges": [8]}),
         doc(*[box(f"b{i}") for i in range(501)]),  # element count
         doc(*[text_el(f"t{i}") for i in range(70)]),  # over 256 KB
     ],
@@ -111,3 +120,29 @@ def test_bad_documents_are_refused(admin: TestClient, document: dict[str, object
     r = admin.put(f"{API}/maps/{created['id']}", json={"document": document, "revision": 1})
     assert r.status_code == 422
     assert admin.get(f"{API}/maps/{created['id']}").json()["revision"] == 1
+
+
+def test_new_fields_are_stored_and_old_ports_are_read_as_a_panel(admin: TestClient) -> None:
+    created = admin.post(f"{API}/maps", json={"name": "Home"}).json()
+    rich = box(
+        "a",
+        shape="nas",
+        role="router",
+        icon="di:example-icon",
+        model="m",
+        sections=[{"id": "s", "kind": "list", "items": [{"id": "i", "figure": "f"}]}],
+        panel={
+            "groups": [{"id": "g1", "kind": "sfp_plus"}],
+            "ports": [{"id": "g1-1", "group": "g1"}],
+        },
+        nas={"bays": 4},
+    )
+    legacy = box("b", ports=MANUAL_PORTS)
+    networks = {"id": "n", "kind": "networks", "x": 0, "y": 0, "w": 9, "h": 9}
+    document = doc(rich, legacy, networks)
+    document["vlans"] = [{"id": "10", "name": "LAN", "color": "blue", "subnet": "192.0.2.0/24"}]
+    r = admin.put(f"{API}/maps/{created['id']}", json={"document": document, "revision": 1})
+    assert r.status_code == 200, r.text
+    stored = r.json()["document"]["elements"]
+    assert stored[0]["shape"] == "nas" and stored[0]["panel"]["groups"][0]["kind"] == "sfp_plus"
+    assert "ports" not in stored[1] and stored[1]["panel"]["ports"][0]["id"] == "p1"

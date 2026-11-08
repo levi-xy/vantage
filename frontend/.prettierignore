@@ -1,3 +1,5 @@
 dist
 coverage
 package-lock.json
+public/icons/di
+icons.manifest.json
