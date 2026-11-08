@@ -4,12 +4,13 @@ import type { MapBox, MapCable, MapDocument, MapTable, MapText } from "../../api
 import { colorVar, deviceColor, isDeviceColor } from "../../app/deviceColors";
 import { drawingOrder, speedLabel } from "./geometry";
 import { StatusWord } from "./MapElements";
-import { instanceAddress } from "./mapLive";
+import { boxIdentity } from "./boxFacts";
 import type { MapLive } from "./mapLive";
 
 interface Row {
   box: MapBox;
   name: string;
+  role: string;
   state: string | null;
   detail: string;
   to: string | null;
@@ -39,12 +40,16 @@ function rows(doc: MapDocument, live: MapLive): Row[] {
       });
     let head: string;
     if (state === "removed") head = "Device removed";
-    else if (instance)
-      head = [live.typeName(instance.type_id), instanceAddress(instance)].join(" · ");
-    else head = box.subtitle || "Not monitored";
+    else {
+      // The identity lines (typed, else from the device); an unknown device shows its subtitle.
+      const { model, address, version } = boxIdentity(box, instance, live);
+      head = [model, address, version].filter(Boolean).join(" · ");
+      if (!head && !instance) head = box.subtitle || "Not monitored";
+    }
     return {
       box,
       name: box.label || instance?.name || "",
+      role: box.role ?? "",
       state,
       detail: [head, ...via].filter(Boolean).join(" · "),
       to: instance ? `/devices/${instance.id}` : null,
@@ -59,7 +64,8 @@ function RowView({ row }: { row: Row }) {
     <span className="flex-1">
       <b className={down ? "text-crit-text" : row.state === "removed" ? "text-muted" : ""}>
         {row.name}
-      </b>{" "}
+      </b>
+      {row.role && <span className="text-[12px] text-muted"> · {row.role}</span>}{" "}
       <StatusWord state={row.state} />
       <span className="block text-[12px] text-muted">{row.detail}</span>
     </span>

@@ -7,7 +7,7 @@ import { shownState, useScrapeStates } from "../../cards/metrics/scrapeStatus";
 import { useInstances, useIntegrations } from "../devices/queries";
 import { hasPorts, useDevicePorts } from "./devicePorts";
 import type { DevicePort } from "./devicePorts";
-import { boxFigures, useFigureValues } from "./figures";
+import { boxFigures, figureDef, sectionFigures, useFigureValues } from "./figures";
 import type { FigureDef } from "./figures";
 
 export type DeviceState = InstanceStatus["state"] | "removed";
@@ -23,6 +23,8 @@ export interface MapLive {
   /** A linked device's own interfaces (undefined: unknown device or not loaded yet). */
   ports: (id: string | null) => DevicePort[] | undefined;
   port: (id: string | null, portId: string | null) => DevicePort | undefined;
+  /** A section item's live value (undefined: no device, no such figure, or no data yet). */
+  figure: (instanceId: string | null, key: string) => string | undefined;
   /** The figures of a linked box with their current values, in display order. */
   figures: (box: { figures: string[] }, instance: Instance) => { def: FigureDef; text: string }[];
 }
@@ -44,7 +46,10 @@ export function useMapLive(doc: MapDocument | undefined, drawing = true): MapLiv
     if (el.kind !== "box" && el.kind !== "frame") continue;
     const inst = el.instance_id ? byId.get(el.instance_id) : undefined;
     const named = el.kind === "box" ? el : { figures: [] };
-    if (inst) for (const def of boxFigures(named, inst.type_id)) wanted.add(def);
+    if (!inst) continue;
+    for (const def of boxFigures(named, inst.type_id)) wanted.add(def);
+    // The items of a box's sections ask for their figures in the same combined queries.
+    if (el.kind === "box") for (const def of sectionFigures(el, inst.type_id)) wanted.add(def);
   }
   const values = useFigureValues([...wanted]);
 
@@ -79,6 +84,12 @@ export function useMapLive(doc: MapDocument | undefined, drawing = true): MapLiv
     ports: (id) => (id ? devicePorts.get(id) : undefined),
     port: (id, portId) =>
       id && portId ? devicePorts.get(id)?.find((p) => p.id === portId) : undefined,
+    figure: (instanceId, key) => {
+      const inst = instanceId ? byId.get(instanceId) : undefined;
+      const def = inst ? figureDef(inst.type_id, key) : undefined;
+      const value = def && inst ? values.get(def)?.get(inst.id) : undefined;
+      return def && value !== undefined ? def.format(value) : undefined;
+    },
     figures: (box, inst) =>
       boxFigures(box, inst.type_id).map((def) => ({
         def,
