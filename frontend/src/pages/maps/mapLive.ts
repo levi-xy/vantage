@@ -9,6 +9,8 @@ import { hasPorts, useDevicePorts } from "./devicePorts";
 import type { DevicePort } from "./devicePorts";
 import { boxFigures, figureDef, sectionFigures, useFigureValues } from "./figures";
 import type { FigureDef } from "./figures";
+import { useSmartDisks } from "./smartDisks";
+import type { SmartDisk } from "./smartDisks";
 
 export type DeviceState = InstanceStatus["state"] | "removed";
 
@@ -23,6 +25,8 @@ export interface MapLive {
   /** A linked device's own interfaces (undefined: unknown device or not loaded yet). */
   ports: (id: string | null) => DevicePort[] | undefined;
   port: (id: string | null, portId: string | null) => DevicePort | undefined;
+  /** The SMART disks of a NAS box's device (and of a SMART exporter on the same host). */
+  smartDisks: (id: string | null) => SmartDisk[];
   /** A section item's live value (undefined: no device, no such figure, or no data yet). */
   figure: (instanceId: string | null, key: string) => string | undefined;
   /** The figures of a linked box with their current values, in display order. */
@@ -53,7 +57,7 @@ export function useMapLive(doc: MapDocument | undefined, drawing = true): MapLiv
   }
   const values = useFigureValues([...wanted]);
 
-  // Interfaces are read for devices with a port strip or a cable that names a port.
+  // Interfaces are read for devices with a front panel or a cable that names a port.
   const needPorts = new Set<string>();
   for (const el of elements) {
     if (el.kind === "box" && el.panel && el.instance_id) needPorts.add(el.instance_id);
@@ -66,6 +70,11 @@ export function useMapLive(doc: MapDocument | undefined, drawing = true): MapLiv
     }
   }
   const devicePorts = useDevicePorts(list.filter((i) => needPorts.has(i.id) && hasPorts(i)));
+
+  // A NAS box asks for the SMART disks of its device (one fleet-wide set of queries).
+  const smart = useSmartDisks(
+    elements.some((el) => el.kind === "box" && el.shape === "nas" && el.instance_id !== null),
+  );
 
   const ready = instances.isSuccess;
   const instance = (id: string | null) => (id ? byId.get(id) : undefined);
@@ -82,6 +91,7 @@ export function useMapLive(doc: MapDocument | undefined, drawing = true): MapLiv
     isDown: (id) => state(id) === "down",
     typeName: (typeId) => integrations.data?.find((t) => t.type_id === typeId)?.name ?? typeId,
     ports: (id) => (id ? devicePorts.get(id) : undefined),
+    smartDisks: (id) => smartSources(list, id).flatMap((src) => smart.get(src) ?? []),
     port: (id, portId) =>
       id && portId ? devicePorts.get(id)?.find((p) => p.id === portId) : undefined,
     figure: (instanceId, key) => {
@@ -113,4 +123,23 @@ export function instanceAddress(instance: Instance): string {
     }
   }
   return "";
+}
+
+const SMART_TYPE = "smart_exporter";
+const hostOf = (i: Instance) => instanceAddress(i).replace(/:\d+$/, "");
+
+/**
+ * The instances whose SMART disks belong to a device: the device itself when it is a SMART
+ * exporter, and every SMART exporter on the same host (a NAS runs node_exporter and
+ * smartctl_exporter side by side, as two instances).
+ */
+export function smartSources(list: readonly Instance[], id: string | null): string[] {
+  const own = list.find((i) => i.id === id);
+  if (!own) return [];
+  const host = hostOf(own);
+  const out = new Set<string>(own.type_id === SMART_TYPE ? [own.id] : []);
+  for (const i of list) {
+    if (i.type_id === SMART_TYPE && host !== "" && hostOf(i) === host) out.add(i.id);
+  }
+  return [...out];
 }

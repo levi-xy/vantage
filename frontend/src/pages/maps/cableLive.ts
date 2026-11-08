@@ -29,6 +29,38 @@ export function endElements(doc: MapDocument): Map<string, EndElement> {
   return out;
 }
 
+/** The device interface a cable's port id stands for (the port's `interface`, else its id). */
+function ifaceOf(owner: EndElement | undefined, portId: string | null): string | null {
+  if (portId === null) return null;
+  const port = owner?.kind === "box" ? owner.panel?.ports.find((p) => p.id === portId) : undefined;
+  return port?.interface || portId;
+}
+
+/**
+ * For each box: its port ids that have a cable, with the name of the box at the cable's other
+ * end (the label, else the device's name). The captions "from cables" read it, and a port
+ * without link only shows red when it appears here.
+ */
+export function portCables(doc: MapDocument, live: MapLive): Map<string, Map<string, string>> {
+  const owners = endElements(doc);
+  const nameOf = (e: EndElement | undefined) =>
+    e ? e.label || live.instance(e.instance_id)?.name || "" : "";
+  const out = new Map<string, Map<string, string>>();
+  for (const c of doc.elements) {
+    if (c.kind !== "cable") continue;
+    for (const [here, there] of [
+      [c.from, c.to],
+      [c.to, c.from],
+    ] as const) {
+      if (here.port === null) continue;
+      const names = out.get(here.element) ?? new Map<string, string>();
+      names.set(here.port, nameOf(owners.get(there.element)));
+      out.set(here.element, names);
+    }
+  }
+  return out;
+}
+
 export function cableLive(
   cable: MapCable,
   owners: ReadonlyMap<string, EndElement>,
@@ -39,7 +71,7 @@ export function cableLive(
     const owner = owners.get(e.element);
     const id = owner?.instance_id ?? null;
     const device = owner ? owner.label || live.instance(id)?.name || "" : "";
-    const dev = live.port(id, e.port);
+    const dev = live.port(id, ifaceOf(owner, e.port));
     if (dev?.ref && rate === null && (dev.inBps !== undefined || dev.outBps !== undefined)) {
       rate = { inBps: dev.inBps, outBps: dev.outBps, ref: dev.ref };
     }

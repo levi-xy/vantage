@@ -1,14 +1,21 @@
-// Pure document operations for cables, port strips and VLANs (M9.4). Every one returns a
+// Pure document operations for cables, front panels and VLANs (M9.4). Every one returns a
 // document the backend accepts: cable ends exist and differ, typed port ids exist, VLAN ids
 // exist, caps respected. Nothing here touches React or the network.
 
-import type { MapCable, MapCableEnd, MapDocument, MapPanel, MapSpeed, MapVlan } from "../../../api";
+import type {
+  MapCable,
+  MapCableEnd,
+  MapDocument,
+  MapPanel,
+  MapPort,
+  MapSpeed,
+  MapVlan,
+} from "../../../api";
 import { DEVICE_COLORS } from "../../../app/deviceColors";
 import { clamp, MAX_COORD, newId, patchElement, snapTo } from "./model";
 
 export const MAX_BENDS = 16;
 export const MAX_VLANS = 64;
-export const MAX_PORTS = 64;
 export const MAX_TAGGED = 16;
 export const MAX_GUEST_LIST = 200;
 
@@ -106,20 +113,20 @@ export function bendIndexAt(way: readonly (readonly number[])[], x: number, y: n
   return best;
 }
 
-/** Whether an end names a box or frame, and (for a typed strip) a port that exists. */
+/** Whether an end names a box or frame, and (for a panel) a port that exists. */
 export function endIsValid(doc: MapDocument, end: MapCableEnd): boolean {
   const owner = doc.elements.find((e) => e.id === end.element);
   if (owner?.kind !== "box" && owner?.kind !== "frame") return false;
   if (end.port === null) return true;
   if (owner.kind !== "box" || !owner.panel) return false;
-  // A device strip names the device's own interfaces, which only the live data knows.
+  // A panel read from the device may name interfaces only the live data knows.
   return owner.panel.source === "device" || owner.panel.ports.some((p) => p.id === end.port);
 }
 
 // --- Ports ----------------------------------------------------------------------------
 
 /**
- * Set (or clear) a box's port strip. A cable that named a typed port that no longer exists
+ * Set (or clear) a box's front panel. A cable that named a port that no longer exists
  * keeps its box and loses the port, so the saved document stays valid.
  */
 export function setBoxPorts(doc: MapDocument, boxId: string, ports: MapPanel | null): MapDocument {
@@ -135,29 +142,6 @@ export function setBoxPorts(doc: MapDocument, boxId: string, ports: MapPanel | n
       e.kind === "cable" ? { ...e, from: keep(e.from), to: keep(e.to) } : e,
     ),
   };
-}
-
-/** Change a typed port's id, and the cable ends that name it. */
-export function renamePort(doc: MapDocument, boxId: string, from: string, to: string): MapDocument {
-  const rename = (end: MapCableEnd): MapCableEnd =>
-    end.element === boxId && end.port === from ? { ...end, port: to } : end;
-  return {
-    ...doc,
-    elements: doc.elements.map((e) => {
-      if (e.kind === "cable") return { ...e, from: rename(e.from), to: rename(e.to) };
-      if (e.id === boxId && e.kind === "box" && e.panel) {
-        const ports = e.panel.ports.map((p) => (p.id === from ? { ...p, id: to } : p));
-        return { ...e, panel: { ...e.panel, ports } };
-      }
-      return e;
-    }),
-  };
-}
-
-/** The lowest unused id like `p1` among a strip's typed ports. */
-export function newPortId(ports: readonly { id: string }[]): string {
-  const used = new Set(ports.map((p) => p.id));
-  for (let n = 1; ; n++) if (!used.has(`p${n}`)) return `p${n}`;
 }
 
 // --- VLANs ----------------------------------------------------------------------------
@@ -217,3 +201,11 @@ export function newVlan(doc: MapDocument): MapVlan {
   const least = [...DEVICE_COLORS].sort((a, b) => count(a.name) - count(b.name))[0];
   return { id: String(n), name: `VLAN ${n}`, color: least?.name ?? "blue", subnet: "", note: "" };
 }
+
+export const vlanSummary = (v: MapPort["vlans"]) =>
+  [
+    v.untagged ? `untagged ${v.untagged}` : "",
+    v.tagged.length ? `tagged ${v.tagged.join(", ")}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");

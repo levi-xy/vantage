@@ -166,21 +166,25 @@ describe("cables in the editor", () => {
 });
 
 describe("ports and VLANs in the editor", () => {
-  it("saves a typed port strip with a VLAN and draws its bar", async () => {
+  it("saves a front panel built from port groups, with a VLAN, and draws its bar", async () => {
     const { saved } = await edit(doc());
     fireEvent.click(screen.getByRole("button", { name: "VLANs" }));
     fireEvent.click(screen.getByRole("button", { name: "Add VLAN" }));
     select("a");
-    fireEvent.change(screen.getByLabelText("Port strip"), { target: { value: "manual" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add port" }));
-    fireEvent.change(screen.getByLabelText("Port 1 untagged VLAN"), { target: { value: "1" } });
-    expect(viewport().querySelector('[data-port="p1"] [data-vlan="1"]')).not.toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: "Look and ports" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add RJ45 group" }));
+    fireEvent.change(screen.getByLabelText("RJ45 1 untagged VLAN"), { target: { value: "1" } });
+    expect(viewport().querySelector('[data-port="g1-1"] [data-vlan="1"]')).not.toBeNull();
     const out = await done(saved);
     const a = out.elements.find((e) => e.id === "a");
     expect(a?.kind === "box" && a.panel).toMatchObject({
       source: "manual",
-      groups: [{ kind: "rj45", count: 1 }],
-      ports: [{ id: "p1", group: "g-rj45", vlans: { untagged: "1", tagged: [] } }],
+      groups: [{ id: "g1", kind: "rj45", count: 4 }],
+    });
+    expect(a?.kind === "box" && a.panel?.ports).toHaveLength(4);
+    expect(a?.kind === "box" && a.panel?.ports[0]).toMatchObject({
+      id: "g1-1",
+      vlans: { untagged: "1", tagged: [] },
     });
     expect(out.vlans).toEqual([
       { id: "1", name: "VLAN 1", color: expect.any(String), subnet: "", note: "" },

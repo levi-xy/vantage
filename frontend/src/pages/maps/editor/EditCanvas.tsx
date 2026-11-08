@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, RefObject } from "react";
 import type { MapCable, MapCableEnd, MapDocument } from "../../../api";
 import { buttonSecondary } from "../../../components/styles";
-import { boxRate } from "../cableLive";
+import { boxRate, portCables } from "../cableLive";
 import { cableRoutes } from "../cableRoutes";
 import { MeasureProvider, useMeasuredDoc } from "../measure";
 import { BoxView, CablesLayer, FrameView, LegendView, TableView, TextView } from "../MapElements";
@@ -143,6 +143,7 @@ export function EditCanvas({
   const single = selected.length === 1 ? selected[0] : undefined;
   const [draft, setDraft] = useState<Draft | null>(null);
   const routes = cableRoutes(shown, live);
+  const cables = portCables(shown, live);
   const selCable = doc.elements.find((e): e is MapCable => e.kind === "cable" && e.id === single);
   const selPoints = selCable ? routes.points(selCable) : undefined;
 
@@ -464,6 +465,7 @@ export function EditCanvas({
                       live={live}
                       vlans={vlans}
                       rate={el.shape === "cloud" ? boxRate(shown, el.id, live) : null}
+                      cabled={cables.get(el.id)}
                     />
                   );
                 case "text":
