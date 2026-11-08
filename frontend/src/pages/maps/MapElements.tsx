@@ -305,7 +305,7 @@ export function CablesLayer({
         const w = cableWidth(cable.speed);
         const color = down ? "var(--vt-crit)" : cableColor(cable, doc);
         const dash = down ? "6 5" : DASH[cable.style];
-        const [lx, ly] = labelPoint(pts);
+        const [lx, ly] = routes.labelAt(cable) ?? labelPoint(pts);
         const [tx, ty] = tagPoint(pts);
         const text = {
           fill: down ? "var(--vt-crit-text)" : "var(--vt-muted)",

@@ -123,6 +123,7 @@ export interface InstantQuery {
 export function useInstantQuery(
   instanceId: string,
   build: (sel: Selector) => string,
+  { enabled = true }: { enabled?: boolean } = {},
 ): InstantQuery {
   const client = useApiClient();
   const expr = scopedQuery(instanceId, build);
@@ -132,6 +133,7 @@ export function useInstantQuery(
     queryKey: ["query", "instant", expr],
     queryFn: () => client.query({ query: expr }),
     refetchInterval: INSTANT_REFETCH_MS,
+    enabled,
   });
 
   // "Now" is when the live query last answered (every 15 s), which keeps the render pure.

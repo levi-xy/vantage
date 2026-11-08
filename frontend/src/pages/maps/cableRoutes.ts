@@ -4,7 +4,8 @@
 
 import type { MapCable, MapCableEnd, MapDocument } from "../../api";
 import { endElements } from "./cableLive";
-import { cablePath, endRects } from "./geometry";
+import { inflate, placeLabel } from "./cableAvoid";
+import { cablePath, endRects, labelPoint } from "./geometry";
 import type { Point, Rect } from "./geometry";
 import type { MapLive } from "./mapLive";
 import { boxPanel } from "./panelGeometry";
@@ -14,6 +15,8 @@ export interface Routes {
   endRect: (end: MapCableEnd) => Rect | undefined;
   /** The points of one cable, or undefined when an end is missing. */
   points: (cable: MapCable) => Point[] | undefined;
+  /** Where the cable's label goes: a free stretch of its route, clear of elements and labels. */
+  labelAt: (cable: MapCable) => Point | undefined;
 }
 
 export function cableRoutes(doc: MapDocument, live: MapLive): Routes {
@@ -25,13 +28,56 @@ export function cableRoutes(doc: MapDocument, live: MapLive): Routes {
   const endRect = (end: MapCableEnd) =>
     (end.port !== null ? panels.get(end.element)?.rects.get(end.port) : undefined) ??
     rects.get(end.element);
-  return {
-    endRect,
-    points: (cable) => {
-      const [boxA, boxB] = [rects.get(cable.from.element), rects.get(cable.to.element)];
-      const [a, z] = [endRect(cable.from), endRect(cable.to)];
-      if (!boxA || !boxB || !a || !z) return undefined;
-      return cablePath(a, z, cable.bends, boxA, boxB);
-    },
+  // Everything a cable must keep clear of: every element but the cables, name tabs included.
+  const things = doc.elements.flatMap((e) =>
+    e.kind === "cable"
+      ? []
+      : [
+          {
+            id: e.id,
+            rect: inflate(
+              { x: e.x, y: e.y, w: e.w, h: e.h },
+              e.kind === "box" || e.kind === "frame",
+            ),
+          },
+        ],
+  );
+  const cache = new Map<string, Point[] | undefined>();
+  const points = (cable: MapCable) => {
+    if (cache.has(cable.id)) return cache.get(cable.id);
+    const [boxA, boxB] = [rects.get(cable.from.element), rects.get(cable.to.element)];
+    const [a, z] = [endRect(cable.from), endRect(cable.to)];
+    let out: Point[] | undefined;
+    if (boxA && boxB && a && z) {
+      const avoid =
+        cable.bends.length > 0
+          ? []
+          : things
+              .filter((t) => t.id !== cable.from.element && t.id !== cable.to.element)
+              .map((t) => t.rect);
+      out = cablePath(a, z, cable.bends, boxA, boxB, avoid);
+    }
+    cache.set(cable.id, out);
+    return out;
   };
+  let labels: Map<string, Point> | undefined;
+  const labelAt = (cable: MapCable) => {
+    if (!labels) {
+      labels = new Map();
+      const taken: Rect[] = [];
+      const all = things.map((t) => t.rect);
+      for (const c of doc.elements) {
+        if (c.kind !== "cable" || (!c.label && !c.show_rate)) continue;
+        const pts = points(c);
+        if (!pts) continue;
+        const width = Math.ceil((c.label.length + (c.show_rate ? 28 : 0)) * 6.6) + 4;
+        const placed = placeLabel(pts, width, all, taken);
+        const at = placed?.at ?? labelPoint(pts);
+        taken.push(placed?.rect ?? { x: at[0] + 6, y: at[1] - 19, w: width, h: 17 });
+        labels.set(c.id, at);
+      }
+    }
+    return labels.get(cable.id);
+  };
+  return { endRect, points, labelAt };
 }

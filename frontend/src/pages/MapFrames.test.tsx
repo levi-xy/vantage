@@ -10,6 +10,8 @@ import { guestColumns } from "./maps/guests";
 import type { GuestTile } from "./maps/guests";
 import { legendEntries } from "./maps/legend";
 import { makeElement } from "./maps/editor/model";
+import { inflate } from "./maps/cableAvoid";
+import { cablePath } from "./maps/geometry";
 
 vi.mock("../cards/proxmox-guests/useProxmoxGuests", () => ({
   useProxmoxGuests: () => ({
@@ -244,5 +246,82 @@ describe("replacing ports from the Look and ports tab", () => {
     const next = edit.mock.calls[0]?.[0] as MapDocument;
     const cable = next.elements.find((e) => e.kind === "cable");
     expect(cable?.kind === "cable" && cable.from).toEqual({ element: "b1", port: null });
+  });
+});
+
+describe("cable routes", () => {
+  const r = (x: number, y: number, w: number, h: number) => ({ x, y, w, h });
+  type P = readonly [number, number];
+  const crosses = (pts: readonly P[], o: ReturnType<typeof r>) =>
+    pts.slice(1).some((p, i) => {
+      const q = pts[i] as P;
+      return (
+        Math.max(p[0], q[0]) > o.x &&
+        Math.min(p[0], q[0]) < o.x + o.w &&
+        Math.max(p[1], q[1]) > o.y &&
+        Math.min(p[1], q[1]) < o.y + o.h
+      );
+    });
+
+  it("goes around a box in between and turns in a free gap, clear of the name tab", () => {
+    const a = r(0, 0, 200, 80);
+    const b = r(0, 400, 200, 80);
+    const between = r(70, 200, 60, 80);
+    const pts = cablePath(a, b, [], a, b, [inflate(between, true)]);
+    expect(crosses(pts, between)).toBe(false);
+    // Every turn stays above b's name tab.
+    expect(Math.max(...pts.slice(0, -1).map((p) => p[1]))).toBeLessThanOrEqual(400 - 22);
+  });
+});
+
+describe("groups on a device-source panel without own ports", () => {
+  it("copies the live ports in first, so a cable keeps its port", () => {
+    const el = makeElement({ version: 1, vlans: [], elements: [] }, "box", 0, 0);
+    if (el.kind !== "box") throw new Error("box expected");
+    const first = { ...el, shape: "device" as const, panel: emptyPanel("device") };
+    const doc: MapDocument = {
+      version: 1,
+      vlans: [],
+      elements: [
+        first,
+        { ...makeElement({ version: 1, vlans: [], elements: [first] }, "box", 400, 0), id: "b2" },
+        {
+          id: "c1",
+          kind: "cable",
+          from: { element: first.id, port: "eth0" },
+          to: { element: "b2", port: null },
+          speed: null,
+          style: "solid",
+          role: null,
+          vlan: null,
+          color: null,
+          label: "",
+          show_rate: false,
+          bends: [],
+        },
+      ],
+    };
+    const device = ["eth0", "eth1"].map((id, order) => ({
+      id,
+      name: id,
+      state: null,
+      ref: null,
+      order,
+    }));
+    const edit = vi.fn();
+    render(
+      <LookAndPorts
+        doc={doc}
+        box={first}
+        instance={undefined}
+        live={{ ...live(), ports: () => device }}
+        patch={() => undefined}
+        edit={edit}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: /^Add .* group$/i })[0] as HTMLElement);
+    const next = edit.mock.calls[0]?.[0] as MapDocument;
+    const cable = next.elements.find((e) => e.kind === "cable");
+    expect(cable?.kind === "cable" && cable.from.port).toBe("eth0");
   });
 });

@@ -176,7 +176,9 @@ function ProxmoxColumns({
   color: string;
 }) {
   // The same combined queries the guests card uses: one per metric, never one per guest.
-  const { guests, cpuBy, memBy } = useProxmoxGuests(instanceId);
+  const { guests, cpuBy, memBy } = useProxmoxGuests(instanceId, {
+    bars: frame.bars !== false,
+  });
   return (
     <Columns
       frame={frame}

@@ -191,6 +191,8 @@ export function SectionsView({ m }: { m: BoxModel }) {
         if (items.length === 0) return null;
         const grid: CSSProperties = {
           gridTemplateColumns: `repeat(${section.kind === "list" ? 1 : section.columns}, minmax(0, 1fr))`,
+          // Tiles sit side by side at a size that fits their content, not stretched across the box.
+          ...(section.kind === "tiles" ? { maxWidth: section.columns * 170 } : {}),
         };
         return (
           <div key={section.id} data-section={section.id} data-kind-section={section.kind}>

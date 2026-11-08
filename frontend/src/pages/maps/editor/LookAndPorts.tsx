@@ -237,7 +237,8 @@ export function LookAndPorts({
     edit(next);
   };
 
-  const groups = panel?.groups ?? [];
+  // What is drawn: a device-source panel with no own ports edits the device's interfaces.
+  const groups = panel ? resolvePanel(panel, device).groups : [];
   const total = groups.reduce((n, g) => n + g.count, 0);
   const changeGroup = (i: number, change: Partial<MapPanel["groups"][number]>) =>
     setGroups(groups.map((g, k) => (k === i ? { ...g, ...change } : g)));
