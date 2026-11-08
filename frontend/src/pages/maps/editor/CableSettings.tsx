@@ -207,7 +207,7 @@ export function CableSettings({
       <div>
         <span className={labelText}>Route</span>
         {/* Cables are always drawn at right angles (auto, or through the bends); no straight
-            routes (maintainer decision, 2026-11-08). */}
+            routes (maintainer decision, 2026-11-07). */}
         <p className="text-sm">Right angles</p>
         <p className="text-xs text-muted">
           Drag the cable to add a bend; drag a bend to move it; double-click a bend to remove it.
