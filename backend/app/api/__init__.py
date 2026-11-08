@@ -10,7 +10,7 @@ from app.api import (
     dashboards,
     instances,
     integrations,
-    links,
+    maps,
     query,
     users,
     ws,
@@ -24,7 +24,7 @@ api_router.include_router(channels.router)
 api_router.include_router(dashboards.router)
 api_router.include_router(integrations.router)
 api_router.include_router(instances.router)
-api_router.include_router(links.router)
+api_router.include_router(maps.router)
 api_router.include_router(query.router)
 api_router.include_router(users.router)
 api_router.include_router(ws.router)

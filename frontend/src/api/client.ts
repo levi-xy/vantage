@@ -22,8 +22,6 @@ import type {
   DashboardSummary,
   DashboardUpdate,
   DeliveryStatusSummary,
-  DeviceLink,
-  DeviceLinkCreate,
   Instance,
   InstanceCreate,
   InstanceTest,
@@ -355,20 +353,6 @@ export class ApiClient {
   /** Any user. The last dashboard can't be deleted (409). */
   deleteDashboard(id: number): Promise<void> {
     return this.request("DELETE", `/dashboards/${encodeURIComponent(String(id))}`);
-  }
-
-  links(): Promise<DeviceLink[]> {
-    return this.request("GET", "/links");
-  }
-
-  /** Admin only. */
-  createLink(body: DeviceLinkCreate): Promise<DeviceLink> {
-    return this.request("POST", "/links", body);
-  }
-
-  /** Admin only. */
-  deleteLink(id: number): Promise<void> {
-    return this.request("DELETE", `/links/${encodeURIComponent(String(id))}`);
   }
 
   /** Admin only. */

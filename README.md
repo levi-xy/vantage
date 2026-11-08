@@ -24,8 +24,8 @@ Vantage puts your firewall, hypervisor, NAS, switches, tunnels and services on o
 
 - **Add anything from the UI:** pick a device type, fill a form, test the connection, save. Run as many instances of each type as you need.
 - **Integrations as plugins:** each device type is a self-contained module with its form, collection logic and cards. The community can add more.
-- **Live, hardware-shaped cards:** network topology map, switch port faceplate, NAS drive bays, VM lists, tunnel and site traffic, media streams.
-- **Network map:** a dashboard card draws your devices with live status and the links you add in edit mode (device, optional port, label); a link shows its throughput when both ends name a port with traffic counters.
+- **Live, hardware-shaped cards:** switch port faceplate, NAS drive bays, VM lists, tunnel and site traffic, media streams.
+- **Network map:** a Map page, where you draw your network (devices, ports, cables, VLANs) with live status, is coming; the old map card is gone.
 - **Dashboards you arrange:** a new device's cards land on the main dashboard; drag, resize (cards show less when small), add more dashboards as tabs.
 - **History and alerts:** Prometheus underneath, alert rules managed in the UI, Telegram delivery (more channels later). Telegram channels are set up on the **Alerts** page, with a "Send test message" button; the bot token is stored encrypted and never shown again.
 - **Self-monitoring:** Vantage alerts when Prometheus is unreachable, isn't collecting, or alert evaluation stops, and says why; `/healthz` for an external watchdog.

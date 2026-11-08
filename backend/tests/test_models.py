@@ -17,7 +17,6 @@ from app.models import (
     ChannelType,
     Dashboard,
     Instance,
-    Link,
     Role,
     Setting,
     User,
@@ -168,15 +167,13 @@ def test_enum_columns_reject_unknown_values_at_db_level(
             s.commit()
 
 
-def test_deleting_instance_cascades_to_links_and_scoped_rules(session: Session) -> None:
+def test_deleting_instance_cascades_to_scoped_rules(session: Session) -> None:
     a, b = _instance("a"), _instance("b")
     session.add_all([a, b])
     session.flush()
     rule = AlertRule(name="a down", expr="up == 0", severity="critical", instance_id=a.id)
     global_rule = AlertRule(name="any down", expr="up == 0", severity="critical")
-    session.add_all(
-        [Link(a_instance_id=a.id, b_instance_id=b.id, a_port="ether1"), rule, global_rule]
-    )
+    session.add_all([rule, global_rule])
     session.commit()
     rule_id = rule.id
 
@@ -184,15 +181,8 @@ def test_deleting_instance_cascades_to_links_and_scoped_rules(session: Session) 
     session.commit()
     session.expire_all()
 
-    assert session.scalars(select(Link)).all() == []
     assert session.get(AlertRule, rule_id) is None
     assert session.get(AlertRule, global_rule.id) is not None
-
-
-def test_link_requires_existing_instances(session: Session) -> None:
-    session.add(Link(a_instance_id=uuid.uuid4(), b_instance_id=uuid.uuid4()))
-    with pytest.raises(IntegrityError):
-        session.commit()
 
 
 def test_one_open_event_per_rule_and_fingerprint(session: Session) -> None:
