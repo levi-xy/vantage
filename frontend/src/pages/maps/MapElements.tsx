@@ -424,10 +424,15 @@ export function CablesLayer({
   doc,
   live,
   onHover,
+  onPick,
+  pickedId,
 }: {
   doc: MapDocument;
   live: MapLive;
   onHover?: (hover: CableHover | null) => void;
+  /** The editor: a click on a cable selects it. */
+  onPick?: (id: string) => void;
+  pickedId?: string | null;
 }) {
   const rects = endRects(doc);
   const owners = endElements(doc);
@@ -443,7 +448,6 @@ export function CablesLayer({
     rects.get(end.element);
   return (
     <svg
-      aria-hidden="true"
       className="pointer-events-none absolute top-0 left-0 overflow-visible"
       width={b.x + b.w + 40}
       height={b.y + b.h + 40}
@@ -472,6 +476,16 @@ export function CablesLayer({
         const rate = cable.show_rate ? state.rate : null;
         return (
           <g key={cable.id} data-cable={cable.id} data-down={down ? "true" : undefined}>
+            {pickedId === cable.id && (
+              <path
+                d={d}
+                data-picked="true"
+                stroke="var(--vt-in)"
+                strokeWidth={w + 6}
+                opacity="0.35"
+                strokeLinejoin="round"
+              />
+            )}
             {cable.role === "trunk" && !down && (
               <path
                 d={d}
@@ -490,15 +504,32 @@ export function CablesLayer({
               strokeLinecap={cable.style === "dotted" ? "round" : "butt"}
               strokeLinejoin="round"
             />
-            {onHover && (
+            {(onHover || onPick) && (
               <path
                 d={d}
                 data-hit={cable.id}
                 stroke="transparent"
                 strokeWidth={Math.max(14, w + 8)}
                 pointerEvents="stroke"
-                onPointerMove={(e) => onHover({ id: cable.id, x: e.clientX, y: e.clientY })}
-                onPointerLeave={() => onHover(null)}
+                // Reachable by keyboard: focus shows the same card as hovering.
+                role="button"
+                tabIndex={0}
+                aria-label={`Cable ${state.ends[0].device} to ${state.ends[1].device}`}
+                className="focus-visible:outline-none"
+                onPointerMove={(e) => onHover?.({ id: cable.id, x: e.clientX, y: e.clientY })}
+                onPointerLeave={() => onHover?.(null)}
+                onFocus={(e) => {
+                  const r = e.currentTarget.getBoundingClientRect();
+                  onHover?.({ id: cable.id, x: r.left + r.width / 2, y: r.top + r.height / 2 });
+                }}
+                onBlur={() => onHover?.(null)}
+                onClick={() => onPick?.(cable.id)}
+                onKeyDown={(e) => {
+                  if (onPick && (e.key === "Enter" || e.key === " ")) {
+                    e.preventDefault();
+                    onPick(cable.id);
+                  }
+                }}
               />
             )}
             {(cable.label || rate) && (

@@ -1,10 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import type { FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import type { NetworkMapSummary } from "../api";
+import type { NetworkMap, NetworkMapSummary } from "../api";
 import { useApiClient, useUser } from "../app/session";
 import { EmptyState } from "../components/PageHeader";
-import { alertError, buttonPrimary, input } from "../components/styles";
+import { alertError, buttonPrimary, buttonSecondary, input } from "../components/styles";
 import { errorText } from "./devices/queries";
+import { MapEditor } from "./maps/editor/MapEditor";
+import { NewMapForm } from "./maps/editor/NewMapForm";
 import { MapCanvas } from "./maps/MapCanvas";
 import { useMapLive } from "./maps/mapLive";
 import { MapPhoneList } from "./maps/MapPhoneList";
@@ -24,23 +28,46 @@ function MapTabs({
   list,
   current,
   isAdmin,
+  editing,
+  onCreated,
 }: {
   list: NetworkMapSummary[];
   current: number | null;
   isAdmin: boolean;
+  /** The current map is being edited: the tabs can't change under the editor. */
+  editing: boolean;
+  onCreated: (map: NetworkMap) => void;
 }) {
   const api = useApiClient();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const create = useMutation({
-    // The editor (M9.3) renames it; for now a blank map is added and shown.
-    mutationFn: () => api.createMap({ name: `Map ${list.length + 1}` }),
-    onSuccess: async (created) => {
-      queryClient.setQueryData(mapKey(created.id), created);
-      await queryClient.invalidateQueries({ queryKey: MAPS_KEY });
-      void navigate(`/map/${created.id}`);
+  const [form, setForm] = useState<"new" | "rename" | null>(null);
+  const index = list.findIndex((m) => m.id === current);
+  const name = list[index]?.name ?? "";
+
+  const refreshList = () => queryClient.invalidateQueries({ queryKey: MAPS_KEY });
+  const update = useMutation({
+    mutationFn: (body: { name?: string; position?: number }) => api.updateMap(current ?? 0, body),
+    onSuccess: async () => {
+      setForm(null);
+      if (current !== null) await queryClient.invalidateQueries({ queryKey: mapKey(current) });
+      await refreshList();
     },
   });
+  const remove = useMutation({
+    mutationFn: () => api.deleteMap(current ?? 0),
+    onSuccess: async () => {
+      if (current !== null) queryClient.removeQueries({ queryKey: mapKey(current) });
+      await refreshList();
+      void navigate("/map");
+    },
+  });
+  const onDelete = () => {
+    if (window.confirm(`Delete the map "${name}"? Its drawing is lost.`)) remove.mutate();
+  };
+  const manage = isAdmin && !editing && index >= 0;
+  const failed = update.error ?? remove.error;
+
   return (
     <div className="mb-4">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-2 border-b border-line">
@@ -73,32 +100,147 @@ function MapTabs({
             </select>
           </label>
         )}
-        {isAdmin && (
+        {isAdmin && !editing && (
           <button
             type="button"
             className={`${tabClass(false)} hidden md:block`}
-            disabled={create.isPending}
-            onClick={() => create.mutate()}
+            onClick={() => setForm(form === "new" ? null : "new")}
           >
             + New map
           </button>
         )}
+        {manage && (
+          <div className="ml-auto hidden gap-2 pb-2 md:flex">
+            <button type="button" className={buttonSecondary} onClick={() => setForm("rename")}>
+              Rename
+            </button>
+            <button
+              type="button"
+              className={buttonSecondary}
+              disabled={index === 0 || update.isPending}
+              onClick={() => update.mutate({ position: index - 1 })}
+            >
+              Move left
+            </button>
+            <button
+              type="button"
+              className={buttonSecondary}
+              disabled={index === list.length - 1 || update.isPending}
+              onClick={() => update.mutate({ position: index + 1 })}
+            >
+              Move right
+            </button>
+            <button
+              type="button"
+              className={buttonSecondary}
+              disabled={remove.isPending}
+              onClick={onDelete}
+            >
+              Delete
+            </button>
+          </div>
+        )}
       </div>
-      {create.error && (
+      {form === "new" && !editing && (
+        <div className="mt-3">
+          <NewMapForm maps={list} onCreated={onCreated} onCancel={() => setForm(null)} />
+        </div>
+      )}
+      {form === "rename" && manage && (
+        <RenameForm
+          initial={name}
+          busy={update.isPending}
+          onSubmit={(n) => update.mutate({ name: n })}
+          onCancel={() => setForm(null)}
+        />
+      )}
+      {failed && (
         <p role="alert" className={`mt-2 ${alertError}`}>
-          {errorText(create.error)}
+          {errorText(failed)}
         </p>
       )}
     </div>
   );
 }
 
-function MapView({ id }: { id: number }) {
+function RenameForm({
+  initial,
+  busy,
+  onSubmit,
+  onCancel,
+}: {
+  initial: string;
+  busy: boolean;
+  onSubmit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(initial);
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (name.trim()) onSubmit(name.trim());
+  };
+  return (
+    <form
+      aria-label="Rename map"
+      onSubmit={submit}
+      className="flex flex-wrap items-center gap-2 py-2 text-sm"
+    >
+      <label className="flex items-center gap-2">
+        <span>Name</span>
+        <input
+          className={`${input} w-56`}
+          value={name}
+          maxLength={64}
+          required
+          autoFocus
+          onChange={(e) => setName(e.target.value)}
+        />
+      </label>
+      <button type="submit" className={buttonPrimary} disabled={busy || !name.trim()}>
+        Save
+      </button>
+      <button type="button" className={buttonSecondary} onClick={onCancel}>
+        Cancel
+      </button>
+    </form>
+  );
+}
+
+/** The working copy starts from the map as it was when editing began; refreshes don't touch it. */
+function EditSession({
+  map,
+  onDone,
+  onReload,
+}: {
+  map: NetworkMap;
+  onDone: (saved: NetworkMap | null) => void;
+  onReload: () => void;
+}) {
+  const [frozen] = useState(map);
+  return (
+    <MapEditor map={frozen} onSaved={onDone} onClose={() => onDone(null)} onReload={onReload} />
+  );
+}
+
+function MapView({
+  id,
+  isAdmin,
+  editing,
+  onEdit,
+  onStopEdit,
+}: {
+  id: number;
+  isAdmin: boolean;
+  editing: boolean;
+  onEdit: () => void;
+  onStopEdit: () => void;
+}) {
   const api = useApiClient();
+  const queryClient = useQueryClient();
   const map = useQuery({
     queryKey: mapKey(id),
     queryFn: () => api.map(id),
-    refetchInterval: MAP_REFRESH_MS,
+    refetchInterval: editing ? false : MAP_REFRESH_MS,
   });
   // Draw on a wide screen, list on a phone: only one of the two is rendered (and queried).
   const wide = useMediaQuery(WIDE_QUERY);
@@ -111,11 +253,44 @@ function MapView({ id }: { id: number }) {
       </p>
     );
   }
-  const doc = map.data.document;
-  if (doc.elements.length === 0) {
-    return <EmptyState>This map is empty. Drawing comes with the map editor.</EmptyState>;
+  const canEdit = isAdmin && wide;
+  if (editing && canEdit) {
+    return (
+      <EditSession
+        map={map.data}
+        onDone={(saved) => {
+          if (saved) {
+            queryClient.setQueryData(mapKey(id), saved);
+            void queryClient.invalidateQueries({ queryKey: MAPS_KEY });
+          }
+          onStopEdit();
+        }}
+        onReload={() => {
+          void queryClient.invalidateQueries({ queryKey: mapKey(id) }).then(onStopEdit);
+        }}
+      />
+    );
   }
-  return wide ? <MapCanvas doc={doc} live={live} /> : <MapPhoneList doc={doc} live={live} />;
+  const doc = map.data.document;
+  const editButton = canEdit && (
+    <button type="button" className={buttonSecondary} onClick={onEdit}>
+      Edit map
+    </button>
+  );
+  if (doc.elements.length === 0) {
+    return (
+      <EmptyState>
+        <p className="mb-3">This map is empty.</p>
+        {editButton}
+      </EmptyState>
+    );
+  }
+  return (
+    <>
+      {editButton && <div className="mb-2 flex justify-end">{editButton}</div>}
+      {wide ? <MapCanvas doc={doc} live={live} /> : <MapPhoneList doc={doc} live={live} />}
+    </>
+  );
 }
 
 /** `/map` shows the first map, `/map/<id>` any map. */
@@ -128,10 +303,21 @@ export function MapPage() {
     queryFn: () => api.maps(),
     refetchInterval: MAP_REFRESH_MS,
   });
+  const navigate = useNavigate();
+  // The map being edited, if any (it stays set while the address changes to the new map).
+  const [editingId, setEditingId] = useState<number | null>(null);
   const list = maps.data ?? [];
   const wanted =
     id === undefined ? (list[0]?.id ?? null) : /^[1-9]\d{0,9}$/.test(id) ? Number(id) : null;
   const known = wanted !== null && list.some((m) => m.id === wanted);
+
+  const queryClient = useQueryClient();
+  const onCreated = async (created: NetworkMap) => {
+    queryClient.setQueryData(mapKey(created.id), created);
+    await queryClient.invalidateQueries({ queryKey: MAPS_KEY });
+    setEditingId(created.id);
+    void navigate(`/map/${created.id}`);
+  };
 
   let body;
   if (maps.isPending) body = <p className="text-sm text-muted">Loading the maps…</p>;
@@ -142,52 +328,58 @@ export function MapPage() {
       </p>
     );
   } else if (list.length === 0) {
-    body = <NoMaps isAdmin={isAdmin} />;
+    body = <NoMaps isAdmin={isAdmin} onCreated={onCreated} />;
   } else if (!known || wanted === null) {
     body = <p className="text-sm text-muted">There is no such map.</p>;
   } else {
-    body = <MapView key={wanted} id={wanted} />;
+    body = (
+      <MapView
+        key={wanted}
+        id={wanted}
+        isAdmin={isAdmin}
+        editing={editingId === wanted}
+        onEdit={() => setEditingId(wanted)}
+        onStopEdit={() => setEditingId(null)}
+      />
+    );
   }
 
   return (
     <>
-      {list.length > 0 && <MapTabs list={list} current={known ? wanted : null} isAdmin={isAdmin} />}
+      {list.length > 0 && (
+        <MapTabs
+          list={list}
+          current={known ? wanted : null}
+          isAdmin={isAdmin}
+          editing={editingId !== null && editingId === wanted}
+          onCreated={onCreated}
+        />
+      )}
       {body}
     </>
   );
 }
 
-function NoMaps({ isAdmin }: { isAdmin: boolean }) {
-  const api = useApiClient();
-  const queryClient = useQueryClient();
-  const navigate = useNavigate();
-  const create = useMutation({
-    mutationFn: () => api.createMap({ name: "Map 1" }),
-    onSuccess: async (created) => {
-      queryClient.setQueryData(mapKey(created.id), created);
-      await queryClient.invalidateQueries({ queryKey: MAPS_KEY });
-      void navigate(`/map/${created.id}`);
-    },
-  });
+function NoMaps({
+  isAdmin,
+  onCreated,
+}: {
+  isAdmin: boolean;
+  onCreated: (map: NetworkMap) => void;
+}) {
+  const [creating, setCreating] = useState(false);
+  if (creating) {
+    return <NewMapForm maps={[]} onCreated={onCreated} onCancel={() => setCreating(false)} />;
+  }
   return (
     <EmptyState>
       <p className="mb-3 text-base font-medium text-ink">No maps yet</p>
       {isAdmin ? (
         <>
           <p className="mb-3">Draw your network: devices, how they connect, notes and tables.</p>
-          <button
-            type="button"
-            className={buttonPrimary}
-            disabled={create.isPending}
-            onClick={() => create.mutate()}
-          >
+          <button type="button" className={buttonPrimary} onClick={() => setCreating(true)}>
             New map
           </button>
-          {create.error && (
-            <p role="alert" className={`mt-3 ${alertError}`}>
-              {errorText(create.error)}
-            </p>
-          )}
         </>
       ) : (
         <p>An admin can draw the first map.</p>
