@@ -11,10 +11,13 @@ export interface CableEnd {
   /** The port as it is named on the device, else as typed on the map; null for a box edge. */
   port: string | null;
   portDown: boolean;
+  portUp: boolean;
 }
 
 export interface CableLive {
   down: boolean;
+  /** Not down, and a linked device (or a port) at either end is up: the cable is live. */
+  up: boolean;
   ends: [CableEnd, CableEnd];
   /** Bits per second in/out at the first end that has counters. */
   rate: { inBps?: number; outBps?: number; ref: PortRef } | null;
@@ -81,13 +84,19 @@ export function cableLive(
       device,
       port: e.port === null ? null : typed || dev?.name || e.port,
       portDown: dev?.state === "down",
+      portUp: dev?.state === "up",
     };
   };
   const ends: [CableEnd, CableEnd] = [end(cable.from), end(cable.to)];
   const deviceDown = [cable.from, cable.to].some((e) =>
     live.isDown(owners.get(e.element)?.instance_id ?? null),
   );
-  return { down: deviceDown || ends.some((e) => e.portDown), ends, rate };
+  const down = deviceDown || ends.some((e) => e.portDown);
+  const deviceUp = [cable.from, cable.to].some(
+    (e) => live.state(owners.get(e.element)?.instance_id ?? null) === "up",
+  );
+  const up = !down && (deviceUp || ends.some((e) => e.portUp));
+  return { down, up, ends, rate };
 }
 
 /** The live in/out of the first cable on a box that has counters (the cloud shows it). */

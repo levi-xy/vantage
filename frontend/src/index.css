@@ -9,14 +9,14 @@
  * follow the theme on their own, without a `dark:` variant.
  */
 :root {
-  --vt-canvas: #f4f6f9;
+  --vt-canvas: #e3e8ef;
   --vt-panel: #ffffff;
-  --vt-inset: #f7f9fb;
-  --vt-line: #e1e6ee;
+  --vt-inset: #f0f3f7;
+  --vt-line: #c9d1dc;
   --vt-ink: #0f172a;
-  --vt-muted: #55627a;
-  --vt-chip: #eef2f7;
-  --vt-track: #e8edf3;
+  --vt-muted: #4b5870;
+  --vt-chip: #e4e9f0;
+  --vt-track: #d9dfe8;
   --vt-in: #1f6feb;
   --vt-out: #c2620a;
   --vt-ok: #12a06e;
@@ -26,7 +26,7 @@
   --vt-crit-text: #b42323;
   --vt-warn: #b7791f;
   /* The outline of a port with no link or disabled. */
-  --vt-port-off: #a9b4c4;
+  --vt-port-off: #97a3b5;
   /*
    * Device colours (src/app/deviceColors.ts): at least 4.5:1 on the panel in light mode,
    * the 400 shades in dark. No red, amber or green: those mean problems and healthy.
