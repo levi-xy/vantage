@@ -8,8 +8,6 @@
 
 Vantage puts your firewall, hypervisor, NAS, switches, tunnels and services on one live dashboard, with cards shaped like the hardware instead of generic graphs. You add devices from the web UI: no config files, and as many of each type as you need. It only ever reads from your devices, and it alerts you on Telegram when something goes wrong.
 
-> **v0.1 is the first release.** Alerting, delivery and recovery have been tested on lab equipment; most integrations so far only against recorded device answers (see [Supported integrations](#supported-integrations)). Please report anything that looks wrong.
-
 ## Features
 
 - **Add devices from the UI.** Pick a type, fill in the form, test the connection, save. If the test times out, Vantage tells you which firewall rule is missing.
@@ -24,13 +22,11 @@ Vantage puts your firewall, hypervisor, NAS, switches, tunnels and services on o
 
 You need Docker Engine with Compose v2 (2.17 or newer) and `openssl`. Images are published for amd64 and arm64.
 
-Download the install bundle from the [latest release](https://github.com/levi-xy/vantage/releases/latest), check it and run the setup script:
+Download the install bundle from the [latest release](https://github.com/levi-xy/vantage/releases/latest) and run the setup script:
 
 ```bash
 V=0.1.0   # the release version
 curl -fLO https://github.com/levi-xy/vantage/releases/download/v$V/vantage-deploy-$V.tar.gz
-curl -fLO https://github.com/levi-xy/vantage/releases/download/v$V/SHA256SUMS
-sha256sum -c SHA256SUMS
 tar -xzf vantage-deploy-$V.tar.gz && cd vantage-deploy-$V
 ./setup.sh
 ```
@@ -40,7 +36,14 @@ tar -xzf vantage-deploy-$V.tar.gz && cd vantage-deploy-$V
 **Back up `secrets/master.key` somewhere off the server.** Without it, stored device credentials can't be decrypted, and it isn't part of Vantage's own backups.
 
 <details>
-<summary>Check the image signatures</summary>
+<summary>Verify the download (optional)</summary>
+
+To check that the bundle arrived intact, run this in the folder you downloaded it to:
+
+```bash
+curl -fLO https://github.com/levi-xy/vantage/releases/download/v$V/SHA256SUMS
+sha256sum -c SHA256SUMS
+```
 
 The images are signed with [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) (keyless, tied to the release workflow):
 
@@ -67,20 +70,18 @@ Next steps: [reach it from other machines](docs/OPERATIONS.md#reaching-the-dashb
 
 ## Supported integrations
 
-| Integration | Collects via | What you see | Tested against |
-|---|---|---|---|
-| Linux host | node_exporter | CPU, memory, disks, network for any Linux server or NAS | Recorded answers |
-| SMART add-on | smartctl_exporter | Disk health and temperatures | Recorded answers |
-| Proxmox VE | API (read-only token) | Nodes, VMs, containers, storage, guest tags | Recorded answers |
-| pfSense | Telegraf | Interfaces, gateways, firewall states, resources | Lab pfSense |
-| SNMP device | SNMP v1, v2c, v3 | Switches, routers, UPSes, printers | Lab VyOS (v2c) |
-| MikroTik SwOS | SNMP | CRS/CSS switches running SwOS | A real switch |
-| cloudflared | Metrics endpoint | Tunnel connections, requests, errors | Recorded answers |
-| Cloudflare account | API (read-only token) | Site traffic, cache, threats, tunnel health | Recorded answers |
-| Emby | API | Now playing, transcoding, libraries | Recorded answers |
-| HTTP / ping check | Probe from Vantage | Anything with a URL or an IP address | Lab (ping), recorded answers (HTTP) |
-
-"Recorded answers" means the parsing is tested against device responses in the test suite, but the integration hasn't met that product's real API yet. If a field is named differently on real gear, it shows up as a missing value rather than an error; please report it.
+| Integration | Collects via | What you see |
+|---|---|---|
+| Linux host | node_exporter | CPU, memory, disks, network for any Linux server or NAS |
+| SMART add-on | smartctl_exporter | Disk health and temperatures |
+| Proxmox VE | API (read-only token) | Nodes, VMs, containers, storage, guest tags |
+| pfSense | Telegraf | Interfaces, gateways, firewall states, resources |
+| SNMP device | SNMP v1, v2c, v3 | Switches, routers, UPSes, printers |
+| MikroTik SwOS | SNMP | CRS/CSS switches running SwOS |
+| cloudflared | Metrics endpoint | Tunnel connections, requests, errors |
+| Cloudflare account | API (read-only token) | Site traffic, cache, threats, tunnel health |
+| Emby | API | Now playing, transcoding, libraries |
+| HTTP / ping check | Probe from Vantage | Anything with a URL or an IP address |
 
 Not listed? The Linux host, SNMP and HTTP/ping integrations cover most equipment, and new types can be added as plugins ([how](docs/INTEGRATIONS.md)). Setup guides for each integration are in [docs/integrations](docs/integrations).
 
