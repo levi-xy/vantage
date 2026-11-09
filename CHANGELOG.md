@@ -17,8 +17,12 @@ The first release.
 **Dashboard**
 - Several dashboards as tabs; cards dragged, resized and shown in less detail when small; a phone layout. A new device's cards are put on the main dashboard.
 - Hardware-shaped cards: switch front panel, pfSense interfaces (VLANs grouped) and gateways, Proxmox nodes and guests (with tags), drive health, Emby (with a live "Now playing" list, never stored).
-- Each device has its own colour on its cards; a network map card; WAN throughput with live rates.
+- Each device has its own colour on its cards; WAN throughput with live rates.
 - Header health (Healthy / Warning / Critical) with a list of what's wrong.
+
+**Network maps**
+- A Map page with one or more maps that admins draw: devices (card, cloud, switch, NAS and access-point shapes, icons from the dashboard-icons set), front panels with RJ45 jacks and SFP cages, cables with speed, style and VLANs, Proxmox hosts with their guests filled in, text, tables, a VLAN list and a legend.
+- Live port and device state, cable rates on hover; on a phone, a list of the map's devices and problems instead of the drawing.
 
 **Alerts**
 - Rules from templates or PromQL, one alert per series, Telegram channels.
@@ -26,6 +30,6 @@ The first release.
 - Delivery through an outbox with retries for 24 hours (at least once, never lost); a banner when messages are stuck.
 - Vantage's own alerts: Prometheus unreachable (saying why and how to fix it), metrics not collected, evaluator stalled, master key mismatch. `/healthz` for an external watchdog.
 
-**Operations:** backup, offline restore and master-key rotation (`app.cli`), guarded by a maintenance lock; signed multi-arch images on GitHub Container Registry with an SBOM; an install bundle per release.
+**Operations:** one timezone, chosen by an admin, for every page, message and log line (the clock stays the host's); backup, offline restore and master-key rotation (`app.cli`), guarded by a maintenance lock; signed multi-arch images on GitHub Container Registry with an SBOM; an install bundle per release.
 
 **License:** Apache 2.0.
