@@ -17,7 +17,7 @@ Examples below use `10.0.0.30` for the NAS and `10.0.0.10` for the Vantage host.
 
 ## 1. Prepare
 
-On any NAS OS:
+On any NAS OS except UGOS Pro (which needs none of this; skip to its section):
 
 1. Enable SSH for an administrator account (needed at least to list the disks).
 2. List the disks and edit the `devices:` list in `docker-compose.yml`
@@ -30,39 +30,33 @@ On any NAS OS:
 
 ### UGOS Pro (UGREEN)
 
-Since UGOS Pro 1.19, the Docker app's **Projects** UI refuses a bind mount of the host
-root (`/`), which node_exporter needs for volume usage. Start the project over SSH
-instead:
+Everything happens in the UGOS web interface; no SSH. Use the UGREEN file,
+[`docker-compose.ugreen.yml`](../../deploy/exporters/nas/docker-compose.ugreen.yml),
+instead of `docker-compose.yml`: the Docker app refuses a mount of the NAS's root
+(`/`), so this file gives node_exporter your storage volumes instead, and it runs both
+exporters in the host network so the UGOS firewall covers both ports.
 
-1. Control Panel → Terminal → enable SSH. Log in as an administrator.
-2. Copy `deploy/exporters/nas/` to a shared folder, for example
-   `/volume1/docker/vantage-nas-exporters/`, and edit the device list there.
-3. Start it:
+1. Docker app → **Projects** → **Create**. Name it `vantage-nas-exporters` and paste
+   the whole file.
+2. Edit the two marked lists in the pasted text:
+   - **volumes:** one `/volumeN` line per storage pool (Storage Manager shows them).
+   - **devices:** one line per disk. A 2-bay NAS is usually `/dev/sda` and
+     `/dev/sdb`, a 4-bay `/dev/sda` to `/dev/sdd`. If the SMART container doesn't
+     start, a listed disk doesn't exist: remove that line and start the project again.
+3. Start the project. Both containers should show **Running**.
+4. In Control Panel, open the **firewall** settings: allow TCP 9100 and 9633 from the Vantage
+   host only, then deny those ports from anywhere else.
 
-   ```
-   cd /volume1/docker/vantage-nas-exporters
-   sudo docker compose up -d
-   sudo docker compose ps
-   ```
-
-4. Leave SSH disabled again afterwards if you don't use it. The containers restart on
-   boot by themselves (`restart: unless-stopped`).
-
-The containers may appear in the Docker app's container list. Manage them with
-`docker compose` over SSH, not by editing them in the UI, which could recreate them
-without the root mount.
-
-**If the root can't be mounted at all** (a future UGOS release blocking it for the CLI
-too): remove the `/:/host:ro,rslave` volume and mount each data volume instead, e.g.
-`- /volume1:/host/volume1:ro,rslave`, keeping `--path.rootfs=/host`. What is lost:
-usage of the system partition and of any volume you didn't mount (they report
-`node_filesystem_device_error`), and udev disk labels. RAID (`node_md_*`), sensors
-(`node_hwmon_*`), memory, CPU, load and network metrics come from the kernel's `/proc`
-and `/sys` and still work. **Steps to verify:** `curl -s http://10.0.0.30:9100/metrics |
-grep -E '^node_(md_state|hwmon_temp_celsius|filesystem_size_bytes)'`.
+What the volume mount leaves out compared with `docker-compose.yml`: usage of the UGOS
+system partition and udev disk labels. CPU, memory, network, RAID (`node_md_*`),
+temperatures and fans (`node_hwmon_*`), every volume you listed, and disk health all
+work. Manage the project from the Docker app; to add a volume or a disk later, edit
+the project and start it again.
 
 UGOS Pro storage pools are expected to be Linux software RAID (mdadm), in which case
-`node_md_*` is present. **Steps to verify** with the same command.
+`node_md_*` is present. **Steps to verify:** `curl -s http://10.0.0.30:9100/metrics |
+grep -E '^node_(md_state|hwmon_temp_celsius|filesystem_size_bytes)'` from the Vantage
+host, or Vantage's **Test connection** (it lists the arrays and sensors it found).
 
 ### TrueNAS SCALE
 

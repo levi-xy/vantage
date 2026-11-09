@@ -132,3 +132,75 @@ def test_docker_compose_config_accepts_the_file() -> None:
         cwd=NAS_DIR,
     )
     assert result.returncode == 0, result.stderr
+
+
+# --- The UGREEN file: pasted into UGOS Pro's Docker app (Projects), no SSH. ---
+
+UGREEN = NAS_DIR / "docker-compose.ugreen.yml"
+
+
+@pytest.fixture(scope="module")
+def ugreen() -> dict[str, dict[str, Any]]:
+    with UGREEN.open(encoding="utf-8") as f:
+        data: dict[str, Any] = yaml.safe_load(f)
+    svc: dict[str, dict[str, Any]] = data["services"]
+    return svc
+
+
+@pytest.mark.parametrize("name", ["node-exporter", "smartctl-exporter"])
+def test_ugreen_same_images_and_hardening(
+    ugreen: dict[str, dict[str, Any]], services: dict[str, dict[str, Any]], name: str
+) -> None:
+    test_hardening(ugreen, name)
+    # Upgraded together with the main file.
+    assert ugreen[name]["image"] == services[name]["image"]
+    assert ugreen[name]["network_mode"] == "host"  # the UGOS firewall covers both ports
+    assert "ports" not in ugreen[name]
+
+
+def test_ugreen_mounts_only_storage_volumes_read_only(ugreen: dict[str, dict[str, Any]]) -> None:
+    svc = ugreen["node-exporter"]
+    assert svc["volumes"], "the example volume list the user edits"
+    for volume in svc["volumes"]:
+        assert re.fullmatch(r"/volume\d+:/host/volume\d+:ro,rslave", volume), volume
+        host, inside, _ = volume.split(":")
+        assert inside == f"/host{host}", volume
+    assert "--path.rootfs=/host" in svc["command"]
+    assert "--web.listen-address=:9100" in svc["command"]
+    assert svc["user"] == "65534:65534"
+    assert "cap_add" not in svc and "devices" not in svc
+
+
+def test_ugreen_smartctl_gets_only_rawio_and_listed_disks(
+    ugreen: dict[str, dict[str, Any]],
+) -> None:
+    svc = ugreen["smartctl-exporter"]
+    assert svc["cap_add"] == ["SYS_RAWIO"]
+    assert "volumes" not in svc and "pid" not in svc
+    assert "--web.listen-address=:9633" in svc["command"]
+    for device in svc["devices"]:
+        host, _, inside = device.partition(":")
+        assert re.fullmatch(r"/dev/(sd[a-z]+|nvme\d+)", host), device
+        assert inside == host, device
+
+
+def test_ugreen_file_needs_no_env_file() -> None:
+    # The Projects box may not read a .env file: nothing to substitute.
+    assert "${" not in UGREEN.read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker CLI not installed")
+def test_docker_compose_config_accepts_the_ugreen_file() -> None:
+    docker = shutil.which("docker")
+    assert docker is not None
+    result = subprocess.run(  # noqa: S603 (fixed arguments, a repo file)
+        [docker, "compose", "-f", str(UGREEN), "config", "--quiet"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+        cwd=NAS_DIR,
+    )
+    if "is not a docker command" in result.stderr:
+        pytest.skip("docker compose plugin not available")
+    assert result.returncode == 0, result.stderr

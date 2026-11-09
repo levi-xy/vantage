@@ -13,7 +13,8 @@ Both are Apache-2.0, from the Prometheus project and Prometheus community. Tags 
 pinned to exact releases; to upgrade, change the tag after reading the release notes.
 
 Per-OS setup (UGOS Pro, TrueNAS SCALE, Unraid, OpenMediaVault) and adding the NAS to
-Vantage: [docs/exporters/nas.md](../../../docs/exporters/nas.md).
+Vantage: [docs/exporters/nas.md](../../../docs/exporters/nas.md). On UGREEN UGOS Pro,
+use `docker-compose.ugreen.yml` instead, pasted into the Docker app's Projects (no SSH).
 
 ## Quick start
 
