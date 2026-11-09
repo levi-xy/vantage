@@ -38,7 +38,7 @@ tar -xzf vantage-deploy-$V.tar.gz && cd vantage-deploy-$V
 <details>
 <summary>Verify the download (optional)</summary>
 
-Check that the bundle arrived intact, before unpacking it:
+To check that the bundle arrived intact, run this in the folder you downloaded it to:
 
 ```bash
 curl -fLO https://github.com/levi-xy/vantage/releases/download/v$V/SHA256SUMS
