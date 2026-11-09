@@ -50,6 +50,10 @@ Point an external monitor on another machine (Uptime Kuma, cron + curl, a hosted
 
 A polled device is marked down after 3 failed poll cycles in a row (one quick retry per cycle), so a single timeout doesn't flip it. At the default 60 s interval that takes about 2–4 minutes; at 5-minute intervals, 10–16 minutes. Change it with `VANTAGE_DOWN_AFTER_FAILED_CYCLES` (1 to 10) in `.env`. The timing is explained in [INTEGRATIONS.md](INTEGRATIONS.md#poll-cycles-the-retry-and-down).
 
+## Alert channels
+
+Alerts go to Telegram. Admins add a channel (bot token and chat ID) under **Settings → Notification channels** and can send a test message from there. The bot token is stored encrypted and never shown again. Alert rules are managed on the **Alerts** page.
+
 ## How alerts resolve
 
 An alert resolves only after two clean checks on two different polls, where the device's value was seen and the condition was false. A missing value (device down, metric gone, query failing, removed from service discovery) never counts as recovery: the alert moves to **No data** and stays open until the value returns or an admin closes it. A "NO DATA" message goes out once an alert has been in No data for 5 minutes, with one reminder after 24 hours.

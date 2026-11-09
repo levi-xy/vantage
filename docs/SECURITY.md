@@ -616,8 +616,8 @@ Prometheus' own error text is never passed on: the client sees `invalid PromQL q
 
 ## Alert channels (Telegram)
 
-Alert channels are managed at `/api/v1/channels` (admin only, CSRF checked; the UI's
-**Alerts** page). A Telegram channel stores a chat ID (plain config) and a bot token,
+Alert channels are managed at `/api/v1/channels` (admin only, CSRF checked; in the UI
+**Settings → Notification channels**). A Telegram channel stores a chat ID (plain config) and a bot token,
 which is a secret like an instance's: encrypted with the master key into
 `channels.secrets` (bound to the row), write-only (responses carry only
 `secrets_set: {"bot_token": true|false}`, never the value or a masked fragment),
