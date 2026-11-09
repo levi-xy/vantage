@@ -243,14 +243,15 @@ export function NetworksView({ el, doc }: { el: MapNetworks; doc: MapDocument })
   );
 }
 
-function cableColor(cable: MapCable, doc: MapDocument): string {
+/** The colour the admin chose for a cable (its own, else its access VLAN's); null = none. */
+function chosenColor(cable: MapCable, doc: MapDocument): string | null {
   const named = paint(cable.color);
   if (named) return named;
   if (cable.role === "access" && cable.vlan) {
     const v = doc.vlans.find((x) => x.id === cable.vlan);
-    if (v) return paint(v.color) ?? "var(--vt-muted)";
+    if (v) return paint(v.color) ?? null;
   }
-  return "var(--vt-muted)";
+  return null;
 }
 
 export interface CableHover {
@@ -306,7 +307,14 @@ export function CablesLayer({
         const state = cableLive(cable, owners, live);
         const down = state.down;
         const w = cableWidth(cable.speed);
-        const color = down ? "var(--vt-crit)" : cableColor(cable, doc);
+        // Red when down; else the admin's colour; else green when live, grey when not linked.
+        const chosen = chosenColor(cable, doc);
+        const color = down
+          ? "var(--vt-crit)"
+          : (chosen ?? (state.up ? "var(--vt-ok)" : "var(--vt-muted)"));
+        // A trunk is drawn dark unless it is live or has its own colour.
+        const stroke =
+          cable.role === "trunk" && !down && !chosen && !state.up ? "var(--vt-ink)" : color;
         const dash = down ? "6 5" : DASH[cable.style];
         const [lx, ly] = routes.labelAt(cable) ?? labelPoint(pts);
         const [tx, ty] = tagPoint(pts);
@@ -319,7 +327,12 @@ export function CablesLayer({
         } as const;
         const rate = cable.show_rate ? state.rate : null;
         return (
-          <g key={cable.id} data-cable={cable.id} data-down={down ? "true" : undefined}>
+          <g
+            key={cable.id}
+            data-cable={cable.id}
+            data-down={down ? "true" : undefined}
+            data-up={state.up ? "true" : undefined}
+          >
             {pickedId === cable.id && (
               <path
                 d={d}
@@ -342,7 +355,7 @@ export function CablesLayer({
             )}
             <path
               d={d}
-              stroke={cable.role === "trunk" && !down ? "var(--vt-ink)" : color}
+              stroke={stroke}
               strokeWidth={w}
               strokeDasharray={dash}
               strokeLinecap={cable.style === "dotted" ? "round" : "butt"}

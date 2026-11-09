@@ -85,9 +85,12 @@ function IssueRow({ issue, now, onOpen }: { issue: HealthIssue; now: number; onO
 export function HealthStatus({
   connection,
   lastUpdate,
+  compact = false,
 }: {
   connection: LiveState;
   lastUpdate: number | null;
+  /** Desktop sidebar collapsed to icons: the label is for screen readers only. */
+  compact?: boolean;
 }) {
   const now = useNow();
   const instances = useInstances();
@@ -151,7 +154,7 @@ export function HealthStatus({
         aria-label={`Health: ${label}. Show details`}
         data-level={checking ? "checking" : health.level}
         onClick={() => setOpen((o) => !o)}
-        className={`flex h-9 items-center gap-[7px] rounded-lg px-2 text-[13px] whitespace-nowrap hover:bg-chip ${tone} ${focusRing}`}
+        className={`flex h-9 items-center gap-[7px] rounded-lg px-2 ${compact ? "md:justify-center" : ""} text-[13px] whitespace-nowrap hover:bg-chip ${tone} ${focusRing}`}
       >
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
           <circle cx="7" cy="7" r="5.5" strokeWidth="2" className="stroke-track" />
@@ -169,8 +172,12 @@ export function HealthStatus({
           )}
           <circle cx="7" cy="7" r="2" className={checking ? "fill-muted" : FILL[health.level]} />
         </svg>
-        <span className={health.level === "healthy" || checking ? "" : "font-medium"}>{label}</span>
-        {time && <span className="hidden text-muted md:inline">· {time}</span>}
+        <span
+          className={`${health.level === "healthy" || checking ? "" : "font-medium"} ${compact ? "md:sr-only" : ""}`}
+        >
+          {label}
+        </span>
+        {time && !compact && <span className="hidden text-muted md:inline">· {time}</span>}
       </button>
       {open && (
         <div
@@ -178,7 +185,7 @@ export function HealthStatus({
           ref={panelRef}
           role="dialog"
           aria-label="System health"
-          className="fixed inset-x-0 top-14 z-40 max-h-[70vh] overflow-y-auto border-b border-line bg-panel text-sm text-ink shadow-lg md:absolute md:top-full md:right-0 md:left-auto md:mt-2 md:w-[400px] md:rounded-lg md:border"
+          className="fixed inset-x-0 top-14 z-40 max-h-[70vh] overflow-y-auto border-b border-line bg-panel text-sm text-ink shadow-lg md:absolute md:bottom-0 md:left-full md:ml-3 md:w-[400px] md:rounded-lg md:border"
         >
           {health.issues.length > 0 ? (
             <>

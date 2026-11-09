@@ -182,6 +182,10 @@ describe("map page", () => {
     expect(within(canvas).getByText(XSS)).toBeInTheDocument();
     expect(canvas.querySelector("img")).toBeNull();
     expect(canvas.querySelector('[data-cable="c1"]')).not.toHaveAttribute("data-down");
+    // Both ends up: the cable is live (green).
+    await waitFor(() =>
+      expect(canvas.querySelector('[data-cable="c1"]')).toHaveAttribute("data-up", "true"),
+    );
   });
 
   it("turns a DOWN device's box and its cable red", async () => {
@@ -193,6 +197,7 @@ describe("map page", () => {
     expect(canvas.querySelector('[data-element="edge"]')).not.toHaveAttribute("data-down");
     expect(canvas.querySelector('[data-cable="c1"]')).toHaveAttribute("data-down", "true");
     expect(within(canvas).getByText("DOWN")).toBeInTheDocument();
+    expect(canvas.querySelector('[data-cable="c1"]')).not.toHaveAttribute("data-up");
   });
 
   it("lists problems first on a phone", async () => {

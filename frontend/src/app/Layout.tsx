@@ -201,31 +201,71 @@ function useOnOtherDashboard(): boolean {
   return useLocation().pathname.startsWith("/d/");
 }
 
-/** Desktop: tabs in the top bar, the current one underlined. */
-function TopNav({ alerts }: { alerts: number }) {
+/** Desktop: the tabs down the left sidebar, the current one highlighted. Icons only when collapsed. */
+function SideNav({ alerts, collapsed }: { alerts: number; collapsed: boolean }) {
   const otherDashboard = useOnOtherDashboard();
   const tabs = useTabs();
   return (
-    <nav aria-label="Main" className="hidden gap-1 self-stretch md:flex">
+    <nav aria-label="Main" className="hidden gap-1 px-3 py-2 md:flex md:flex-col">
       {tabs.map((tab) => (
         <NavLink
           key={tab.to}
           to={tab.to}
           end={tab.end}
+          title={collapsed ? tab.label : undefined}
           className={({ isActive }) =>
-            `flex items-center gap-2 border-b-2 px-3.5 ${focusRing} ${
+            `relative flex h-10 items-center gap-3 rounded-lg ${collapsed ? "justify-center" : "px-3"} ${focusRing} ${
               isActive || (tab.to === "/" && otherDashboard)
-                ? "border-in font-medium text-ink"
-                : "border-transparent text-muted hover:text-ink"
+                ? "bg-chip font-medium text-ink"
+                : "text-muted hover:bg-chip hover:text-ink"
             }`
           }
         >
-          {tab.label}
-          {tab.to === "/alerts" && <AlertBadge count={alerts} />}
+          {tab.icon}
+          <span className={collapsed ? "sr-only" : ""}>{tab.label}</span>
+          {tab.to === "/alerts" && (
+            <AlertBadge
+              count={alerts}
+              className={
+                collapsed
+                  ? "absolute top-0.5 right-0.5 px-[5px] text-[10px] leading-[15px]"
+                  : "ml-auto"
+              }
+            />
+          )}
         </NavLink>
       ))}
     </nav>
   );
+}
+
+const SIDEBAR_KEY = "vantage.sidebarCollapsed";
+
+/** Whether the desktop sidebar is collapsed to icons; remembered per browser (a convenience only). */
+function useSidebarCollapsed(): [boolean, () => void] {
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return window.localStorage.getItem(SIDEBAR_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggle = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    try {
+      window.localStorage.setItem(SIDEBAR_KEY, next ? "1" : "0");
+    } catch {
+      // Storage blocked: the choice just isn't remembered.
+    }
+  };
+  return [collapsed, toggle];
+}
+
+/** Map pages use the whole area next to the sidebar. */
+function useFullBleed(): boolean {
+  const path = useLocation().pathname;
+  return path === "/map" || path.startsWith("/map/");
 }
 
 /** Phone: a bottom tab bar. "More" opens the account menu. */
@@ -320,7 +360,7 @@ function AccountMenu({
     <div
       id="account-menu"
       ref={panelRef}
-      className="fixed inset-x-0 bottom-16 z-40 border-t border-line bg-panel py-2 shadow-lg md:absolute md:top-full md:right-0 md:bottom-auto md:left-auto md:mt-2 md:w-56 md:rounded-lg md:border"
+      className="fixed inset-x-0 bottom-16 z-40 border-t border-line bg-panel py-2 shadow-lg md:absolute md:bottom-0 md:left-full md:ml-3 md:w-56 md:rounded-lg md:border"
     >
       <p className="px-4 pt-1 pb-2 text-xs text-muted">
         Signed in as {user.username} · {ROLE_LABELS[user.role]}
@@ -350,7 +390,7 @@ function AccountMenu({
   );
 }
 
-/** Header + navigation around every page: a top bar, plus a bottom tab bar on phones. */
+/** Navigation around every page: a left sidebar on desktop; a top bar and bottom tab bar on phones. */
 export function Layout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const user = useUser();
@@ -376,6 +416,8 @@ export function Layout() {
   const userButtonRef = useRef<HTMLButtonElement>(null);
   const moreRef = useRef<HTMLButtonElement>(null);
   const toggleMenu = () => setMenuOpen((open) => !open);
+  const [collapsed, toggleCollapsed] = useSidebarCollapsed();
+  const fullBleed = useFullBleed();
 
   // Close the menu on Escape, or on a click outside it and its two buttons.
   useEffect(() => {
@@ -397,67 +439,115 @@ export function Layout() {
     };
   }, [menuOpen]);
 
+  const userButton = (
+    <button
+      ref={userButtonRef}
+      type="button"
+      aria-expanded={menuOpen}
+      aria-controls="account-menu"
+      onClick={toggleMenu}
+      title={collapsed ? user.username : undefined}
+      className={`hidden h-9 items-center gap-2 rounded-lg border border-line text-ink hover:bg-chip md:flex ${
+        collapsed ? "justify-center" : "pr-2.5 pl-1.5"
+      } ${focusRing}`}
+    >
+      <span
+        aria-hidden="true"
+        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-chip text-[11px] font-semibold uppercase"
+      >
+        {user.username.slice(0, 1)}
+      </span>
+      <span className={collapsed ? "sr-only" : "min-w-0 flex-1 truncate text-left"}>
+        {user.username}
+      </span>
+      <span className="sr-only"> ({ROLE_LABELS[user.role]})</span>
+      {!collapsed && (
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          aria-hidden="true"
+        >
+          <path d="M9 6l6 6-6 6" />
+        </svg>
+      )}
+    </button>
+  );
+
   return (
-    <div className="min-h-screen bg-canvas text-ink">
+    <div className="min-h-screen bg-canvas text-ink md:flex">
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:rounded focus:bg-panel focus:px-3 focus:py-2"
       >
         Skip to content
       </a>
-      <header className="sticky top-0 z-30 border-b border-line bg-panel">
-        <div className="mx-auto flex h-14 max-w-[1440px] items-center gap-4 px-4 md:h-[60px] md:gap-8 md:px-8">
-          <Link
-            to="/"
-            className={`flex items-center gap-2.5 text-[17px] font-semibold tracking-[-0.01em] ${focusRing}`}
-          >
-            <Logo />
-            <span>Vantage</span>
-          </Link>
-          <TopNav alerts={alerts} />
-          <div className="relative ml-auto flex items-center gap-3">
-            <HealthStatus connection={live} lastUpdate={lastUpdate} />
+      {/* One header: a top bar on phones, a left sidebar (collapsible to icons) on desktop. */}
+      <header
+        className={`sticky top-0 z-30 flex h-14 items-center gap-4 border-b border-line bg-panel px-4 md:h-screen md:shrink-0 md:flex-col md:items-stretch md:gap-0 md:border-r md:border-b-0 md:px-0 ${
+          collapsed ? "md:w-16" : "md:w-60"
+        }`}
+      >
+        <Link
+          to="/"
+          className={`flex items-center gap-2.5 text-[17px] font-semibold tracking-[-0.01em] md:h-[60px] md:shrink-0 ${
+            collapsed ? "md:justify-center" : "md:px-5"
+          } ${focusRing}`}
+        >
+          <Logo />
+          <span className={collapsed ? "md:sr-only" : ""}>Vantage</span>
+        </Link>
+        <SideNav alerts={alerts} collapsed={collapsed} />
+        <div className="relative ml-auto flex items-center gap-3 md:mt-auto md:ml-0 md:flex-col md:items-stretch md:gap-2 md:border-t md:border-line md:p-3">
+          <HealthStatus connection={live} lastUpdate={lastUpdate} compact={collapsed} />
+          {userButton}
+          <div className={`flex items-center gap-2 ${collapsed ? "md:flex-col" : ""}`}>
             <ThemeToggle />
             <button
-              ref={userButtonRef}
               type="button"
-              aria-expanded={menuOpen}
-              aria-controls="account-menu"
-              onClick={toggleMenu}
-              className={`hidden h-9 items-center gap-2 rounded-lg border border-line pr-2.5 pl-1.5 text-ink hover:bg-chip md:flex ${focusRing}`}
+              onClick={toggleCollapsed}
+              aria-label={collapsed ? "Show sidebar" : "Hide sidebar"}
+              aria-expanded={!collapsed}
+              title={collapsed ? "Show sidebar" : "Hide sidebar"}
+              className={`hidden h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-line text-muted hover:bg-chip hover:text-ink md:inline-flex ${focusRing}`}
             >
-              <span
-                aria-hidden="true"
-                className="flex h-6 w-6 items-center justify-center rounded-full bg-chip text-[11px] font-semibold uppercase"
-              >
-                {user.username.slice(0, 1)}
-              </span>
-              <span>{user.username}</span>
-              <span className="sr-only"> ({ROLE_LABELS[user.role]})</span>
               <svg
-                width="12"
-                height="12"
+                width="16"
+                height="16"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
                 aria-hidden="true"
               >
-                <path d="M6 9l6 6 6-6" />
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <path d="M9 4v16" />
+                <path d={collapsed ? "M13 10l2 2-2 2" : "M16 10l-2 2 2 2"} />
               </svg>
             </button>
-            {menuOpen && <AccountMenu onClose={() => setMenuOpen(false)} panelRef={panelRef} />}
           </div>
+          {menuOpen && <AccountMenu onClose={() => setMenuOpen(false)} panelRef={panelRef} />}
         </div>
       </header>
-      <DeliveryBanner />
 
-      <main
-        id="main"
-        className="mx-auto w-full max-w-[1440px] min-w-0 px-4 pt-4 pb-24 md:px-8 md:pt-7 md:pb-12"
-      >
-        <Outlet key={timeZone ?? "UTC"} />
-      </main>
+      <div className={`flex min-w-0 flex-1 flex-col ${fullBleed ? "md:h-screen" : ""}`}>
+        <DeliveryBanner />
+        <main
+          id="main"
+          className={
+            fullBleed
+              ? "w-full min-w-0 px-4 pt-4 pb-24 md:flex md:min-h-0 md:flex-1 md:flex-col md:p-0"
+              : "mx-auto w-full max-w-[1440px] min-w-0 px-4 pt-4 pb-24 md:px-8 md:pt-7 md:pb-12"
+          }
+        >
+          <Outlet key={timeZone ?? "UTC"} />
+        </main>
+      </div>
 
       <BottomTabs alerts={alerts} menuOpen={menuOpen} onMore={toggleMenu} moreRef={moreRef} />
     </div>

@@ -227,11 +227,11 @@ export function MapEditor({
   };
 
   return (
-    <div>
+    <div className="flex min-h-0 flex-1 flex-col p-3">
       <div
         role="toolbar"
         aria-label="Map editing"
-        className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-line bg-panel px-3 py-2"
+        className="mb-3 flex shrink-0 flex-wrap items-center gap-2 rounded-lg border border-line bg-panel px-3 py-2"
       >
         <span className="rounded bg-chip px-2 py-0.5 text-xs font-bold tracking-wide text-muted uppercase">
           Editing
@@ -285,12 +285,12 @@ export function MapEditor({
           {notice}
         </p>
       )}
-      <div className="grid grid-cols-[auto_minmax(0,1fr)_18rem] gap-3">
+      <div className="grid min-h-[420px] flex-1 grid-cols-[auto_minmax(0,1fr)_18rem] grid-rows-[minmax(0,1fr)] gap-3">
         <div
           role="toolbar"
           aria-label="Tools"
           aria-orientation="vertical"
-          className="flex w-20 flex-col gap-1.5"
+          className="flex w-20 flex-col gap-1.5 overflow-y-auto"
         >
           {TOOLS.map((t) => {
             const active =
@@ -331,7 +331,7 @@ export function MapEditor({
           preview={h.preview}
           commitFrom={h.commitFrom}
         />
-        <aside aria-label="Inspector" className="flex min-w-0 flex-col gap-4">
+        <aside aria-label="Inspector" className="flex min-w-0 flex-col gap-4 overflow-y-auto">
           {picking && (
             <section
               aria-label="Pick a device"
