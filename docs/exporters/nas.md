@@ -36,16 +36,17 @@ instead of `docker-compose.yml`: the Docker app refuses a mount of the NAS's roo
 (`/`), so this file gives node_exporter your storage volumes instead, and it runs both
 exporters in the host network so the UGOS firewall covers both ports.
 
-1. Docker app → **Projects** → **Create**. Name it `vantage-nas-exporters` and paste
+1. In Control Panel, open the **firewall** settings: allow TCP 9100 and 9633 from the
+   Vantage host only, then deny those ports from anywhere else. Do this first, so the
+   exporters are never open to the whole network.
+2. Docker app → **Projects** → **Create**. Name it `vantage-nas-exporters` and paste
    the whole file.
-2. Edit the two marked lists in the pasted text:
+3. Edit the two marked lists in the pasted text:
    - **volumes:** one `/volumeN` line per storage pool (Storage Manager shows them).
    - **devices:** one line per disk. A 2-bay NAS is usually `/dev/sda` and
      `/dev/sdb`, a 4-bay `/dev/sda` to `/dev/sdd`. If the SMART container doesn't
      start, a listed disk doesn't exist: remove that line and start the project again.
-3. Start the project. Both containers should show **Running**.
-4. In Control Panel, open the **firewall** settings: allow TCP 9100 and 9633 from the Vantage
-   host only, then deny those ports from anywhere else.
+4. Start the project. Both containers should show **Running**.
 
 What the volume mount leaves out compared with `docker-compose.yml`: usage of the UGOS
 system partition and udev disk labels. CPU, memory, network, RAID (`node_md_*`),

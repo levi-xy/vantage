@@ -175,6 +175,7 @@ def test_ugreen_smartctl_gets_only_rawio_and_listed_disks(
     ugreen: dict[str, dict[str, Any]],
 ) -> None:
     svc = ugreen["smartctl-exporter"]
+    assert svc["user"] == "0:0"
     assert svc["cap_add"] == ["SYS_RAWIO"]
     assert "volumes" not in svc and "pid" not in svc
     assert "--web.listen-address=:9633" in svc["command"]

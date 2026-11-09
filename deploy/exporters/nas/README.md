@@ -56,7 +56,8 @@ the NAS at `10.0.0.30` and Vantage at `10.0.0.10`:
 
 - **smartctl_exporter (port 9633)** is a Docker-published port. Docker forwards it
   before the host's `INPUT` rules (and before UFW or most NAS firewall UIs) see it, so
-  filter it in Docker's `DOCKER-USER` chain:
+  filter it in Docker's `DOCKER-USER` chain (not needed with `docker-compose.ugreen.yml`,
+  where both exporters use the host network and ordinary firewall rules cover them):
 
   ```
   iptables -I DOCKER-USER -p tcp --dport 9633 ! -s 10.0.0.10 -j DROP
