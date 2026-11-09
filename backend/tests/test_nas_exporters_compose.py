@@ -134,32 +134,32 @@ def test_docker_compose_config_accepts_the_file() -> None:
     assert result.returncode == 0, result.stderr
 
 
-# --- The UGREEN file: pasted into UGOS Pro's Docker app (Projects), no SSH. ---
+# --- The web-UI file: pasted into UGOS Pro's or Synology's Docker app, no SSH. ---
 
-UGREEN = NAS_DIR / "docker-compose.ugreen.yml"
+WEBUI = NAS_DIR / "docker-compose.webui.yml"
 
 
 @pytest.fixture(scope="module")
-def ugreen() -> dict[str, dict[str, Any]]:
-    with UGREEN.open(encoding="utf-8") as f:
+def webui() -> dict[str, dict[str, Any]]:
+    with WEBUI.open(encoding="utf-8") as f:
         data: dict[str, Any] = yaml.safe_load(f)
     svc: dict[str, dict[str, Any]] = data["services"]
     return svc
 
 
 @pytest.mark.parametrize("name", ["node-exporter", "smartctl-exporter"])
-def test_ugreen_same_images_and_hardening(
-    ugreen: dict[str, dict[str, Any]], services: dict[str, dict[str, Any]], name: str
+def test_webui_same_images_and_hardening(
+    webui: dict[str, dict[str, Any]], services: dict[str, dict[str, Any]], name: str
 ) -> None:
-    test_hardening(ugreen, name)
+    test_hardening(webui, name)
     # Upgraded together with the main file.
-    assert ugreen[name]["image"] == services[name]["image"]
-    assert ugreen[name]["network_mode"] == "host"  # the UGOS firewall covers both ports
-    assert "ports" not in ugreen[name]
+    assert webui[name]["image"] == services[name]["image"]
+    assert webui[name]["network_mode"] == "host"  # the NAS firewall covers both ports
+    assert "ports" not in webui[name]
 
 
-def test_ugreen_mounts_only_storage_volumes_read_only(ugreen: dict[str, dict[str, Any]]) -> None:
-    svc = ugreen["node-exporter"]
+def test_webui_mounts_only_storage_volumes_read_only(webui: dict[str, dict[str, Any]]) -> None:
+    svc = webui["node-exporter"]
     assert svc["volumes"], "the example volume list the user edits"
     for volume in svc["volumes"]:
         assert re.fullmatch(r"/volume\d+:/host/volume\d+:ro,rslave", volume), volume
@@ -171,10 +171,10 @@ def test_ugreen_mounts_only_storage_volumes_read_only(ugreen: dict[str, dict[str
     assert "cap_add" not in svc and "devices" not in svc
 
 
-def test_ugreen_smartctl_gets_only_rawio_and_listed_disks(
-    ugreen: dict[str, dict[str, Any]],
+def test_webui_smartctl_gets_only_rawio_and_listed_disks(
+    webui: dict[str, dict[str, Any]],
 ) -> None:
-    svc = ugreen["smartctl-exporter"]
+    svc = webui["smartctl-exporter"]
     assert svc["user"] == "0:0"
     assert svc["cap_add"] == ["SYS_RAWIO"]
     assert "volumes" not in svc and "pid" not in svc
@@ -185,17 +185,27 @@ def test_ugreen_smartctl_gets_only_rawio_and_listed_disks(
         assert inside == host, device
 
 
-def test_ugreen_file_needs_no_env_file() -> None:
+def test_webui_documents_the_synology_sata_mapping() -> None:
+    # Newer Synology models name disks /dev/sataN; the commented example maps each to an
+    # ordinary name inside the container, whole disks only.
+    text = WEBUI.read_text(encoding="utf-8")
+    examples = re.findall(r"#\s*-\s*(/dev/sata\d+:\S+)", text)
+    assert examples
+    for device in examples:
+        assert re.fullmatch(r"/dev/sata\d+:/dev/sd[a-z]", device), device
+
+
+def test_webui_file_needs_no_env_file() -> None:
     # The Projects box may not read a .env file: nothing to substitute.
-    assert "${" not in UGREEN.read_text(encoding="utf-8")
+    assert "${" not in WEBUI.read_text(encoding="utf-8")
 
 
 @pytest.mark.skipif(shutil.which("docker") is None, reason="docker CLI not installed")
-def test_docker_compose_config_accepts_the_ugreen_file() -> None:
+def test_docker_compose_config_accepts_the_webui_file() -> None:
     docker = shutil.which("docker")
     assert docker is not None
     result = subprocess.run(  # noqa: S603 (fixed arguments, a repo file)
-        [docker, "compose", "-f", str(UGREEN), "config", "--quiet"],
+        [docker, "compose", "-f", str(WEBUI), "config", "--quiet"],
         capture_output=True,
         text=True,
         timeout=60,
