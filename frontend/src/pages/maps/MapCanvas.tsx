@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import type { ReactNode, PointerEvent as ReactPointerEvent } from "react";
 import type { MapDocument } from "../../api";
-import { buttonSecondary } from "../../components/styles";
+import { ZoomControls } from "./ZoomControls";
 import { boxRate, portCables } from "./cableLive";
 import { CableCard, DetailsDrawer } from "./MapDetails";
 import { MeasureProvider, useMeasuredDoc } from "./measure";
@@ -22,7 +22,16 @@ import { useViewport } from "./useViewport";
  * The read-only drawing: elements at their saved x/y/w/h inside a pan (drag) and zoom
  * (wheel, +/-, Fit) viewport. Cables sit in an SVG layer under the boxes.
  */
-export function MapCanvas({ doc: saved, live }: { doc: MapDocument; live: MapLive }) {
+export function MapCanvas({
+  doc: saved,
+  live,
+  actions,
+}: {
+  doc: MapDocument;
+  live: MapLive;
+  /** Shown next to the zoom controls (the Edit button). */
+  actions?: ReactNode;
+}) {
   const box = useRef<HTMLDivElement>(null);
   // Boxes are as tall as their content: cables and the fit use the measured heights.
   const { shown: doc, heights, report } = useMeasuredDoc(saved);
@@ -66,34 +75,10 @@ export function MapCanvas({ doc: saved, live }: { doc: MapDocument; live: MapLiv
   };
 
   return (
-    <section aria-label="Network map">
-      <div className="mb-2 flex items-center justify-end gap-2">
-        <button
-          type="button"
-          aria-label="Zoom out"
-          className={buttonSecondary}
-          onClick={() => centerZoom(1 / 1.25)}
-        >
-          −
-        </button>
-        <span className="w-12 text-center text-sm text-muted tabular-nums">
-          {Math.round(view.z * 100)}%
-        </span>
-        <button
-          type="button"
-          aria-label="Zoom in"
-          className={buttonSecondary}
-          onClick={() => centerZoom(1.25)}
-        >
-          +
-        </button>
-        <button type="button" className={buttonSecondary} onClick={fit}>
-          Fit
-        </button>
-      </div>
+    <section aria-label="Network map" className="flex min-h-0 flex-1 flex-col">
       <div
         ref={box}
-        className="relative h-[calc(100vh-220px)] min-h-[420px] cursor-grab touch-none overflow-hidden rounded-lg border border-line bg-canvas select-none active:cursor-grabbing"
+        className="relative min-h-[320px] flex-1 cursor-grab touch-none overflow-hidden bg-canvas select-none active:cursor-grabbing"
         onPointerDown={onDown}
         onPointerMove={onMove}
         onPointerUp={onUp}
@@ -140,6 +125,7 @@ export function MapCanvas({ doc: saved, live }: { doc: MapDocument; live: MapLiv
             })}
           </MeasureProvider>
         </div>
+        <ZoomControls zoom={view.z} onZoom={centerZoom} onFit={fit} actions={actions} />
         {hover && !selected && (
           <div
             className="pointer-events-none absolute z-10"

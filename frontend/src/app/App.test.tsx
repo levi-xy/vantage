@@ -82,7 +82,7 @@ describe("layout", () => {
     expect(screen.queryByRole("navigation", { name: "Account" })).not.toBeInTheDocument();
   });
 
-  it("swaps the top tabs for a bottom tab bar on phones, More opening the account menu", async () => {
+  it("swaps the sidebar for a bottom tab bar on phones, More opening the account menu", async () => {
     await renderReady("/");
     expect(screen.getByRole("navigation", { name: "Main" })).toHaveClass("hidden", "md:flex");
     const tabs = screen.getByRole("navigation", { name: "Tabs" });
@@ -93,6 +93,27 @@ describe("layout", () => {
     );
     fireEvent.click(within(tabs).getByRole("button", { name: "More" }));
     expect(screen.getByRole("navigation", { name: "Account" })).toBeInTheDocument();
+  });
+
+  it("hides the sidebar to icons and remembers it", async () => {
+    localStorage.clear();
+    await renderReady("/");
+    const header = screen.getByRole("banner");
+    expect(header).toHaveClass("md:w-60");
+    fireEvent.click(screen.getByRole("button", { name: "Hide sidebar" }));
+    expect(header).toHaveClass("md:w-16");
+    // The labels stay for screen readers, so the links keep their names.
+    const nav = screen.getByRole("navigation", { name: "Main" });
+    expect(within(nav).getByRole("link", { name: "Devices" })).toBeInTheDocument();
+    expect(localStorage.getItem("vantage.sidebarCollapsed")).toBe("1");
+    fireEvent.click(screen.getByRole("button", { name: "Show sidebar" }));
+    expect(header).toHaveClass("md:w-60");
+    localStorage.clear();
+  });
+
+  it("gives map pages the whole area next to the sidebar", async () => {
+    await renderReady("/map");
+    expect(screen.getByRole("main")).toHaveClass("md:p-0");
   });
 
   it("badges the Alerts tab with the open alert count", async () => {

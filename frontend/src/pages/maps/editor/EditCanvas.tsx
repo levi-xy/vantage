@@ -6,7 +6,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, RefObject } from "react";
 import type { MapCable, MapCableEnd, MapDocument } from "../../../api";
-import { buttonSecondary } from "../../../components/styles";
 import { boxRate, portCables } from "../cableLive";
 import { cableRoutes } from "../cableRoutes";
 import type { RouteCache } from "../cableRoutes";
@@ -23,6 +22,7 @@ import {
 } from "../MapElements";
 import type { MapLive } from "../mapLive";
 import type { useViewport } from "../useViewport";
+import { ZoomControls } from "../ZoomControls";
 import { bendIndexAt, insertBend, moveBend, removeBend } from "./mapOps";
 import {
   alignTo,
@@ -402,35 +402,11 @@ export function EditCanvas({
   };
 
   return (
-    <section aria-label="Map editor">
-      <div className="mb-2 flex items-center justify-end gap-2">
-        <button
-          type="button"
-          aria-label="Zoom out"
-          className={buttonSecondary}
-          onClick={() => centerZoom(1 / 1.25)}
-        >
-          −
-        </button>
-        <span className="w-12 text-center text-sm text-muted tabular-nums">
-          {Math.round(view.z * 100)}%
-        </span>
-        <button
-          type="button"
-          aria-label="Zoom in"
-          className={buttonSecondary}
-          onClick={() => centerZoom(1.25)}
-        >
-          +
-        </button>
-        <button type="button" className={buttonSecondary} onClick={fit}>
-          Fit
-        </button>
-      </div>
+    <section aria-label="Map editor" className="flex min-h-0 flex-col">
       <div
         ref={box}
         data-testid="edit-viewport"
-        className={`relative h-[calc(100vh-260px)] min-h-[420px] touch-none overflow-hidden rounded-lg border border-line bg-canvas select-none ${placing || cabling ? "cursor-crosshair" : ""}`}
+        className={`relative min-h-0 flex-1 touch-none overflow-hidden rounded-lg border border-line bg-canvas select-none ${placing || cabling ? "cursor-crosshair" : ""}`}
         style={{
           backgroundImage: "radial-gradient(circle, var(--vt-line) 1px, transparent 1.5px)",
           backgroundSize: `${GRID * view.z}px ${GRID * view.z}px`,
@@ -619,6 +595,7 @@ export function EditCanvas({
             ))}
           </MeasureProvider>
         </div>
+        <ZoomControls zoom={view.z} onZoom={centerZoom} onFit={fit} />
         {doc.elements.length === 0 && (
           <p className="pointer-events-none absolute inset-x-0 top-1/3 text-center text-sm text-muted">
             Pick a tool on the left and click here, or drag a device in from the list.

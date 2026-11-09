@@ -69,8 +69,8 @@ function MapTabs({
   const failed = update.error ?? remove.error;
 
   return (
-    <div className="mb-4">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-2 border-b border-line">
+    <div className="mb-4 md:mb-0 md:shrink-0 md:bg-panel md:px-4 md:pt-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-2 border-b border-line md:border-b-0">
         <nav aria-label="Maps" className="hidden flex-wrap md:flex">
           {list.map((m, i) => (
             <Link
@@ -142,7 +142,7 @@ function MapTabs({
         )}
       </div>
       {form === "new" && !editing && (
-        <div className="mt-3">
+        <div className="mt-3 md:pb-3">
           <NewMapForm maps={list} onCreated={onCreated} onCancel={() => setForm(null)} />
         </div>
       )}
@@ -155,7 +155,7 @@ function MapTabs({
         />
       )}
       {failed && (
-        <p role="alert" className={`mt-2 ${alertError}`}>
+        <p role="alert" className={`mt-2 md:mb-3 ${alertError}`}>
           {errorText(failed)}
         </p>
       )}
@@ -245,12 +245,14 @@ function MapView({
   // Draw on a wide screen, list on a phone: only one of the two is rendered (and queried).
   const wide = useMediaQuery(WIDE_QUERY);
   const live = useMapLive(map.data?.document, wide);
-  if (map.isPending) return <p className="text-sm text-muted">Loading the map…</p>;
+  if (map.isPending) return <p className="text-sm text-muted md:p-6">Loading the map…</p>;
   if (map.isError) {
     return (
-      <p role="alert" className={alertError}>
-        {errorText(map.error)}
-      </p>
+      <div className="md:p-6">
+        <p role="alert" className={alertError}>
+          {errorText(map.error)}
+        </p>
+      </div>
     );
   }
   const canEdit = isAdmin && wide;
@@ -279,17 +281,18 @@ function MapView({
   );
   if (doc.elements.length === 0) {
     return (
-      <EmptyState>
-        <p className="mb-3">This map is empty.</p>
-        {editButton}
-      </EmptyState>
+      <div className="md:p-6">
+        <EmptyState>
+          <p className="mb-3">This map is empty.</p>
+          {editButton}
+        </EmptyState>
+      </div>
     );
   }
-  return (
-    <>
-      {editButton && <div className="mb-2 flex justify-end">{editButton}</div>}
-      {wide ? <MapCanvas doc={doc} live={live} /> : <MapPhoneList doc={doc} live={live} />}
-    </>
+  return wide ? (
+    <MapCanvas doc={doc} live={live} actions={editButton || undefined} />
+  ) : (
+    <MapPhoneList doc={doc} live={live} />
   );
 }
 
@@ -333,17 +336,23 @@ export function MapPage() {
   };
 
   let body;
-  if (maps.isPending) body = <p className="text-sm text-muted">Loading the maps…</p>;
+  if (maps.isPending) body = <p className="text-sm text-muted md:p-6">Loading the maps…</p>;
   else if (maps.isError) {
     body = (
-      <p role="alert" className={alertError}>
-        {errorText(maps.error)}
-      </p>
+      <div className="md:p-6">
+        <p role="alert" className={alertError}>
+          {errorText(maps.error)}
+        </p>
+      </div>
     );
   } else if (list.length === 0) {
-    body = <NoMaps isAdmin={isAdmin} onCreated={onCreated} />;
+    body = (
+      <div className="md:p-6">
+        <NoMaps isAdmin={isAdmin} onCreated={onCreated} />
+      </div>
+    );
   } else if (!known || wanted === null) {
-    body = <p className="text-sm text-muted">There is no such map.</p>;
+    body = <p className="text-sm text-muted md:p-6">There is no such map.</p>;
   } else {
     body = (
       <MapView
@@ -360,8 +369,9 @@ export function MapPage() {
     );
   }
 
+  // On desktop the page fills the whole area next to the sidebar; the drawing takes what's left.
   return (
-    <>
+    <div className="md:flex md:min-h-0 md:flex-1 md:flex-col">
       {list.length > 0 && (
         <MapTabs
           list={list}
@@ -372,13 +382,13 @@ export function MapPage() {
         />
       )}
       {createWarning && editingId !== null && (
-        <p role="alert" className={`mb-3 ${alertError}`}>
+        <p role="alert" className={`mb-3 md:mx-4 md:mt-3 ${alertError}`}>
           The map was created, but its devices could not be added: {createWarning}. Add them from
           the list, or press Cancel and try again from a blank map.
         </p>
       )}
       {body}
-    </>
+    </div>
   );
 }
 
