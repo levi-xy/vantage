@@ -17,7 +17,8 @@ Examples below use `10.0.0.30` for the NAS and `10.0.0.10` for the Vantage host.
 
 ## 1. Prepare
 
-On any NAS OS except UGOS Pro (which needs none of this; skip to its section):
+On any NAS OS except UGOS Pro and Synology (which need none of this; skip to their
+sections):
 
 1. Enable SSH for an administrator account (needed at least to list the disks).
 2. List the disks and edit the `devices:` list in `docker-compose.yml`
@@ -30,8 +31,8 @@ On any NAS OS except UGOS Pro (which needs none of this; skip to its section):
 
 ### UGOS Pro (UGREEN)
 
-Everything happens in the UGOS web interface; no SSH. Use the UGREEN file,
-[`docker-compose.ugreen.yml`](../../deploy/exporters/nas/docker-compose.ugreen.yml),
+Everything happens in the UGOS web interface; no SSH. Use the web-UI file,
+[`docker-compose.webui.yml`](../../deploy/exporters/nas/docker-compose.webui.yml),
 instead of `docker-compose.yml`: the Docker app refuses a mount of the NAS's root
 (`/`), so this file gives node_exporter your storage volumes instead, and it runs both
 exporters in the host network so the UGOS firewall covers both ports.
@@ -58,6 +59,37 @@ UGOS Pro storage pools are expected to be Linux software RAID (mdadm), in which 
 `node_md_*` is present. **Steps to verify:** `curl -s http://10.0.0.30:9100/metrics |
 grep -E '^node_(md_state|hwmon_temp_celsius|filesystem_size_bytes)'` from the Vantage
 host, or Vantage's **Test connection** (it lists the arrays and sensors it found).
+
+### Synology DSM
+
+DSM 7.2 and later: Container Manager takes a compose file in its web interface, so no
+SSH. Use the same web-UI file as UGREEN,
+[`docker-compose.webui.yml`](../../deploy/exporters/nas/docker-compose.webui.yml).
+
+1. Control Panel → Security → **Firewall**: allow TCP 9100 and 9633 from the Vantage
+   host only, then deny those ports from anywhere else. Do this first, so the
+   exporters are never open to the whole network.
+2. File Station: create a folder for the project, for example
+   `docker/vantage-nas-exporters` in a shared folder.
+3. Container Manager → **Project** → **Create**. Name it `vantage-nas-exporters`,
+   choose that folder as the path, pick **Create docker-compose.yml** and paste the
+   whole file.
+4. Edit the two marked lists in the pasted text:
+   - **volumes:** one `/volumeN` line per volume (Storage Manager shows them).
+   - **devices:** one line per disk. Older models name disks `/dev/sda`, `/dev/sdb`,
+     ...; many newer ones `/dev/sata1`, `/dev/sata2`, ... For those, write
+     `/dev/sata1:/dev/sda`, `/dev/sata2:/dev/sdb` and so on (the file shows how), so
+     smartctl sees ordinary disk names. If the SMART container doesn't start, a listed
+     disk doesn't exist: remove that line and build the project again. Storage Manager
+     → HDD/SSD shows how many drives there are; Synology's own names (Drive 1, Drive 2)
+     follow the bay order.
+5. Finish the wizard; both containers should show **Running**.
+
+Synology storage (SHR and classic RAID) is Linux software RAID (mdadm) underneath, so
+`node_md_*` is present; Btrfs volumes report their usage like any other. What the
+volume mount leaves out is the same as on UGREEN: usage of the DSM system partition and
+udev disk labels. **Steps to verify:** Vantage's **Test connection** for both
+instances, or the curl checks below.
 
 ### TrueNAS SCALE
 

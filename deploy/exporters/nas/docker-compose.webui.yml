@@ -1,11 +1,13 @@
-# Vantage NAS exporters for UGREEN UGOS Pro: paste this whole file into the Docker app,
-# Projects → Create. No SSH needed. Guide: docs/exporters/nas.md#ugos-pro-ugreen
+# Vantage NAS exporters for a NAS whose Docker app takes a compose file in its web UI:
+# UGREEN UGOS Pro (Docker → Projects) and Synology DSM 7.2+ (Container Manager →
+# Project). Paste this whole file there; no SSH needed. Guide: docs/exporters/nas.md
 #
 # Same two exporters and hardening as docker-compose.yml, with two differences:
-# - node_exporter gets your storage volumes instead of the NAS's root ("/"), which the
-#   Docker app refuses. Lost: usage of the UGOS system partition and udev disk labels.
-# - both exporters use the host network, so the UGOS firewall (Control Panel) filters
-#   both ports. Allow TCP 9100 and 9633 from the Vantage host only.
+# - node_exporter gets your storage volumes instead of the NAS's root ("/"), which
+#   these apps refuse or make awkward. Lost: usage of the system partition and udev
+#   disk labels.
+# - both exporters use the host network, so the NAS's own firewall (Control Panel)
+#   filters both ports. Allow TCP 9100 and 9633 from the Vantage host only.
 #
 # EDIT two lists below: the volumes (one line per storage pool) and the disks.
 
@@ -41,14 +43,20 @@ services:
     command:
       - --web.listen-address=:9633
     network_mode: host
-    # EDIT: one line per disk (whole disks, not partitions): 2 bays = sda, sdb;
-    # 4 bays = sda to sdd. A listed disk that doesn't exist stops this container from
+    # EDIT: one line per disk (whole disks, not partitions), as "on the NAS:in here".
+    # UGREEN and older Synology models: /dev/sda, /dev/sdb, ... (2 bays = sda, sdb;
+    # 4 bays = sda to sdd). Newer Synology models name them /dev/sata1, /dev/sata2, ...:
+    # write "/dev/sata1:/dev/sda", "/dev/sata2:/dev/sdb" and so on, so smartctl sees
+    # ordinary disk names. A listed disk that doesn't exist stops this container from
     # starting: remove that line and start it again.
     devices:
       - /dev/sda:/dev/sda
       - /dev/sdb:/dev/sdb
       # - /dev/sdc:/dev/sdc
       # - /dev/sdd:/dev/sdd
+      # Synology with sataN names:
+      # - /dev/sata1:/dev/sda
+      # - /dev/sata2:/dev/sdb
     # uid 0 to open the disk nodes; every capability dropped except SYS_RAWIO, which
     # the kernel requires for the commands that read SMART data.
     user: "0:0"
