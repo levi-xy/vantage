@@ -13,7 +13,8 @@ Both are Apache-2.0, from the Prometheus project and Prometheus community. Tags 
 pinned to exact releases; to upgrade, change the tag after reading the release notes.
 
 Per-OS setup (UGOS Pro, TrueNAS SCALE, Unraid, OpenMediaVault) and adding the NAS to
-Vantage: [docs/exporters/nas.md](../../../docs/exporters/nas.md).
+Vantage: [docs/exporters/nas.md](../../../docs/exporters/nas.md). On UGREEN UGOS Pro,
+use `docker-compose.ugreen.yml` instead, pasted into the Docker app's Projects (no SSH).
 
 ## Quick start
 
@@ -55,7 +56,8 @@ the NAS at `10.0.0.30` and Vantage at `10.0.0.10`:
 
 - **smartctl_exporter (port 9633)** is a Docker-published port. Docker forwards it
   before the host's `INPUT` rules (and before UFW or most NAS firewall UIs) see it, so
-  filter it in Docker's `DOCKER-USER` chain:
+  filter it in Docker's `DOCKER-USER` chain (not needed with `docker-compose.ugreen.yml`,
+  where both exporters use the host network and ordinary firewall rules cover them):
 
   ```
   iptables -I DOCKER-USER -p tcp --dport 9633 ! -s 10.0.0.10 -j DROP

@@ -1,0 +1,63 @@
+# Vantage NAS exporters for UGREEN UGOS Pro: paste this whole file into the Docker app,
+# Projects → Create. No SSH needed. Guide: docs/exporters/nas.md#ugos-pro-ugreen
+#
+# Same two exporters and hardening as docker-compose.yml, with two differences:
+# - node_exporter gets your storage volumes instead of the NAS's root ("/"), which the
+#   Docker app refuses. Lost: usage of the UGOS system partition and udev disk labels.
+# - both exporters use the host network, so the UGOS firewall (Control Panel) filters
+#   both ports. Allow TCP 9100 and 9633 from the Vantage host only.
+#
+# EDIT two lists below: the volumes (one line per storage pool) and the disks.
+
+name: vantage-nas-exporters
+
+services:
+  node-exporter:
+    # Prometheus project, Apache-2.0.
+    image: prom/node-exporter:v1.12.1
+    command:
+      - --path.rootfs=/host
+      # Every interface; the UGOS firewall decides who may connect. To listen on one
+      # address only, write it here, e.g. 10.0.0.30:9100.
+      - --web.listen-address=:9100
+    network_mode: host
+    pid: host
+    volumes:
+      # EDIT: one line per storage pool, read-only.
+      - /volume1:/host/volume1:ro,rslave
+      # - /volume2:/host/volume2:ro,rslave
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 128m
+    restart: unless-stopped
+
+  smartctl-exporter:
+    # Prometheus community, Apache-2.0.
+    image: prometheuscommunity/smartctl-exporter:v0.15.0
+    command:
+      - --web.listen-address=:9633
+    network_mode: host
+    # EDIT: one line per disk (whole disks, not partitions): 2 bays = sda, sdb;
+    # 4 bays = sda to sdd. A listed disk that doesn't exist stops this container from
+    # starting: remove that line and start it again.
+    devices:
+      - /dev/sda:/dev/sda
+      - /dev/sdb:/dev/sdb
+      # - /dev/sdc:/dev/sdc
+      # - /dev/sdd:/dev/sdd
+    # uid 0 to open the disk nodes; every capability dropped except SYS_RAWIO, which
+    # the kernel requires for the commands that read SMART data.
+    user: "0:0"
+    cap_drop: [ALL]
+    cap_add:
+      - SYS_RAWIO
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 128m
+    restart: unless-stopped

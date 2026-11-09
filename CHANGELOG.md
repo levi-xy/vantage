@@ -14,6 +14,8 @@ The first release.
 
 **Integrations:** Linux host (node_exporter), SMART (smartctl_exporter), Proxmox VE, pfSense (Telegraf), SNMP device (v1, v2c, v3), MikroTik SwOS, cloudflared, Cloudflare account, Emby, HTTP check, ping check.
 
+- An optional exporter bundle to run on a NAS (node_exporter + smartctl_exporter); on UGREEN UGOS Pro it is pasted into the Docker app's Projects, no SSH.
+
 **Dashboard**
 - Several dashboards as tabs; cards dragged, resized and shown in less detail when small; a phone layout. A new device's cards are put on the main dashboard.
 - Hardware-shaped cards: switch front panel, pfSense interfaces (VLANs grouped) and gateways, Proxmox nodes and guests (with tags), drive health, Emby (with a live "Now playing" list, never stored).
