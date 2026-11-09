@@ -77,8 +77,8 @@ new_secret() {  # $1 = target file, rest = openssl rand arguments
 backup_reminder() {
     [ "$key_created" -eq 1 ] || return 0
     echo
-    echo "IMPORTANT: back up deploy/secrets/master.key now, somewhere other than this"
-    echo "server. Without it, the device credentials Vantage stores can't be decrypted."
+    echo "IMPORTANT: back up $PWD/secrets/master.key now,"
+    echo "somewhere other than this server. Without it, the device credentials Vantage stores can't be decrypted."
 }
 
 key_created=0
@@ -89,7 +89,7 @@ else
         die "secrets/master.key is missing, but data from an earlier install may exist
 (secrets/prometheus_token, the $VOLUME volume, or an external database).
 Stored device credentials can only be read with the original key: restore it
-from your backup into deploy/secrets/master.key. If that data is gone or you
+from your backup into $PWD/secrets/master.key. If that data is gone or you
 want to start over, re-run with --force-new-key."
     fi
     new_secret secrets/master.key -base64 32

@@ -101,7 +101,7 @@ def test_fresh_no_start_creates_files_only(deploy: Path) -> None:
         assert (key_stat.st_uid, stat.S_IMODE(key_stat.st_mode)) == (10001, 0o400)
 
     assert "docker compose up" not in stub_log(deploy)
-    assert "back up deploy/secrets/master.key" in result.stdout
+    assert "/secrets/master.key now," in result.stdout
     assert_no_secret_in_output(deploy, result)
 
 
@@ -236,6 +236,6 @@ def test_backup_reminder_even_when_docker_fails(deploy: Path) -> None:
     result = run(deploy, docker_down=True)
     assert result.returncode != 0
     assert "can't reach the Docker daemon" in result.stderr
-    assert "back up deploy/secrets/master.key" in result.stdout
+    assert "/secrets/master.key now," in result.stdout
     assert "docker compose up" not in stub_log(deploy)
     assert_no_secret_in_output(deploy, result)
