@@ -1,4 +1,7 @@
-FROM node:22-alpine AS build
+# The build output is plain JS/CSS, the same for every platform: build it natively on the
+# runner (an emulated arm64 npm ci hung for an hour in the release job), and only the
+# nginx stage below is per-platform.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS build
 WORKDIR /src
 COPY package.json package-lock.json ./
 RUN npm ci
