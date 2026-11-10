@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router";
 import type { Role } from "../api";
@@ -9,6 +9,7 @@ import { systemAlertCause, systemAlertText } from "./health";
 import { useDeliveryStatus } from "./deliveryStatus";
 import { HealthStatus } from "./HealthStatus";
 import { useLastDataUpdate, useLiveUpdates } from "./live";
+import { useNavOrder } from "./navOrder";
 import { useApiClient, useSession, useUser } from "./session";
 import { setTimeZone } from "./time";
 import { TIME_KEY } from "./timeSettings";
@@ -201,18 +202,71 @@ function useOnOtherDashboard(): boolean {
   return useLocation().pathname.startsWith("/d/");
 }
 
-/** Desktop: the tabs down the left sidebar, the current one highlighted. Icons only when collapsed. */
-function SideNav({ alerts, collapsed }: { alerts: number; collapsed: boolean }) {
+/**
+ * Desktop: the tabs down the left sidebar, the current one highlighted. Icons only when
+ * collapsed. Drag an item to move it, or focus it and press Alt+Up / Alt+Down.
+ */
+function SideNav({
+  tabs,
+  moveTo,
+  alerts,
+  collapsed,
+}: {
+  tabs: readonly Tab[];
+  moveTo: (id: string, targetId: string) => void;
+  alerts: number;
+  collapsed: boolean;
+}) {
   const otherDashboard = useOnOtherDashboard();
-  const tabs = useTabs();
+  const navRef = useRef<HTMLElement>(null);
+  const dragging = useRef<string | null>(null);
+  const refocus = useRef<string | null>(null);
+  // A moved link may lose focus when the browser re-inserts it: put it back.
+  const order = tabs.map((t) => t.to).join("\n");
+  useLayoutEffect(() => {
+    const id = refocus.current;
+    refocus.current = null;
+    if (id === null) return;
+    const links = navRef.current?.querySelectorAll<HTMLElement>("a[data-nav-id]") ?? [];
+    for (const link of links) if (link.dataset.navId === id) link.focus();
+  }, [order]);
   return (
-    <nav aria-label="Main" className="hidden gap-1 px-3 py-2 md:flex md:flex-col">
-      {tabs.map((tab) => (
+    <nav ref={navRef} aria-label="Main" className="hidden gap-1 px-3 py-2 md:flex md:flex-col">
+      {tabs.map((tab, index) => (
         <NavLink
           key={tab.to}
           to={tab.to}
           end={tab.end}
+          data-nav-id={tab.to}
+          draggable
           title={collapsed ? tab.label : undefined}
+          onDragStart={(event) => {
+            dragging.current = tab.to;
+            event.dataTransfer.effectAllowed = "move";
+            // Only our own id travels: no URL for the browser to open on a stray drop.
+            event.dataTransfer.clearData();
+            event.dataTransfer.setData("text/plain", tab.to);
+          }}
+          onDragOver={(event) => {
+            if (dragging.current !== null) event.preventDefault();
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            const id = dragging.current;
+            dragging.current = null;
+            if (id !== null) moveTo(id, tab.to);
+          }}
+          onDragEnd={() => {
+            dragging.current = null;
+          }}
+          onKeyDown={(event) => {
+            if (!event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+            event.preventDefault();
+            const target = tabs[index + (event.key === "ArrowUp" ? -1 : 1)];
+            if (!target) return;
+            refocus.current = tab.to;
+            moveTo(tab.to, target.to);
+          }}
           className={({ isActive }) =>
             `relative flex h-10 items-center gap-3 rounded-lg ${collapsed ? "justify-center" : "px-3"} ${focusRing} ${
               isActive || (tab.to === "/" && otherDashboard)
@@ -270,18 +324,19 @@ function useFullBleed(): boolean {
 
 /** Phone: a bottom tab bar. "More" opens the account menu. */
 function BottomTabs({
+  tabs,
   alerts,
   menuOpen,
   onMore,
   moreRef,
 }: {
+  tabs: readonly Tab[];
   alerts: number;
   menuOpen: boolean;
   onMore: () => void;
   moreRef: RefObject<HTMLButtonElement>;
 }) {
   const otherDashboard = useOnOtherDashboard();
-  const tabs = useTabs();
   const tabClass = (active: boolean) =>
     `relative flex flex-col items-center justify-center gap-[3px] text-[11px] ${focusRing} ${
       active ? "text-in" : "text-muted"
@@ -360,7 +415,7 @@ function AccountMenu({
     <div
       id="account-menu"
       ref={panelRef}
-      className="fixed inset-x-0 bottom-16 z-40 border-t border-line bg-panel py-2 shadow-lg md:absolute md:bottom-0 md:left-full md:ml-3 md:w-56 md:rounded-lg md:border"
+      className="fixed inset-x-0 bottom-16 z-40 border-t border-line bg-panel py-2 shadow-lg md:absolute md:bottom-0 md:left-full md:max-h-[calc(100vh-2rem)] md:ml-3 md:w-56 md:overflow-y-auto md:rounded-lg md:border"
     >
       <p className="px-4 pt-1 pb-2 text-xs text-muted">
         Signed in as {user.username} · {ROLE_LABELS[user.role]}
@@ -418,6 +473,7 @@ export function Layout() {
   const toggleMenu = () => setMenuOpen((open) => !open);
   const [collapsed, toggleCollapsed] = useSidebarCollapsed();
   const fullBleed = useFullBleed();
+  const { items: tabs, moveTo } = useNavOrder(useTabs());
 
   // Close the menu on Escape, or on a click outside it and its two buttons.
   useEffect(() => {
@@ -500,7 +556,7 @@ export function Layout() {
           <Logo />
           <span className={collapsed ? "md:sr-only" : ""}>Vantage</span>
         </Link>
-        <SideNav alerts={alerts} collapsed={collapsed} />
+        <SideNav tabs={tabs} moveTo={moveTo} alerts={alerts} collapsed={collapsed} />
         <div className="relative ml-auto flex items-center gap-3 md:mt-auto md:ml-0 md:flex-col md:items-stretch md:gap-2 md:border-t md:border-line md:p-3">
           <HealthStatus connection={live} lastUpdate={lastUpdate} compact={collapsed} />
           {userButton}
@@ -549,7 +605,13 @@ export function Layout() {
         </main>
       </div>
 
-      <BottomTabs alerts={alerts} menuOpen={menuOpen} onMore={toggleMenu} moreRef={moreRef} />
+      <BottomTabs
+        tabs={tabs}
+        alerts={alerts}
+        menuOpen={menuOpen}
+        onMore={toggleMenu}
+        moreRef={moreRef}
+      />
     </div>
   );
 }

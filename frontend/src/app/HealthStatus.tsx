@@ -185,7 +185,7 @@ export function HealthStatus({
           ref={panelRef}
           role="dialog"
           aria-label="System health"
-          className="fixed inset-x-0 top-14 z-40 max-h-[70vh] overflow-y-auto border-b border-line bg-panel text-sm text-ink shadow-lg md:absolute md:bottom-0 md:left-full md:ml-3 md:w-[400px] md:rounded-lg md:border"
+          className="fixed inset-x-0 top-14 z-40 max-h-[70vh] overflow-y-auto border-b border-line bg-panel text-sm text-ink shadow-lg md:absolute md:top-auto md:bottom-0 md:left-full md:ml-3 md:max-h-[calc(100vh-8rem)] md:w-[400px] md:rounded-lg md:border"
         >
           {health.issues.length > 0 ? (
             <>
