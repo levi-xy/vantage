@@ -4,6 +4,7 @@ import { formatBitsPerSecond } from "../metrics/format";
 import { cardFreshness } from "../metrics/freshness";
 import { parseValue } from "../metrics/promql";
 import { useInstantQuery } from "../metrics/useMetricQuery";
+import { isPhysicalSnmp } from "../physicalPorts";
 import { IF_DOWN, IF_UP, snmpMetric } from "../snmp-overview/snmpMetrics";
 
 export type PortState = "up" | "down" | "disabled";
@@ -19,6 +20,8 @@ export interface Port {
   speed?: number;
   inBps?: number;
   outBps?: number;
+  /** A front-panel port (not a VLAN, tunnel or other logical interface), by ifType. */
+  physical: boolean;
 }
 
 /**
@@ -137,9 +140,16 @@ export function useSnmpPorts(instanceId: string) {
       const state: PortState =
         adminBy.get(index) === IF_DOWN ? "disabled" : operValue === IF_UP ? "up" : "down";
       const labels = infoBy.get(index);
+      const id = s.labels.if_name ?? labels?.if_name ?? "";
       return {
         index,
-        id: s.labels.if_name ?? labels?.if_name ?? "",
+        id,
+        physical: isPhysicalSnmp({
+          id,
+          ifType: labels?.if_type,
+          connector: labels?.connector,
+          internal: isInternal({ id, name: id }),
+        }),
         // A MikroTik port's own name (if_label) is display text on the info series only.
         name: labels?.if_label || s.labels.if_name || labels?.if_name || `if${index}`,
         alias: labels?.if_alias ?? "",

@@ -15,7 +15,7 @@
 | mtxrHlVoltage.0 (MIKROTIK-MIB) | `1.3.6.1.4.1.14988.1.1.3.8.0` | GET, alone | after the interface walks; best effort |
 | mtxrHlTemperature.0 (MIKROTIK-MIB) | `1.3.6.1.4.1.14988.1.1.3.10.0` | GET, alone | likewise |
 
-Each health object is a GET of its own, because on v1 one missing object fails a whole GET. An object that is missing or answered with an error is left out; silence stops the health reads but doesn't fail the poll. A poll is therefore one GET (two on v1), up to 15 walks and two GETs, inside the same 50 s budget as `snmp_device`.
+Each health object is a GET of its own, because on v1 one missing object fails a whole GET. An object that is missing or answered with an error is left out; silence stops the health reads but doesn't fail the poll. A poll is therefore one GET (two on v1), up to 17 walks and two GETs, inside the same 50 s budget as `snmp_device`.
 
 **Config:** see `MikroTikSwOSConfig`. `host` (private address only), `port` (161), `version` (`1` or `2c`, default `2c`), `community` (secret), `timeout_seconds`, `retries`, `include_interfaces` / `exclude_interfaces` (shell-style patterns against ifName and ifDescr) and `max_interfaces` (64).
 
@@ -29,6 +29,8 @@ Each health object is a GET of its own, because on v1 one missing object fails a
 |---|---|---|
 | `voltage_volts` | gauge | mtxrHlVoltage x 0.1, when the switch answers it |
 | `temperature_celsius` | gauge | mtxrHlTemperature x 0.1, when the switch answers it |
+
+`if_info` also carries `if_type` and `connector` (ifType and ifConnectorPresent, read as for `snmp_device`); the faceplates use them to leave out non-physical interfaces.
 
 Free-form text (`sys_name`, `sys_descr`, `if_descr`, `if_alias`, `if_label`) is on the `*_info` series only, as for `snmp_device` (`if_label` added with maintainer approval, 2026-10-30).
 

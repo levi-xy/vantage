@@ -50,6 +50,8 @@ DISPLAY_LABELS: tuple[str, ...] = (
     "if_descr",
     "if_alias",
     "if_label",
+    "if_type",
+    "connector",
     "zone_name",
     "tunnel_name",
     "guest_name",

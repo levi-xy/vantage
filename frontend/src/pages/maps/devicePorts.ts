@@ -8,6 +8,7 @@ import type { Instance, QueryResult } from "../../api";
 import { useApiClient } from "../../app/session";
 import { INSTANT_REFETCH_MS } from "../../cards/metrics/useMetricQuery";
 import { parseValue } from "../../cards/metrics/promql";
+import { isPhysicalBsd, isPhysicalLinux, isPhysicalSnmp } from "../../cards/physicalPorts";
 import { REAL_IF } from "../../cards/pfsense-interfaces/interfaceSettings";
 import { IF_DOWN, IF_UP } from "../../cards/snmp-overview/snmpMetrics";
 import { isInternal } from "../../cards/snmp-ports/ports";
@@ -28,6 +29,8 @@ export interface DevicePort {
   /** Where the counters are, for the last-hour chart; null without counters. */
   ref: PortRef | null;
   order: number;
+  /** A front-panel port; faceplates leave the rest (VLANs, tunnels...) out. */
+  physical: boolean;
 }
 
 export type DevicePorts = ReadonlyMap<string, DevicePort[]>;
@@ -94,7 +97,9 @@ function build(results: Map<string, QueryResult | undefined>): DevicePorts {
   for (const r of get("snmp", "oper", "if_name")) {
     const k = keyOf(r);
     const name = labels.get(k)?.if_label || r.name;
-    if (isInternal({ id: r.name, name })) continue;
+    const internal = isInternal({ id: r.name, name });
+    if (internal) continue;
+    const info = labels.get(k);
     add(r.instanceId, {
       id: r.name,
       name,
@@ -104,11 +109,22 @@ function build(results: Map<string, QueryResult | undefined>): DevicePorts {
       outBps: tx.get(k),
       ref: { source: "snmp", instanceId: r.instanceId, iface: r.name },
       order: Number(r.labels.if_index) || 0,
+      physical: isPhysicalSnmp({
+        id: r.name,
+        ifType: info?.if_type,
+        connector: info?.connector,
+        internal,
+      }),
     });
   }
 
   // pfSense and Linux: the list is the receive counters; Linux adds the link flag.
-  const counters = (src: PortSource, label: string, up?: Map<string, number | undefined>) => {
+  const counters = (
+    src: PortSource,
+    label: string,
+    physical: (name: string) => boolean,
+    up?: Map<string, number | undefined>,
+  ) => {
     const sent = valuesOf(get(src, "tx", label));
     get(src, "rx", label).forEach((r, order) => {
       const flag = up?.get(keyOf(r));
@@ -120,11 +136,12 @@ function build(results: Map<string, QueryResult | undefined>): DevicePorts {
         outBps: sent.get(keyOf(r)),
         ref: { source: src, instanceId: r.instanceId, iface: r.name },
         order,
+        physical: physical(r.name),
       });
     });
   };
-  counters("pfsense", "interface");
-  counters("node", "device", valuesOf(get("node", "up", "device")));
+  counters("pfsense", "interface", isPhysicalBsd);
+  counters("node", "device", isPhysicalLinux, valuesOf(get("node", "up", "device")));
 
   for (const list of out.values()) list.sort((a, b) => a.order - b.order);
   return out;

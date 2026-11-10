@@ -309,6 +309,7 @@ describe("groups on a device-source panel without own ports", () => {
       state: null,
       ref: null,
       order,
+      physical: true,
     }));
     const edit = vi.fn();
     render(

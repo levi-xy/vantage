@@ -57,6 +57,7 @@ SYSTEM_OIDS = (*MIB2_SYSTEM_OIDS, HR_SYSTEM_UPTIME)
 # IF-MIB ifTable (1.3.6.1.2.1.2.2.1.<column>.<ifIndex>): the columns read.
 IF_TABLE = {
     "descr": "1.3.6.1.2.1.2.2.1.2",
+    "type": "1.3.6.1.2.1.2.2.1.3",  # ifType: 6 = ethernetCsmacd, 24 = loopback, 53 = propVirtual
     "speed": "1.3.6.1.2.1.2.2.1.5",  # bit/s, saturates at 2^32-1
     "admin_status": "1.3.6.1.2.1.2.2.1.7",
     "oper_status": "1.3.6.1.2.1.2.2.1.8",
@@ -73,6 +74,7 @@ IF_X_TABLE = {
     "hc_in_octets": "1.3.6.1.2.1.31.1.1.1.6",
     "hc_out_octets": "1.3.6.1.2.1.31.1.1.1.10",
     "high_speed": "1.3.6.1.2.1.31.1.1.1.15",  # Mbit/s
+    "connector": "1.3.6.1.2.1.31.1.1.1.17",  # ifConnectorPresent: TruthValue, 1 true, 2 false
     "alias": "1.3.6.1.2.1.31.1.1.1.18",
 }
 
@@ -252,6 +254,8 @@ class Interface:
     counters_64bit: bool = False  # both octet counters came from ifHC*Octets
     values: dict[str, int | None] = field(default_factory=dict)  # see _NUMERIC_IF_TABLE
     speed_bps: int | None = None
+    if_type: int | None = None  # ifType, None when the agent doesn't report it
+    connector: bool | None = None  # ifConnectorPresent, None when not reported
     extra: dict[str, SnmpValue] = field(default_factory=dict)
 
 
@@ -334,6 +338,15 @@ async def read_interfaces(client: GuardedSnmpClient, options: IfMibOptions) -> I
         column = await _walk(client, IF_TABLE[key], rows)
         for interface in selected:
             interface.values[key] = _number(column.get(interface.index))
+
+    # ifType (any agent) and ifConnectorPresent (ifXTable): they only tell front-panel
+    # ports from VLANs and other logical interfaces; a missing value stays None.
+    types = await _walk(client, IF_TABLE["type"], rows)
+    connectors = await _walk(client, IF_X_TABLE["connector"], rows) if has_x_table else {}
+    for interface in selected:
+        interface.if_type = _number(types.get(interface.index))
+        present = connectors.get(interface.index)
+        interface.connector = {1: True, 2: False}.get(present) if isinstance(present, int) else None
 
     hc_in: dict[int, SnmpValue] = {}
     hc_out: dict[int, SnmpValue] = {}
@@ -460,6 +473,11 @@ def interface_samples(
                     **labels,
                     "if_descr": interface.descr,
                     "if_alias": interface.alias,
+                    # "" = the agent doesn't report it; the UI then keeps the interface.
+                    "if_type": "" if interface.if_type is None else str(interface.if_type),
+                    "connector": ""
+                    if interface.connector is None
+                    else ("true" if interface.connector else "false"),
                     **({"if_label": interface.name} if label_on_info else {}),
                 },
                 value=1.0,
