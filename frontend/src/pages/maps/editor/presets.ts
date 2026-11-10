@@ -1,15 +1,22 @@
 // The model list: presets only. Choosing one copies its shape, look and port groups into the
 // box, where everything stays editable; nothing in the code knows a model afterwards. The
-// names are the only place a vendor appears.
+// researched models are in presetModels.ts; the generic ones are here.
 
 import type { MapBox, MapNas, MapPanel, MapPortGroup } from "../../../api";
 import { emptyPanel, regeneratePorts } from "../panel";
+import { MODEL_PRESETS } from "./presetModels";
 
 type GroupPreset = Omit<MapPortGroup, "id">;
 
 export interface Preset {
   id: string;
   label: string;
+  /** The dropdown group; presets without one are listed under "Generic". */
+  vendor?: string;
+  /** Taken from a device family or from memory, not from a photo of this exact model. */
+  unverified?: boolean;
+  /** Case-insensitive texts the device's sysDescr contains when it is this model. */
+  match?: readonly string[];
   shape: MapBox["shape"];
   look: MapPanel["look"];
   place: MapPanel["place"];
@@ -28,47 +35,9 @@ const rj45 = (count: number, patch: Partial<GroupPreset> = {}): GroupPreset => (
   prefix: "",
   ...patch,
 });
-const sfpPlus = (count: number, patch: Partial<GroupPreset> = {}): GroupPreset =>
-  rj45(count, { kind: "sfp_plus", ...patch });
 const twoRows: Partial<GroupPreset> = { rows: 2, order: "odd_top" };
 
-export const PRESETS: readonly Preset[] = [
-  {
-    id: "crs326-24g-2s",
-    label: "MikroTik CRS326-24G-2S+",
-    model: "CRS326-24G-2S+",
-    shape: "device",
-    look: "rack",
-    place: "side",
-    groups: [rj45(24, { ...twoRows, prefix: "ether" }), sfpPlus(2, { prefix: "sfp-sfpplus" })],
-  },
-  {
-    id: "crs328-24p-4s",
-    label: "MikroTik CRS328-24P-4S+",
-    model: "CRS328-24P-4S+",
-    shape: "device",
-    look: "rack",
-    place: "side",
-    groups: [rj45(24, { ...twoRows, prefix: "ether" }), sfpPlus(4, { prefix: "sfp-sfpplus" })],
-  },
-  {
-    id: "crs310-8g-2s",
-    label: "MikroTik CRS310-8G+2S+",
-    model: "CRS310-8G+2S+",
-    shape: "device",
-    look: "desktop",
-    place: "bottom",
-    groups: [rj45(8, { prefix: "ether" }), sfpPlus(2, { prefix: "sfp-sfpplus" })],
-  },
-  {
-    id: "css610-8g-2s",
-    label: "MikroTik CSS610-8G-2S+",
-    model: "CSS610-8G-2S+",
-    shape: "device",
-    look: "desktop",
-    place: "bottom",
-    groups: [rj45(8, { prefix: "port" }), sfpPlus(2, { first: 9, prefix: "sfpplus" })],
-  },
+const GENERIC: readonly Preset[] = [
   {
     id: "generic-4",
     label: "Generic 4-port switch",
@@ -111,6 +80,50 @@ export const PRESETS: readonly Preset[] = [
     nas: { bays: 4, bay_disks: [] },
   },
 ];
+
+export const PRESETS: readonly Preset[] = [...MODEL_PRESETS, ...GENERIC];
+
+/** The dropdown text: the model, marked when its layout isn't verified. */
+export const presetLabel = (p: Preset): string =>
+  p.unverified ? `${p.label} (unverified)` : p.label;
+
+/** Presets by dropdown group: vendors alphabetically, "Generic" last. */
+export function presetGroups(): { vendor: string; presets: Preset[] }[] {
+  const by = new Map<string, Preset[]>();
+  for (const p of PRESETS) {
+    const vendor = p.vendor ?? "Generic";
+    by.set(vendor, [...(by.get(vendor) ?? []), p]);
+  }
+  const vendors = [...by.keys()].filter((v) => v !== "Generic").sort((a, b) => a.localeCompare(b));
+  return [...vendors, "Generic"].flatMap((vendor) => {
+    const presets = by.get(vendor);
+    return presets ? [{ vendor, presets }] : [];
+  });
+}
+
+const alnum = /[a-z0-9]/i;
+
+/**
+ * The preset a device's sysDescr names, if any: a case-insensitive substring that doesn't run
+ * into more letters or digits (GS308E is not GS308EP). The longest matching text wins.
+ */
+export function matchPreset(sysDescr: string | undefined): Preset | undefined {
+  const text = (sysDescr ?? "").toLowerCase();
+  if (!text) return undefined;
+  let best: { preset: Preset; length: number } | undefined;
+  for (const preset of PRESETS) {
+    for (const m of preset.match ?? []) {
+      const needle = m.toLowerCase();
+      for (let at = text.indexOf(needle); at >= 0; at = text.indexOf(needle, at + 1)) {
+        const closed = !alnum.test(needle.slice(-1)) || !alnum.test(text[at + needle.length] ?? "");
+        if (closed && (!best || needle.length > best.length)) {
+          best = { preset, length: needle.length };
+        }
+      }
+    }
+  }
+  return best?.preset;
+}
 
 /**
  * The box with a preset copied in. Ports of numbers the preset keeps stay as they were
