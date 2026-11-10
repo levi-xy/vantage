@@ -1,9 +1,11 @@
 // "Read from the device" for a device whose model is known: its live physical ports go onto the
 // groups of the matching preset (by interface name, else by position for a switch that reports
 // ports by index), so captions, state and cables work as for any panel. Ports the preset
-// doesn't place go into extra groups at the end. Pure; the result is ordinary map data.
+// doesn't place go into extra groups at the end. The result is ordinary map data.
 
-import type { MapPanel, MapPort, MapPortGroup } from "../../../api";
+import type { ApiClient, MapPanel, MapPort, MapPortGroup } from "../../../api";
+import { scopedQuery } from "../../../cards/metrics/promql";
+import { snmpMetric } from "../../../cards/snmp-overview/snmpMetrics";
 import { isSfp } from "../../../cards/switch-panel/panel";
 import type { DevicePort } from "../devicePorts";
 import { MAX_GROUPS, MAX_PANEL_PORTS, NO_VLANS, fromDevice, newGroup, newPort } from "../panel";
@@ -116,4 +118,19 @@ export function readDevicePanel(
   return known
     ? layoutOnPreset(known, device, existing, interfaceIds)
     : fromDevice(device, existing, interfaceIds);
+}
+
+/** The device's sysDescr from its `*_info` series; undefined when unknown or unreachable. */
+export async function fetchSysDescr(
+  client: Pick<ApiClient, "query">,
+  instanceId: string,
+): Promise<string | undefined> {
+  try {
+    const result = await client.query({
+      query: scopedQuery(instanceId, (sel) => snmpMetric(sel, "info")),
+    });
+    return result.series[0]?.labels.sys_descr || undefined;
+  } catch {
+    return undefined;
+  }
 }
