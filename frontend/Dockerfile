@@ -16,7 +16,7 @@ LABEL org.opencontainers.image.title="Vantage frontend" \
       org.opencontainers.image.description="Vantage web UI (nginx, HTTPS)" \
       org.opencontainers.image.url="https://github.com/levi-xy/vantage" \
       org.opencontainers.image.source="https://github.com/levi-xy/vantage" \
-      org.opencontainers.image.licenses="Apache-2.0"
+      org.opencontainers.image.licenses="MIT"
 # The license and notice (the repository root, passed as the "license" build context).
 COPY --from=license LICENSE NOTICE /usr/share/doc/vantage/
 COPY third-party/dashboard-icons/LICENSE /usr/share/doc/vantage/dashboard-icons-LICENSE

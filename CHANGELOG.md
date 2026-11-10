@@ -34,4 +34,4 @@ The first release.
 
 **Operations:** one timezone, chosen by an admin, for every page, message and log line (the clock stays the host's); backup, offline restore and master-key rotation (`app.cli`), guarded by a maintenance lock; signed multi-arch images on GitHub Container Registry with an SBOM; an install bundle per release.
 
-**License:** Apache 2.0.
+**License:** MIT (the release candidates up to 0.1.0-rc.2 were Apache 2.0).
