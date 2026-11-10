@@ -1,0 +1,68 @@
+name: Integration finding
+description: A device or firmware where an integration shows wrong, missing or odd data (or works well).
+labels: ["integration finding"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Vantage's integrations are built against documentation and a few test devices, so
+        reports from real hardware help a lot, including "it works on my model".
+
+        **Don't include IP addresses, hostnames, domains, usernames, tokens, passwords,
+        community strings or other secrets.** If you paste SNMP walks, API responses or
+        logs, replace those values with placeholders such as `192.0.2.10`,
+        `switch.example` or `example-token`.
+  - type: input
+    id: device-model
+    attributes:
+      label: Device model
+      description: Vendor and exact model as printed on the device or in its UI.
+      placeholder: "MikroTik CRS328-24P-4S+RM"
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware version
+      description: The device's OS or firmware version.
+      placeholder: "SwOS 2.17"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Vantage version
+      description: The image tag you run, e.g. from `docker compose images` (for example `0.1.0`).
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: integration
+    attributes:
+      label: Integration
+      description: The device type you added it as in Vantage.
+      placeholder: "MikroTik SwOS, Generic SNMP device, pfSense, OPNsense, Proxmox …"
+    validations:
+      required: false
+  - type: textarea
+    id: whats-wrong
+    attributes:
+      label: What's wrong
+      description: What Vantage shows, and what the device really has (port layout, names, values, missing data …). Screenshots help.
+    validations:
+      required: true
+  - type: textarea
+    id: data
+    attributes:
+      label: Device data (optional)
+      description: An SNMP walk, API response or log excerpt that shows the difference, with addresses, names and secrets removed.
+      render: text
+    validations:
+      required: false
+  - type: checkboxes
+    id: redacted
+    attributes:
+      label: Before you submit
+      options:
+        - label: I removed IP addresses, hostnames and secrets from everything above.
+          required: true

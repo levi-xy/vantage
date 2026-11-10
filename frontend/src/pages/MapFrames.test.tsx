@@ -124,7 +124,7 @@ describe("networks, badges and legend", () => {
   const doc: MapDocument = {
     version: 1,
     vlans: [
-      { id: "10", name: "LAN", color: "blue", subnet: "10.0.10.0/24", note: "trusted" },
+      { id: "10", name: "LAN", color: "blue", subnet: "192.0.2.0/24", note: "trusted" },
       { id: "20", name: "Servers", color: "teal", subnet: "", note: "" },
     ],
     elements: [],
@@ -138,7 +138,7 @@ describe("networks, badges and legend", () => {
     expect(rows[0]?.textContent).toContain("VLAN 10");
     expect(rows[0]?.textContent).toContain("LAN");
     expect(rows[0]?.textContent).toContain("trusted");
-    expect(rows[0]?.textContent).toContain("10.0.10.0/24");
+    expect(rows[0]?.textContent).toContain("192.0.2.0/24");
   });
 
   it("renders the cells of badge columns as pills", () => {

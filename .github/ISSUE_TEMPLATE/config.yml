@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/levi-xy/vantage/discussions
+    about: Ask how to set something up, or share an idea, in GitHub Discussions.
+  - name: Report a security vulnerability
+    url: https://github.com/levi-xy/vantage/security/advisories/new
+    about: Report vulnerabilities privately, never in a public issue.
