@@ -64,7 +64,9 @@ physical access.
 **Trust boundaries:**
 
 1. **Browser → frontend nginx → backend.** Everything from the browser is untrusted.
-   Only the frontend port is published; the backend and Prometheus aren't.
+   Only the frontend port is published; the backend and Prometheus aren't. By default it
+   listens on every address of the host (`VANTAGE_BIND_ADDRESS=0.0.0.0`), so the LAN can
+   reach it; set one address to limit it to that network. Never expose it to the internet.
 2. **Backend → devices and cloud APIs.** Every outbound connection goes through
    `net_guard` (below); device answers are untrusted input.
 3. **Prometheus → exporters.** Prometheus connects on its own, outside `net_guard`:
@@ -242,7 +244,7 @@ Limits:
   `$remote_addr` is that proxy, so all clients share one per-client budget again (the
   per-username limit still applies). Vantage does not read a client address through a
   chain of proxies.
-- With the default `VANTAGE_BIND_ADDRESS=127.0.0.1`, everything reaching the dashboard
+- With `VANTAGE_BIND_ADDRESS=127.0.0.1`, everything reaching the dashboard
   through the host's loopback (a browser on the host, an SSH tunnel, or an HTTPS reverse
   proxy running on the host) arrives through Docker's userland proxy and appears to
   come from the network gateway (`192.168.255.241`). All of those clients share one

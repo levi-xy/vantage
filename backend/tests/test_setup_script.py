@@ -29,6 +29,20 @@ esac
 exit 0
 """
 
+# The server's LAN address as `ip route get` and `hostname -I` report it.
+IP_STUB = """#!/bin/sh
+[ -n "${STUB_NO_LAN:-}" ] && exit 2
+echo "192.0.2.1 via 10.0.0.1 dev eth0 src 10.0.0.23 uid 0"
+"""
+HOSTNAME_STUB = """#!/bin/sh
+if [ "$1" = -I ]; then
+  [ -n "${STUB_NO_LAN:-}" ] && exit 1
+  echo "10.0.0.23 172.17.0.1"
+  exit 0
+fi
+echo vantage-test
+"""
+
 
 @pytest.fixture
 def deploy(tmp_path: Path) -> Path:
@@ -40,6 +54,9 @@ def deploy(tmp_path: Path) -> Path:
     stubs.mkdir()
     (stubs / "docker").write_text(DOCKER_STUB)
     (stubs / "docker").chmod(0o755)
+    for name, body in (("ip", IP_STUB), ("hostname", HOSTNAME_STUB)):
+        (stubs / name).write_text(body)
+        (stubs / name).chmod(0o755)
     return d
 
 
@@ -48,6 +65,7 @@ def run(
     *args: str,
     volume_exists: bool = False,
     docker_down: bool = False,
+    no_lan: bool = False,
     extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = {
@@ -59,6 +77,8 @@ def run(
         env["STUB_VOLUME_EXISTS"] = "1"
     if docker_down:
         env["STUB_DOCKER_DOWN"] = "1"
+    if no_lan:
+        env["STUB_NO_LAN"] = "1"
     return subprocess.run(  # noqa: S603 -- fixed argv, test-only script under deploy/
         ["/bin/sh", str(deploy / "setup.sh"), *args],
         env=env,
@@ -124,7 +144,8 @@ def test_full_run_starts_stack_and_prints_url(deploy: Path) -> None:
     log = stub_log(deploy)
     assert "docker compose up -d" in log
     assert "exec -T frontend wget" in log and "/healthz" in log
-    assert "Vantage is running: https://127.0.0.1:8443" in result.stdout
+    assert "Vantage is running: https://10.0.0.23:8443" in result.stdout
+    assert "Only this server can open it" not in result.stdout
     assert "self-signed" in result.stdout
     assert_no_secret_in_output(deploy, result)
 
@@ -133,21 +154,21 @@ def test_old_env_port_name_still_used(deploy: Path) -> None:
     (deploy / ".env").write_text("VANTAGE_HTTP_PORT=8080\n")
     result = run(deploy)
     assert result.returncode == 0, result.stderr
-    assert "Vantage is running: https://127.0.0.1:8080" in result.stdout
+    assert "Vantage is running: https://10.0.0.23:8080" in result.stdout
 
 
 def test_environment_wins_over_env_file_like_compose(deploy: Path) -> None:
     (deploy / ".env").write_text("VANTAGE_HTTPS_PORT=8443\n")
     result = run(deploy, extra_env={"VANTAGE_HTTPS_PORT": "18543"})
     assert result.returncode == 0, result.stderr
-    assert "Vantage is running: https://127.0.0.1:18543" in result.stdout
+    assert "Vantage is running: https://10.0.0.23:18543" in result.stdout
 
 
 def test_plain_http_opt_out_prints_http_url(deploy: Path) -> None:
     (deploy / ".env").write_text("VANTAGE_HTTPS=false\n")
     result = run(deploy)
     assert result.returncode == 0, result.stderr
-    assert "Vantage is running: http://127.0.0.1:8443" in result.stdout
+    assert "Vantage is running: http://10.0.0.23:8443" in result.stdout
     assert "self-signed" not in result.stdout.split("Vantage is running")[1]
     assert "VANTAGE_PUBLIC_HOSTS is empty" in result.stdout
     (deploy / ".env").write_text("VANTAGE_HTTPS=false\nVANTAGE_PUBLIC_HOSTS=192.0.2.10\n")
@@ -187,6 +208,32 @@ def test_generates_self_signed_cert_for_configured_names(deploy: Path) -> None:
     if os.geteuid() == 0:
         key_stat = (certs / "tls.key").stat()
         assert (key_stat.st_uid, stat.S_IMODE(key_stat.st_mode)) == (101, 0o400)
+
+
+def test_default_listens_on_lan_and_cert_covers_lan_address(deploy: Path) -> None:
+    result = run(deploy, "--no-start")
+    assert result.returncode == 0, result.stderr
+    assert "VANTAGE_BIND_ADDRESS=0.0.0.0" in (deploy / ".env").read_text()
+    assert '"${VANTAGE_BIND_ADDRESS:-0.0.0.0}:' in (deploy / "docker-compose.yml").read_text()
+    text = openssl_text(deploy / "certs" / "tls.crt")
+    assert "IP Address:10.0.0.23" in text and "IP Address:127.0.0.1" in text
+
+
+def test_no_lan_address_found_prints_placeholder(deploy: Path) -> None:
+    result = run(deploy, no_lan=True)
+    assert result.returncode == 0, result.stderr
+    assert "Vantage is running: https://<this-server's-address>:8443" in result.stdout
+    assert "IP Address:10.0.0.23" not in openssl_text(deploy / "certs" / "tls.crt")
+
+
+def test_loopback_only_install_explains_how_to_open_it(deploy: Path) -> None:
+    (deploy / ".env").write_text("VANTAGE_BIND_ADDRESS=127.0.0.1\n")
+    result = run(deploy)
+    assert result.returncode == 0, result.stderr
+    assert "Vantage is running: https://127.0.0.1:8443" in result.stdout
+    assert "Only this server can open it" in result.stdout
+    assert "VANTAGE_BIND_ADDRESS=0.0.0.0" in result.stdout
+    assert "IP Address:10.0.0.23" not in openssl_text(deploy / "certs" / "tls.crt")
 
 
 def test_keeps_admin_cert_and_refuses_half_pair(deploy: Path) -> None:

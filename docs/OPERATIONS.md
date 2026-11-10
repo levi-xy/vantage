@@ -4,7 +4,9 @@ How to run, expose, upgrade and back up a Vantage install, and how its device an
 
 ## Reaching the dashboard from other machines
 
-The dashboard listens on `https://127.0.0.1:8443` by default. To reach it from other machines, set `VANTAGE_BIND_ADDRESS` in `.env` (in the folder you ran `setup.sh` from). Add any other names you use for the server to `VANTAGE_TLS_NAMES` before the first run, so the generated certificate covers them. Then run `docker compose up -d`.
+The dashboard listens on every address of the server, so it's reachable from your LAN at `https://<server-address>:8443`; `setup.sh` prints the address and puts it in the generated certificate. To listen on one network only, set `VANTAGE_BIND_ADDRESS` in `.env` (in the folder you ran `setup.sh` from) to the server's address on it, or to `127.0.0.1` for the server alone (behind a reverse proxy on the host), then run `docker compose up -d`. Add any other names you use for the server to `VANTAGE_TLS_NAMES` before the first run, so the generated certificate covers them.
+
+An install from before 0.1.0-rc.4 has `VANTAGE_BIND_ADDRESS=127.0.0.1` in its `.env` and is only reachable from the server itself. To open it to the LAN, set `VANTAGE_BIND_ADDRESS=0.0.0.0`, delete `certs/tls.crt` and `certs/tls.key`, and run `./setup.sh` again (it keeps the key, `.env` and data).
 
 Never publish the dashboard to the internet. Recommended: a dedicated monitoring VLAN, outbound internet blocked except the cloud API hosts you use, and dashboard access only from admin machines or your VPN.
 
