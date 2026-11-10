@@ -359,7 +359,8 @@ describe("faceplates show physical ports only", () => {
       physical: isPhysicalSnmp({
         id: `port${i + 1}`,
         ifType: "6",
-        connector: "true",
+        // The SFP+ cages report connector false; that must not remove them.
+        connector: i >= 24 ? "false" : "true",
         internal: false,
       }),
     }));

@@ -27,7 +27,8 @@ describe("physical ports", () => {
     expect(isPhysicalSnmp({ ...base, ifType: "117", connector: "" })).toBe(true);
     expect(isPhysicalSnmp({ ...base, ifType: "209" })).toBe(false); // bridge
     expect(isPhysicalSnmp({ ...base, ifType: "135" })).toBe(false); // VLAN
-    expect(isPhysicalSnmp({ ...base, ifType: "6", connector: "false" })).toBe(false);
+    expect(isPhysicalSnmp({ ...base, ifType: "6", connector: "false" })).toBe(true);
+    expect(isPhysicalSnmp({ ...base, connector: "true", internal: true })).toBe(true);
     expect(isPhysicalSnmp({ ...base, ifType: "" })).toBe(true);
     expect(isPhysicalSnmp({ ...base, internal: true })).toBe(false);
     expect(isPhysicalSnmp({ id: "Gi1/0/1.100", ifType: "6", internal: false })).toBe(false);

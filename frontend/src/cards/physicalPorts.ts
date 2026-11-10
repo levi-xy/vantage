@@ -16,8 +16,10 @@ export function isPhysicalSnmp(port: {
   internal: boolean;
 }): boolean {
   if (port.id.includes(".")) return false; // a sub-interface (Gi1/0/1.100, eth0.10)
-  if (!port.ifType) return !port.internal; // the agent doesn't say: keep today's behaviour
-  return ETHERNET_IF_TYPES.has(Number(port.ifType)) && port.connector !== "false";
+  // The connector flag is unreliable (some agents say false for an empty SFP cage), so a
+  // physical ifType alone decides; the flag only breaks the tie when there is no ifType.
+  if (port.ifType) return ETHERNET_IF_TYPES.has(Number(port.ifType));
+  return port.connector === "true" || !port.internal; // else keep today's behaviour
 }
 
 // FreeBSD (pfSense, OPNsense): logical interface families, each followed by a unit number.
