@@ -326,6 +326,11 @@ export function EditCanvas({
     }
     if (d.mode === "resize") {
       const next = resizeRect(d.rect, d.handle, px - d.sx, py - d.sy, snap);
+      // Only a vertical edge or corner changes the height; the drawn height may be a measured one.
+      const stored = d.base.elements.find((e) => e.id === d.id);
+      if (!d.handle.includes("n") && !d.handle.includes("s") && stored && stored.kind !== "cable") {
+        next.h = stored.h;
+      }
       preview(applyRects(d.base, new Map([[d.id, next]])));
       return;
     }

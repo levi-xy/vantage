@@ -98,19 +98,7 @@ export function BoxRoot({
       {...m.select}
     >
       {scalable ? (
-        <div
-          ref={inner}
-          data-scale={fit.scale > 1 ? fit.scale : undefined}
-          style={
-            fit.scale > 1
-              ? {
-                  width: `${100 / fit.scale}%`,
-                  transform: `translateY(${fit.dy}px) scale(${fit.scale})`,
-                  transformOrigin: "0 0",
-                }
-              : undefined
-          }
-        >
+        <div ref={inner} data-scale={fit.scale > 1 ? fit.scale : undefined} style={fit.style}>
           {children}
         </div>
       ) : (

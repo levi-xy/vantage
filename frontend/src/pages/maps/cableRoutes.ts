@@ -38,7 +38,7 @@ export function cableRoutes(doc: MapDocument, live: MapLive, cache?: RouteCache)
     rects.get(end.element);
   // A cable leaves a jack through the panel's open side (the bottom of a panel at the bottom,
   // the top of one at the top, the right edge of one at the side), straight to just outside
-  // the box, and routes on from there. `start` is the jack's edge, `rect` the point outside.
+  // the box, and routes on from there. `lead` runs from the jack's edge, `rect` is the point outside.
   const exitOf = (end: MapCableEnd) => {
     const owner = endElements(doc).get(end.element);
     const jack = end.port !== null ? panels.get(end.element)?.rects.get(end.port) : undefined;
@@ -46,22 +46,36 @@ export function cableRoutes(doc: MapDocument, live: MapLive, cache?: RouteCache)
     if (owner?.kind !== "box" || !jack || !box) return undefined;
     const [cx, cy] = [jack.x + jack.w / 2, jack.y + jack.h / 2];
     const place = owner.panel?.place ?? "bottom";
-    const [start, out]: [Point, Point] =
-      place === "side"
-        ? [
-            [jack.x + jack.w, cy],
-            [box.x + box.w + LEAD, cy],
-          ]
-        : place === "top"
-          ? [
-              [cx, jack.y],
-              [cx, box.y - LEAD],
-            ]
-          : [
-              [cx, jack.y + jack.h],
-              [cx, box.y + box.h + LEAD],
-            ];
-    return { start, rect: { x: out[0], y: out[1], w: 0, h: 0 }, box };
+    const vertical = place !== "side";
+    const down = place !== "top";
+    // Another jack of the panel right in the way (the bottom row under a top-row jack): leave
+    // beside the jack, in the gap between the columns, so the line doesn't cover that jack.
+    const blocked =
+      vertical &&
+      [...(panels.get(end.element)?.rects.values() ?? [])].some(
+        (o) =>
+          o !== jack &&
+          o.x < jack.x + jack.w &&
+          o.x + o.w > jack.x &&
+          (down ? o.y > jack.y : o.y < jack.y),
+      );
+    let lead: Point[];
+    let out: Point;
+    if (place === "side") {
+      lead = [[jack.x + jack.w, cy]];
+      out = [box.x + box.w + LEAD, cy];
+    } else if (blocked) {
+      const gx = jack.x + jack.w + 4 * (jack.w / 26);
+      lead = [
+        [jack.x + jack.w, cy],
+        [gx, cy],
+      ];
+      out = [gx, down ? box.y + box.h + LEAD : box.y - LEAD];
+    } else {
+      lead = [[cx, down ? jack.y + jack.h : jack.y]];
+      out = [cx, down ? box.y + box.h + LEAD : box.y - LEAD];
+    }
+    return { lead, rect: { x: out[0], y: out[1], w: 0, h: 0 }, box };
   };
   // Everything a cable must keep clear of: every element but the cables, name tabs included.
   const things = doc.elements.flatMap((e) =>
@@ -93,22 +107,13 @@ export function cableRoutes(doc: MapDocument, live: MapLive, cache?: RouteCache)
               .filter((t) => t.id !== cable.from.element && t.id !== cable.to.element)
               .map((t) => t.rect)
               .filter((r) => overlap(r, zone));
-      const key = JSON.stringify([
-        a,
-        z,
-        boxA,
-        boxB,
-        cable.bends,
-        avoid,
-        exitA?.start,
-        exitZ?.start,
-      ]);
+      const key = JSON.stringify([a, z, boxA, boxB, cable.bends, avoid, exitA?.lead, exitZ?.lead]);
       const old = cache?.get(cable.id);
       if (old && old.key === key) out = old.points;
       else {
         out = cablePath(a, z, cable.bends, boxA, boxB, avoid);
-        if (exitA) out = [exitA.start, ...out];
-        if (exitZ) out = [...out, exitZ.start];
+        if (exitA) out = [...exitA.lead, ...out];
+        if (exitZ) out = [...out, ...[...exitZ.lead].reverse()];
         cache?.set(cable.id, { key, points: out });
       }
     }

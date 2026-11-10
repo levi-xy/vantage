@@ -1,28 +1,37 @@
-// A box taller than its content scales the content up to fill (uniform, never below 1, so
-// nothing is ever clipped). The box's natural height is measured with the content at scale 1;
-// the content is then laid out `w / scale` wide and drawn `scale` times larger, so it fills
-// the stored width and height. A stored height equal to the editor's default is "not chosen".
+// A box bigger than its content scales the content up to fill (uniform, never below 1, so
+// nothing is ever clipped or cropped). The content's natural size is measured at scale 1 in
+// "shrink to fit" layout (as wide as the content needs, at most the box); the content is then
+// drawn at scale = min(box width / natural width, box height / natural height), centred.
+// Viewing and editing use the same stored width and height, so they scale identically.
+// A stored height equal to a default the app once assigned means "not chosen".
 
 import { useLayoutEffect, useRef, useState } from "react";
-import type { RefObject } from "react";
+import type { CSSProperties, RefObject } from "react";
 import type { MapBox } from "../../api";
-import { DEFAULT_BOX_H } from "./boxFacts";
+import { isDefaultBoxH } from "./boxFacts";
 
 export interface Fit {
   /** Content scale, 1 = natural size. */
   scale: number;
-  /** Space above the content that centres it vertically, in box pixels. */
-  dy: number;
+  /** The inner wrapper's style for this state. */
+  style: CSSProperties | undefined;
   /** The box's height when scaled up (undefined = as tall as its content). */
   height: number | undefined;
 }
 
-const NATURAL: Fit = { scale: 1, dy: 0, height: undefined };
+const NATURAL: Fit = { scale: 1, style: undefined, height: undefined };
+/** Rendered once at scale 1 so the natural size can be read. */
+const MEASURING: Fit = {
+  scale: 1,
+  style: { width: "fit-content", maxWidth: "100%" },
+  height: undefined,
+};
 
-/** The scale that makes `natural` tall content fill `room`, 1 when there is nothing to fill. */
-export function fitScale(room: number, natural: number): number {
-  if (natural <= 0 || room <= natural * 1.02) return 1;
-  return Math.round((room / natural) * 1000) / 1000;
+/** The scale that makes natural-sized content fill the room, 1 when there is nothing to fill. */
+export function fitScale(room: { w: number; h: number }, natural: { w: number; h: number }) {
+  if (natural.w <= 0 || natural.h <= 0) return 1;
+  const s = Math.min(room.w / natural.w, room.h / natural.h);
+  return s <= 1.02 ? 1 : Math.round(s * 1000) / 1000;
 }
 
 // What changes a box's natural size (live figures change it through the observer below).
@@ -44,11 +53,11 @@ const depsOf = (b: MapBox) => [
   b.nas,
 ];
 
-type State = { deps: readonly unknown[]; fit: Fit; frame: number };
+type State = { deps: readonly unknown[]; fit: Fit };
 
 /**
  * The fit of a box: measured from `inner` (the wrapper of its content) inside `outer`.
- * `inner` is laid out at scale 1 on the first render after anything changed.
+ * The first render after anything changed shows `inner` at scale 1 and measures it.
  */
 export function useFitScale(
   outer: RefObject<HTMLDivElement>,
@@ -63,35 +72,49 @@ export function useFitScale(
     state !== null &&
     state.deps.length === deps.length &&
     state.deps.every((d, i) => Object.is(d, deps[i]));
-  const fit = enabled && fresh ? state.fit : NATURAL;
+  const fit = !enabled ? NATURAL : fresh ? state.fit : MEASURING;
   const seen = useRef(0);
 
-  // Measure-then-set before paint, on every render by design (it settles in two passes).
+  // Measure before paint; only when something changed (the state then matches `deps`).
   /* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps */
   useLayoutEffect(() => {
     const el = inner.current;
     const root = outer.current;
-    if (!enabled || !el || !root) return;
-    if (!fresh) {
-      // Rendered at scale 1: this is the natural size.
-      const natural = el.offsetHeight;
-      if (natural === 0) return; // jsdom and hidden panes
-      const frame = root.offsetHeight - natural;
-      seen.current = natural;
-      const room = box.h === DEFAULT_BOX_H ? 0 : box.h - frame;
-      setState({ deps, frame, fit: { scale: fitScale(room, natural), dy: 0, height: undefined } });
-    } else if (state.fit.scale > 1) {
-      // Scaled: centre it, and grow the box if the narrower layout came out taller.
-      seen.current = el.offsetHeight;
-      const drawn = el.offsetHeight * state.fit.scale;
-      const height = Math.max(box.h, Math.ceil(drawn + state.frame));
-      const dy = Math.max(0, Math.round((height - state.frame - drawn) / 2));
-      if (state.fit.height !== height || state.fit.dy !== dy) {
-        setState({ ...state, fit: { ...state.fit, dy, height } });
-      }
+    if (!enabled || fresh || !el || !root) return;
+    const natural = { w: el.offsetWidth, h: el.offsetHeight };
+    seen.current = natural.h;
+    if (natural.h === 0 || natural.w === 0) {
+      setState({ deps, fit: NATURAL }); // jsdom and hidden panes
+      return;
     }
+    const frameH = root.offsetHeight - natural.h;
+    const room = { w: root.clientWidth, h: box.h - frameH };
+    const scale = isDefaultBoxH(box.h) ? 1 : fitScale(room, natural);
+    if (scale === 1) {
+      setState({ deps, fit: NATURAL });
+      return;
+    }
+    const dx = Math.max(0, Math.round((room.w - natural.w * scale) / 2));
+    const dy = Math.max(0, Math.round((room.h - natural.h * scale) / 2));
+    setState({
+      deps,
+      fit: {
+        scale,
+        height: box.h,
+        style: {
+          width: natural.w,
+          transform: `translate(${dx}px, ${dy}px) scale(${scale})`,
+          transformOrigin: "0 0",
+        },
+      },
+    });
   });
   /* eslint-enable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps */
+
+  // What the settled layout measures, so only a later change counts (never our own relayout).
+  useLayoutEffect(() => {
+    if (enabled && fresh && inner.current) seen.current = inner.current.offsetHeight;
+  });
 
   // Content that changes height by itself (live figures, wrapping text) starts a new measurement.
   useLayoutEffect(() => {

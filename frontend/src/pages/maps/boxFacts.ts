@@ -84,6 +84,8 @@ export function selectable(
 
 /** The height a new box gets in the editor: not a chosen height, so content is never scaled to it. */
 export const DEFAULT_BOX_H = 88;
+/** Heights the app assigned itself (the editor's default, and boxes made from old links): not chosen. */
+export const isDefaultBoxH = (h: number): boolean => h === DEFAULT_BOX_H || h === 96;
 
 /**
  * Elements whose height follows the content (only their width is stored): the networks and

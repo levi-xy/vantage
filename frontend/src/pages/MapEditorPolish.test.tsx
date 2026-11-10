@@ -96,9 +96,11 @@ describe("cable to a jack", () => {
 
 describe("boxes taller than their content", () => {
   it("scales content up to fill, never down", () => {
-    expect(fitScale(300, 100)).toBe(3);
-    expect(fitScale(90, 100)).toBe(1);
-    expect(fitScale(101, 100)).toBe(1);
+    const natural = { w: 100, h: 100 };
+    expect(fitScale({ w: 400, h: 300 }, natural)).toBe(3); // the tighter side decides: no cropping
+    expect(fitScale({ w: 150, h: 900 }, natural)).toBe(1.5);
+    expect(fitScale({ w: 90, h: 90 }, natural)).toBe(1);
+    expect(fitScale({ w: 101, h: 101 }, natural)).toBe(1);
   });
 
   it("is height-resizable except clouds", () => {
@@ -127,5 +129,27 @@ describe("inspector width", () => {
     expect(result.current[0]).toBe(280);
     expect(localStorage.getItem("vantage.mapInspectorWidth")).toBe("280");
     expect(renderHook(() => useInspectorWidth()).result.current[0]).toBe(280);
+  });
+});
+
+describe("jack with a jack in the way", () => {
+  it("leaves beside a top-row jack of a two-row panel, not through the jack below", () => {
+    const two: MapPanel = regeneratePorts({
+      ...emptyPanel(),
+      groups: [newGroup([], "rj45", { count: 4, rows: 2, order: "odd_bottom" })],
+    });
+    const a = box("a", 0, 0, { panel: two });
+    const doc: MapDocument = {
+      version: 1,
+      vlans: [],
+      elements: [a, box("b", 0, 400), cable("g1-2")],
+    };
+    const jacks = boxPanel(a, undefined)?.rects;
+    const top = [...(jacks?.values() ?? [])].reduce((m, r) => (r.y < m.y ? r : m));
+    const id = [...(jacks?.entries() ?? [])].find(([, r]) => r === top)?.[0] ?? "";
+    const c = { ...cable(id) };
+    const pts = cableRoutes({ ...doc, elements: [a, box("b", 0, 400), c] }, live).points(c);
+    // The second point is to the right of the jack (the gap between columns).
+    expect(pts?.[1]?.[0]).toBeGreaterThan(top.x + top.w);
   });
 });
