@@ -142,7 +142,8 @@ _SECRET_RE = re.compile(r"[!-~]{1,256}")  # printable ASCII, no spaces
 _IF_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,31}")
 _NAME_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.@:-]{0,63}")  # gateways and services
 _SKIPPED_INTERFACE_PREFIXES = ("lo", "pflog", "pfsync", "enc")
-_UPTIME_RE = re.compile(r"(?:(\d+)\s+days?,\s*)?(\d+):(\d{1,2}):(\d{1,2})")
+_UPTIME_RE = re.compile(r"(?:(\d+)\D+?)?(\d+):(\d{2}):(\d{2})\s*$")
+_MAC_RE = re.compile(r"(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}")
 _LEADING_NUMBER_RE = re.compile(r"\s*(-?\d+(?:\.\d+)?)")
 
 IFF_UP = 0x1
@@ -509,7 +510,9 @@ def interface_samples(
                 continue
             if name.startswith(_SKIPPED_INTERFACE_PREFIXES) and not name[-1:].isalpha():
                 continue
-            entries[name] = entry
+            old = entries.get(name)
+            if old is None or _link_rank(entry) > _link_rank(old):
+                entries[name] = entry
     ordered = sorted(entries)
     samples: list[Sample] = []
     for name in ordered[:MAX_INTERFACES]:
@@ -533,6 +536,20 @@ def interface_samples(
     return samples, max(0, len(ordered) - MAX_INTERFACES)
 
 
+def _link_rank(entry: dict[str, Any]) -> tuple[bool, float]:
+    """netstat lists a link row (MAC address, network ``<Link#N>``) and one row per address
+    with per-address counters. Prefer the link row (whole-interface counters), else the row
+    with the most bytes."""
+    network = entry.get("network")
+    address = entry.get("address")
+    is_link = (isinstance(network, str) and network.startswith("<Link#")) or (
+        isinstance(address, str) and bool(_MAC_RE.fullmatch(address))
+    )
+    received = _number(entry.get("received-bytes")) or 0.0
+    sent = _number(entry.get("sent-bytes")) or 0.0
+    return is_link, received + sent
+
+
 def _flags(raw: Any) -> int | None:
     if isinstance(raw, bool):
         return None
@@ -540,7 +557,10 @@ def _flags(raw: Any) -> int | None:
         return raw
     if isinstance(raw, str):
         try:
-            return int(raw.strip(), 0)
+            text = raw.strip()
+            if text.lower().startswith("0x"):
+                return int(text, 16)
+            return int(text, 16)  # a string without 0x is hex too, e.g. "8943"
         except ValueError:
             return None
     return None

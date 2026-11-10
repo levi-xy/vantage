@@ -17,7 +17,7 @@
 | `GET /api/routes/gateway/status` | System: Gateways | gateway status, delay, stddev, loss | `{"items": [...]}` documented; per-gateway fields (`name`, `status`, `delay` "1.2 ms", `loss` "0.0 %") **unverified** |
 | `GET /api/core/service/search` | Status: Services | service names and running flag | `rows[]` with `id`/`name`, `running` **unverified** |
 
-Nothing else is called: no `POST`/`PUT`/`DELETE`, no `start`, `stop`, `restart`, `reconfigure`, `set`, `add`, `del`, `flush` or `kill` endpoint, no streaming endpoint, and no firmware endpoint. **Update-available is not shown**: it needs a firmware check, which makes the firewall do work (and `firmware/status` only returns the result of a check someone ran earlier). Redirects are not followed.
+Nothing else is called: no `POST`/`PUT`/`DELETE`, no `start`, `stop`, `restart`, `reconfigure`, `set`, `add`, `del`, `flush` or `kill` endpoint, no streaming endpoint, and no firmware endpoint. **Update-available is not shown**: it needs a firmware check, which makes the firewall do work (and `firmware/status` only returns the result of a check someone ran earlier). Redirects are not followed. Services whose id contains characters other than letters, digits and `_ . @ : -` (for example `/`) are skipped. When an interface appears on several netstat rows, the link row (MAC address, `<Link#N>`) supplies its counters.
 
 **Config:** see `OpnsenseConfig`.
 

@@ -498,3 +498,25 @@ def test_firewall_hints_and_static_parts() -> None:
     [hint] = Opnsense().firewall_hints(ctx)
     assert (hint.destination, hint.port) == (HOST, 8443)
     assert Opnsense.category == "firewall" and Opnsense().poll_interval_seconds() == 60
+
+
+@pytest.mark.parametrize(
+    ("raw", "seconds"),
+    [
+        ("2 days, 03:04:05", 2 * 86400 + 3 * 3600 + 4 * 60 + 5),
+        ("2 days 03:04:05", 2 * 86400 + 3 * 3600 + 4 * 60 + 5),
+        ("1 Tag, 00:00:10", 86400 + 10),
+        ("03:04:05", 3 * 3600 + 4 * 60 + 5),
+        ("nonsense", None),
+    ],
+)
+def test_uptime_forms(raw: str, seconds: float | None) -> None:
+    assert opn.parse_uptime(raw) == seconds
+
+
+@pytest.mark.parametrize(
+    ("raw", "flags"),
+    [("0x8943", 0x8943), ("8943", 0x8943), ("8943a", 0x8943A), (35139, 35139), ("x", None)],
+)
+def test_flags_forms(raw: Any, flags: int | None) -> None:
+    assert opn._flags(raw) == flags

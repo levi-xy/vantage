@@ -1,5 +1,37 @@
-{"statistics":{
- "[WAN] (vtnet0) / 02:00:00:00:00:01":{"name":"vtnet0","flags":"0x8943","mtu":"1500","address":"02:00:00:00:00:01","received-packets":"1000","received-bytes":"1234567","sent-packets":"900","sent-bytes":"7654321"},
- "[LAN] (vtnet1) / 02:00:00:00:00:02":{"name":"vtnet1","flags":"0x8802","mtu":"1500","address":"02:00:00:00:00:02","received-bytes":"5000","sent-bytes":"6000"},
- "[Loopback] (lo0) / ":{"name":"lo0","flags":"0x8049","received-bytes":"1","sent-bytes":"1"}
-}}
+{
+ "statistics": {
+  "[WAN] (vtnet0) / 02:00:00:00:00:01": {
+   "name": "vtnet0",
+   "flags": "0x8943",
+   "mtu": "1500",
+   "address": "02:00:00:00:00:01",
+   "received-packets": "1000",
+   "received-bytes": "1234567",
+   "sent-packets": "900",
+   "sent-bytes": "7654321",
+   "network": "<Link#1>"
+  },
+  "[LAN] (vtnet1) / 02:00:00:00:00:02": {
+   "name": "vtnet1",
+   "flags": "0x8802",
+   "mtu": "1500",
+   "address": "02:00:00:00:00:02",
+   "received-bytes": "5000",
+   "sent-bytes": "6000"
+  },
+  "[Loopback] (lo0) / ": {
+   "name": "lo0",
+   "flags": "0x8049",
+   "received-bytes": "1",
+   "sent-bytes": "1"
+  },
+  "[WAN] (vtnet0) / 192.0.2.10": {
+   "name": "vtnet0",
+   "flags": "0x8943",
+   "network": "192.0.2.0/24",
+   "address": "192.0.2.10",
+   "received-bytes": "100",
+   "sent-bytes": "200"
+  }
+ }
+}
