@@ -8,25 +8,25 @@ CI and deployment) stays with the maintainer.
 
 | Welcome | Where it lives |
 |---|---|
-| A new integration (a device type, exporter or service) | `backend/app/integrations/builtin/<type_id>/`, one line in `backend/app/integrations/registry.py`, cards in `frontend/src/cards/<card_type>/`, `docs/integrations/<type_id>.md` |
+| A new integration (a device type, exporter or service) | `backend/app/integrations/builtin/<type_id>/`, one line in `backend/app/integrations/registry.py`, tests in `backend/tests/integrations/builtin/`, cards in `frontend/src/cards/<card_type>/`, `docs/integrations/<type_id>.md` |
 | Fixes and improvements to an existing integration or its cards | the same folders |
 | Front panel presets for real hardware | `frontend/src/pages/maps/editor/presetModels.ts` |
 | Bug fixes in pages and components | `frontend/src/pages/`, `frontend/src/components/` |
-| Docs fixes | `README.md`, `docs/` (except the two files below) |
+| Docs fixes | `README.md`, `docs/INTEGRATIONS.md`, `docs/OPERATIONS.md`, `docs/integrations/`, `docs/exporters/` |
 
-**Not open to contributors**, and a CI check (*Contribution scope*) fails any PR from a fork that
-touches these:
+**Those paths are the only ones open to contributors.** A CI check (*Contribution scope*) fails
+any PR from a fork that touches a file anywhere else. That includes:
 
-- security and core: `backend/app/core/` (the SSRF guard, auth, crypto), `api/`, `models/`,
-  `migrations/`, `alerts/`, `collectors/`, `sd/`, `query/`, `live/`, `cli/`, `main.py`,
-  `integrations/base.py` (the Integration contract), `frontend/src/app/`, `frontend/src/api/`
-- dependencies and build: `backend/pyproject.toml`, `frontend/package.json` and its lockfile,
-  Dockerfiles, `frontend/nginx.conf`, the icon manifest, tool configs
-- CI, deploy and project files: `.github/`, `.claude/`, `deploy/`, `scripts/`, `AGENTS.md`,
-  `docs/SECURITY.md`, `docs/ARCHITECTURE.md`, `LICENSE`, `NOTICE`, `CHANGELOG.md`, this file
-- tests outside `backend/tests/integrations/builtin/`
+- the core and security: everything else under `backend/` (the SSRF guard, auth, crypto, the
+  API, data model, migrations, alerts, the Integration contract) and the shared
+  `integrations/builtin/common.py`
+- the login, account, users, audit log, notification channels, setup and time pages, and the
+  sign-in screen
+- the app shell and API client (`frontend/src/app/`, `frontend/src/api/`), dependencies,
+  Dockerfiles, tool configs, CI, `deploy/`, `scripts/`, `AGENTS.md`, `docs/SECURITY.md`,
+  `docs/ARCHITECTURE.md`, the license files and this file
 
-If your integration needs something there (a new dependency, a display label in
+If your change needs a file outside those paths (a new dependency, a display label in
 `alerts/labels.py`, a field in the Integration contract), don't change it: describe it in the
 PR or in your proposal, and the maintainer decides and makes the change.
 

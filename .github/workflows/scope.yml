@@ -1,8 +1,8 @@
 name: Contribution scope
 
 # Pull requests from forks may change integrations, cards, presets, their tests and docs, and
-# fix bugs outside the core. This check fails when such a PR touches core, security,
-# dependency, CI or deploy files (see CONTRIBUTING.md). It runs the base branch's copy of this
+# fix bugs in pages and components. This check fails when such a PR touches any file outside
+# that allowlist (see CONTRIBUTING.md, "What's in scope"). It runs the base branch's copy of this
 # file (pull_request_target), so a PR can't edit the check away. It never checks out or runs
 # the PR's code: it only reads the list of changed file names from the API.
 
@@ -26,24 +26,30 @@ jobs:
         run: |
           set -euo pipefail
           gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)' > files.txt
+          count=$(wc -l < files.txt)
+          if [ "$count" -ge 3000 ]; then
+            echo "::error::Too many changed files to check ($count). Split the PR."
+            exit 1
+          fi
           blocked=0
           while IFS= read -r f; do
             case "$f" in
-              backend/app/integrations/builtin/*|backend/tests/integrations/builtin/*) continue ;;
-              .github/*|.claude/*|.gitleaks.toml|.pre-commit-config.yaml|.gitattributes|.gitignore|.dockerignore|.nvmrc \
-              |AGENTS.md|BUILD-PLAN.md|CHANGELOG.md|CONTRIBUTING.md|LICENSE|NOTICE \
-              |deploy/*|scripts/*|docs/SECURITY.md|docs/ARCHITECTURE.md \
-              |backend/app/core/*|backend/app/api/*|backend/app/models/*|backend/app/sd/*|backend/app/query/* \
-              |backend/app/alerts/*|backend/app/collectors/*|backend/app/live/*|backend/app/cli/* \
-              |backend/app/main.py|backend/app/heartbeat.py|backend/app/integrations/base.py \
-              |backend/migrations/*|backend/alembic.ini|backend/pyproject.toml|backend/Dockerfile|backend/tests/* \
-              |frontend/package.json|frontend/package-lock.json|frontend/Dockerfile|frontend/docker/* \
-              |frontend/nginx.conf|frontend/index.html|frontend/icons.manifest.json|frontend/scripts/* \
-              |frontend/vite.config.*|frontend/tsconfig*|frontend/eslint.config.js|frontend/.prettierrc* \
-              |frontend/src/api/*|frontend/src/app/*|frontend/src/main.tsx|frontend/src/test-setup.ts)
-                echo "::error file=$f::Outside the scope open to contributors: $f"
-                blocked=1 ;;
+              # Shared helpers and pages that handle login, secrets, users or the audit log.
+              backend/app/integrations/builtin/common.py \
+              |frontend/src/components/AuthScreen* \
+              |frontend/src/pages/AccountPage*|frontend/src/pages/AuditPage*|frontend/src/pages/auditChanges* \
+              |frontend/src/pages/ChannelsPage*|frontend/src/pages/LoginPage*|frontend/src/pages/SetupPage* \
+              |frontend/src/pages/TimePage*|frontend/src/pages/UsersPage*|frontend/src/pages/users/* \
+              |frontend/src/pages/settings/*) ;;
+              # Open to contributors.
+              backend/app/integrations/builtin/*|backend/app/integrations/registry.py \
+              |backend/tests/integrations/builtin/* \
+              |frontend/src/cards/*|frontend/src/pages/*|frontend/src/components/* \
+              |docs/integrations/*|docs/exporters/*|docs/INTEGRATIONS.md|docs/OPERATIONS.md|README.md) continue ;;
             esac
+            safe=$(printf '%s' "$f" | tr -d '%\r\n')
+            echo "::error file=$safe::Outside the scope open to contributors: $safe"
+            blocked=1
           done < files.txt
           if [ "$blocked" -ne 0 ]; then
             echo "This PR changes files only the maintainer changes. See CONTRIBUTING.md, \"What's in scope\"."
