@@ -599,7 +599,6 @@ export function EditCanvas({
                 style={{ top: y, height: 1 / view.z, width: MAX_COORD }}
               />
             ))}
-            <CablesLayer overlay doc={shown} live={live} />
           </MeasureProvider>
         </div>
         <ZoomControls zoom={view.z} onZoom={centerZoom} onFit={fit} />
