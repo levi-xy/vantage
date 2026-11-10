@@ -4,7 +4,7 @@
 import { useUnits } from "../../app/units";
 import type { MapCable, MapDocument, MapLegend, MapNetworks, MapTable, MapText } from "../../api";
 import { cableLive, endElements } from "./cableLive";
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { cableRoutes } from "./cableRoutes";
 import type { RouteCache } from "./cableRoutes";
 import type { CableLive } from "./cableLive";
@@ -280,9 +280,15 @@ export function CablesLayer({
   onHover,
   onPick,
   pickedId,
+  overlay = false,
 }: {
   doc: MapDocument;
   live: MapLive;
+  /**
+   * Drawn above the boxes: only the stretch of each cable inside a box whose jack it meets, so
+   * the line visibly ends at the jack (the full layer lies under the boxes).
+   */
+  overlay?: boolean;
   onHover?: (hover: CableHover | null) => void;
   /** The editor: a click on a cable selects it. */
   onPick?: (id: string) => void;
@@ -293,6 +299,48 @@ export function CablesLayer({
   const cables = doc.elements.filter((e): e is MapCable => e.kind === "cable");
   const [cache] = useState<RouteCache>(() => new Map());
   const routes = useMemo(() => cableRoutes(doc, live, cache), [doc, live, cache]);
+  const clipId = useId().replace(/:/g, "");
+  if (overlay) {
+    return (
+      <svg
+        aria-hidden="true"
+        data-cables-overlay=""
+        className="pointer-events-none absolute top-0 left-0 overflow-visible"
+        width={b.x + b.w + 40}
+        height={b.y + b.h + 40}
+        fill="none"
+      >
+        {cables.flatMap((cable) => {
+          const pts = routes.points(cable);
+          const boxes = routes.inside(cable);
+          if (!pts || boxes.length === 0) return [];
+          const state = cableLive(cable, owners, live);
+          const chosen = chosenColor(cable, doc);
+          const stroke = state.down
+            ? "var(--vt-crit)"
+            : (chosen ??
+              (cable.role === "trunk" && !state.up ? "var(--vt-ink)" : null) ??
+              (state.up ? "var(--vt-ok)" : "var(--vt-muted)"));
+          return [
+            <g key={cable.id} data-cable-inside={cable.id} clipPath={`url(#${clipId}-${cable.id})`}>
+              <clipPath id={`${clipId}-${cable.id}`}>
+                {boxes.map((r, i) => (
+                  <rect key={i} x={r.x} y={r.y} width={r.w} height={r.h} />
+                ))}
+              </clipPath>
+              <path
+                d={pathData(pts)}
+                stroke={stroke}
+                strokeWidth={cableWidth(cable.speed)}
+                strokeDasharray={state.down ? "6 5" : DASH[cable.style]}
+                strokeLinejoin="round"
+              />
+            </g>,
+          ];
+        })}
+      </svg>
+    );
+  }
   return (
     <svg
       className="pointer-events-none absolute top-0 left-0 overflow-visible"

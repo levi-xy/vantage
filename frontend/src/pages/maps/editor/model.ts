@@ -1,6 +1,7 @@
 // The editor's pure document operations: new elements, removal, moving, snapping and the
 // "start with my devices" layout. Nothing here touches React or the network.
 
+import { DEFAULT_BOX_H } from "../boxFacts";
 import type { Category, Instance, MapDocument, MapElement, MapIcon } from "../../../api";
 
 /** The backend's caps (backend/app/api/map_document.py). */
@@ -16,7 +17,7 @@ export type Rect = { x: number; y: number; w: number; h: number };
 export const isGeometry = (e: MapElement): e is Geometry => e.kind !== "cable";
 
 const SIZES: Record<Geometry["kind"], [number, number]> = {
-  box: [224, 88],
+  box: [224, DEFAULT_BOX_H],
   frame: [480, 280],
   text: [208, 80],
   table: [272, 144],

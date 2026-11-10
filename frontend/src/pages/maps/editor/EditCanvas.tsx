@@ -103,7 +103,7 @@ function endAt(e: { clientX: number; clientY: number; target: EventTarget }): Ma
   return { element, port: jack && owner.contains(jack) ? jack.getAttribute("data-port") : null };
 }
 
-/** A box is as tall as its content, so only its width can be dragged. */
+/** Filled frames, clouds and panels are as tall as their content, so only their width can be dragged. */
 const handlesFor = (doc: MapDocument, id: string): readonly Handle[] => {
   const el = doc.elements.find((e) => e.id === id);
   return el && contentSized(el) ? HANDLES.filter((h) => h === "e" || h === "w") : HANDLES;
@@ -190,7 +190,8 @@ export function EditCanvas({
     const [px, py] = at(e);
     const handle = target.closest("[data-handle]")?.getAttribute("data-handle") as Handle | null;
     if (handle && single) {
-      const rect = rectsOf(doc, [single]).get(single);
+      // Start from the drawn size: a box shows at least its content's height.
+      const rect = rectsOf(shown, [single]).get(single);
       if (rect) {
         drag.current = { mode: "resize", handle, sx: px, sy: py, base: doc, id: single, rect };
         e.currentTarget.setPointerCapture?.(e.pointerId);
@@ -593,6 +594,7 @@ export function EditCanvas({
                 style={{ top: y, height: 1 / view.z, width: MAX_COORD }}
               />
             ))}
+            <CablesLayer overlay doc={shown} live={live} />
           </MeasureProvider>
         </div>
         <ZoomControls zoom={view.z} onZoom={centerZoom} onFit={fit} />

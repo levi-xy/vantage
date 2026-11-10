@@ -123,6 +123,7 @@ export function MapCanvas({
                   return null;
               }
             })}
+            <CablesLayer overlay doc={doc} live={live} />
           </MeasureProvider>
         </div>
         <ZoomControls zoom={view.z} onZoom={centerZoom} onFit={fit} actions={actions} />

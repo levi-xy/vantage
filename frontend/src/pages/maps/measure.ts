@@ -15,7 +15,8 @@ import type { RefObject } from "react";
 import type { MapDocument } from "../../api";
 
 type Report = (id: string, height: number | null) => void;
-type Origin = { x: number; y: number };
+/** Where a box's panel starts in it, and how much the box scaled its content up (1 = natural). */
+type Origin = { x: number; y: number; s?: number };
 type ReportOrigin = (id: string, origin: Origin | null) => void;
 
 /** What the boxes report: their height, and where their front panel starts. */
@@ -74,7 +75,7 @@ export function useMeasuredDoc(doc: MapDocument): {
   const origin = useCallback<ReportOrigin>((id, value) => {
     setOrigins((prev) => {
       const old = prev.get(id) ?? null;
-      if (old?.x === value?.x && old?.y === value?.y) return prev;
+      if (old?.x === value?.x && old?.y === value?.y && old?.s === value?.s) return prev;
       const next = new Map(prev);
       if (value === null) next.delete(id);
       else next.set(id, value);
@@ -124,7 +125,14 @@ export function useReportPanelOrigin(id: string): RefObject<HTMLDivElement> {
       const r = root.getBoundingClientRect();
       const p = el.getBoundingClientRect();
       const k = r.width / root.offsetWidth || 1;
-      report(id, { x: Math.round((p.left - r.left) / k), y: Math.round((p.top - r.top) / k) });
+      // The panel is laid out `offsetWidth` wide; how wide it is drawn says the content scale.
+      const drawn = p.width / k / (el.offsetWidth || 1);
+      const s = Math.abs(drawn - 1) < 0.01 ? 1 : Math.round(drawn * 100) / 100;
+      report(id, {
+        x: Math.round((p.left - r.left) / k),
+        y: Math.round((p.top - r.top) / k),
+        s,
+      });
     };
     send();
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(send);

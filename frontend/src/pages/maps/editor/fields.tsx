@@ -112,3 +112,54 @@ export function CommitText({
     />
   );
 }
+
+const OPEN_KEY = "vantage.mapInspectorSections";
+
+function readOpen(): Record<string, boolean> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(OPEN_KEY) ?? "{}") as unknown;
+    return raw && typeof raw === "object" ? (raw as Record<string, boolean>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * A titled, collapsible group of settings. Open or closed is remembered per browser (a
+ * preference only); `open` is the first-time default.
+ */
+export function Collapse({
+  id,
+  title,
+  open = true,
+  children,
+}: {
+  id: string;
+  title: string;
+  open?: boolean;
+  children: ReactNode;
+}) {
+  const [isOpen, setOpen] = useState(() => readOpen()[id] ?? open);
+  return (
+    <details
+      open={isOpen}
+      data-section={id}
+      className="flex flex-col gap-3 border-t border-line pt-2"
+      onToggle={(e) => {
+        const now = (e.currentTarget as HTMLDetailsElement).open;
+        if (now === isOpen) return;
+        setOpen(now);
+        try {
+          localStorage.setItem(OPEN_KEY, JSON.stringify({ ...readOpen(), [id]: now }));
+        } catch {
+          // Storage can be blocked: the section just doesn't remember.
+        }
+      }}
+    >
+      <summary className="cursor-pointer text-xs font-semibold tracking-wide text-muted uppercase select-none focus-visible:ring-2 focus-visible:ring-in focus-visible:outline-none">
+        {title}
+      </summary>
+      <div className="mt-3 flex flex-col gap-3">{children}</div>
+    </details>
+  );
+}
