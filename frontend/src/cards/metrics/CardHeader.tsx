@@ -21,6 +21,7 @@ type Icon =
 /** A short type name and an icon per integration (`type_id`). Unknown types: generic. */
 const DEVICE_TYPES: Readonly<Record<string, { label: string; icon: Icon }>> = {
   pfsense: { label: "pfSense", icon: "shield" },
+  opnsense: { label: "OPNsense", icon: "shield" },
   snmp_device: { label: "SNMP", icon: "router" },
   mikrotik_swos: { label: "MikroTik SwOS", icon: "switch" },
   ping_check: { label: "Ping", icon: "pulse" },
