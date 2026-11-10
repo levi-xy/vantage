@@ -16,7 +16,7 @@ import { FIGURES } from "../figures";
 import type { MapLive } from "../mapLive";
 import { BoxContentSettings, Row, SectionsEditor } from "./BoxContentSettings";
 import { CableSettings } from "./CableSettings";
-import { Check, ColorPicker, Field, labelText, section } from "./fields";
+import { Check, ColorPicker, Collapse, Field, labelText, section } from "./fields";
 import { FrameGroups } from "./FrameGroups";
 import { ManualTiles, ProxmoxGuestList } from "./GuestsSettings";
 import { IconPicker } from "./IconPicker";
@@ -173,93 +173,99 @@ function BoxSettings({
   return (
     <>
       {tabs}
-      <Field label="Linked device">
-        <DevicePicker
-          value={box.instance_id}
-          instances={instances}
-          noneLabel="None (not monitored)"
-          onChange={(id) =>
-            patch({ instance_id: id, figures: [], ...switchPanel(box, id, instances) })
-          }
-        />
-      </Field>
-      <p className="text-xs text-muted">
-        Live status and figures come from this device. Pick None for things Vantage doesn&apos;t
-        watch, like a modem or a KVM.
-      </p>
-      <Field label="Label">
-        <input
-          className={input}
-          value={box.label}
-          maxLength={64}
-          onChange={(e) => patch({ label: e.target.value }, `${box.id}:label`)}
-        />
-      </Field>
-      {box.instance_id && box.label !== "" && (
-        <button type="button" className={buttonSecondary} onClick={() => patch({ label: "" })}>
-          Use the device&apos;s name
-        </button>
-      )}
-      {!box.instance_id && (
-        <Field label="Subtitle">
-          <input
-            className={input}
-            value={box.subtitle}
-            maxLength={64}
-            onChange={(e) => patch({ subtitle: e.target.value }, `${box.id}:subtitle`)}
+      <Collapse id="box-identity" title="Identity">
+        <Field label="Linked device">
+          <DevicePicker
+            value={box.instance_id}
+            instances={instances}
+            noneLabel="None (not monitored)"
+            onChange={(id) =>
+              patch({ instance_id: id, figures: [], ...switchPanel(box, id, instances) })
+            }
           />
         </Field>
-      )}
-      <div>
-        <span className={labelText}>Icon</span>
-        <IconPicker value={box.icon} onChange={(icon) => patch({ icon })} />
-      </div>
-      <BoxContentSettings box={box} instance={instance} patch={patch} />
-      {box.instance_id && (
-        <fieldset className="flex flex-col gap-1.5">
-          <legend className={labelText}>Show on the box</legend>
-          <Check
-            label="Type and address"
-            checked={box.show.details}
-            onChange={(v) => patch({ show: { ...box.show, details: v } })}
+        <p className="text-xs text-muted">
+          Live status and figures come from this device. Pick None for things Vantage doesn&apos;t
+          watch, like a modem or a KVM.
+        </p>
+        <Field label="Label">
+          <input
+            className={input}
+            value={box.label}
+            maxLength={64}
+            onChange={(e) => patch({ label: e.target.value }, `${box.id}:label`)}
           />
-          <Check
-            label="Status (UP / DOWN)"
-            checked={box.show.status}
-            onChange={(v) => patch({ show: { ...box.show, status: v } })}
+        </Field>
+        {box.instance_id && box.label !== "" && (
+          <button type="button" className={buttonSecondary} onClick={() => patch({ label: "" })}>
+            Use the device&apos;s name
+          </button>
+        )}
+        {!box.instance_id && (
+          <Field label="Subtitle">
+            <input
+              className={input}
+              value={box.subtitle}
+              maxLength={64}
+              onChange={(e) => patch({ subtitle: e.target.value }, `${box.id}:subtitle`)}
+            />
+          </Field>
+        )}
+        <div>
+          <span className={labelText}>Icon</span>
+          <IconPicker value={box.icon} onChange={(icon) => patch({ icon })} />
+        </div>
+        <div>
+          <span className={labelText}>Colour</span>
+          <ColorPicker
+            value={box.color}
+            noneLabel={box.instance_id ? "Device colour" : "No colour"}
+            onChange={(c) => patch({ color: c })}
           />
-          <Check
-            label="Figures"
-            checked={box.show.figures}
-            onChange={(v) => patch({ show: { ...box.show, figures: v } })}
-          />
-        </fieldset>
-      )}
-      {box.instance_id && defs.length > 0 && (
-        <fieldset className="flex flex-col gap-1.5">
-          <legend className={labelText}>Figures, up to 3 (none ticked = the usual ones)</legend>
-          {defs.map((d) => {
-            const on = box.figures.includes(d.id);
-            return (
-              <Check
-                key={d.id}
-                label={d.label}
-                checked={on}
-                disabled={!on && box.figures.length >= 3}
-                onChange={(v) => toggleFigure(d.id, v)}
-              />
-            );
-          })}
-        </fieldset>
-      )}
-      <div>
-        <span className={labelText}>Colour</span>
-        <ColorPicker
-          value={box.color}
-          noneLabel={box.instance_id ? "Device colour" : "No colour"}
-          onChange={(c) => patch({ color: c })}
-        />
-      </div>
+        </div>
+      </Collapse>
+      <Collapse id="box-content" title="Content">
+        <BoxContentSettings box={box} instance={instance} patch={patch} />
+      </Collapse>
+      <Collapse id="box-more" title="More: what shows on the box" open={false}>
+        {box.instance_id && (
+          <fieldset className="flex flex-col gap-1.5">
+            <legend className={labelText}>Show on the box</legend>
+            <Check
+              label="Type and address"
+              checked={box.show.details}
+              onChange={(v) => patch({ show: { ...box.show, details: v } })}
+            />
+            <Check
+              label="Status (UP / DOWN)"
+              checked={box.show.status}
+              onChange={(v) => patch({ show: { ...box.show, status: v } })}
+            />
+            <Check
+              label="Figures"
+              checked={box.show.figures}
+              onChange={(v) => patch({ show: { ...box.show, figures: v } })}
+            />
+          </fieldset>
+        )}
+        {box.instance_id && defs.length > 0 && (
+          <fieldset className="flex flex-col gap-1.5">
+            <legend className={labelText}>Figures, up to 3 (none ticked = the usual ones)</legend>
+            {defs.map((d) => {
+              const on = box.figures.includes(d.id);
+              return (
+                <Check
+                  key={d.id}
+                  label={d.label}
+                  checked={on}
+                  disabled={!on && box.figures.length >= 3}
+                  onChange={(v) => toggleFigure(d.id, v)}
+                />
+              );
+            })}
+          </fieldset>
+        )}
+      </Collapse>
     </>
   );
 }
@@ -612,6 +618,11 @@ export function Inspector({
             <p className="self-end text-xs text-muted">Height follows the content.</p>
           ) : (
             <NumberField label="H" value={el.h} onCommit={(h) => set({ h })} />
+          )}
+          {el.kind === "box" && !contentSized(el) && (
+            <p className="col-span-2 text-xs text-muted">
+              Taller than its content, the box scales the content up to fill it.
+            </p>
           )}
         </div>
       )}

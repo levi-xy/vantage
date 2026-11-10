@@ -51,6 +51,10 @@ export function MapCanvas({
     const r = box.current?.getBoundingClientRect();
     setHover(h && r ? { id: h.id, x: h.x - r.left, y: h.y - r.top, w: r.width } : null);
   };
+  // Boxes are drawn at their stored width and height (the measured doc is for cables and fit).
+  const stored = new Map(
+    saved.elements.flatMap((e) => (e.kind === "box" ? [[e.id, e] as const] : [])),
+  );
   const vlans = new Map(doc.vlans.map((v) => [v.id, v] as const));
 
   const onDown = (e: ReactPointerEvent) => {
@@ -103,7 +107,7 @@ export function MapCanvas({
                   return (
                     <BoxView
                       key={el.id}
-                      box={el}
+                      box={stored.get(el.id) ?? el}
                       live={live}
                       vlans={vlans}
                       onSelect={select}
@@ -123,6 +127,7 @@ export function MapCanvas({
                   return null;
               }
             })}
+            <CablesLayer overlay doc={doc} live={live} />
           </MeasureProvider>
         </div>
         <ZoomControls zoom={view.z} onZoom={centerZoom} onFit={fit} actions={actions} />

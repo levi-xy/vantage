@@ -14,6 +14,7 @@ import { useMapLive } from "../mapLive";
 import { useViewport } from "../useViewport";
 import { DRAG_DEVICE_TYPE, EditCanvas } from "./EditCanvas";
 import { Inspector } from "./Inspector";
+import { INSPECTOR_MAX, INSPECTOR_MIN, useInspectorWidth } from "./useInspectorWidth";
 import { makeCable, speedFromBps } from "./mapOps";
 import { VlanPanel } from "./VlanPanel";
 import {
@@ -77,6 +78,7 @@ export function MapEditor({
   const live = useMapLive(doc);
   const [selectedRaw, setSelected] = useState<string[]>([]);
   const [tool, setTool] = useState<Tool>({ kind: "select" });
+  const [inspectorW, setInspectorW] = useInspectorWidth();
   const [picking, setPicking] = useState(false);
   const [vlansOpen, setVlansOpen] = useState(false);
   const [snap, setSnap] = useState(true);
@@ -285,7 +287,10 @@ export function MapEditor({
           {notice}
         </p>
       )}
-      <div className="grid min-h-[420px] flex-1 grid-cols-[auto_minmax(0,1fr)_18rem] grid-rows-[minmax(0,1fr)] gap-3">
+      <div
+        className="grid min-h-[420px] flex-1 grid-rows-[minmax(0,1fr)] gap-3"
+        style={{ gridTemplateColumns: `auto minmax(0,1fr) ${inspectorW}px` }}
+      >
         <div
           role="toolbar"
           aria-label="Tools"
@@ -331,87 +336,116 @@ export function MapEditor({
           preview={h.preview}
           commitFrom={h.commitFrom}
         />
-        <aside aria-label="Inspector" className="flex min-w-0 flex-col gap-4 overflow-y-auto">
-          {picking && (
+        <div className="relative flex min-w-0 flex-col">
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize the settings panel"
+            aria-valuemin={INSPECTOR_MIN}
+            aria-valuemax={INSPECTOR_MAX}
+            aria-valuenow={inspectorW}
+            tabIndex={0}
+            className="absolute inset-y-0 -left-2 z-10 w-2 cursor-col-resize touch-none rounded hover:bg-in/30 focus-visible:bg-in/40 focus-visible:outline-none"
+            onPointerDown={(e) => {
+              e.currentTarget.setPointerCapture?.(e.pointerId);
+              e.preventDefault();
+            }}
+            onPointerMove={(e) => {
+              if (!e.currentTarget.hasPointerCapture?.(e.pointerId)) return;
+              const right = e.currentTarget.parentElement?.getBoundingClientRect().right ?? 0;
+              setInspectorW(right - e.clientX);
+            }}
+            onKeyDown={(e) => {
+              if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+              e.preventDefault();
+              setInspectorW(inspectorW + (e.key === "ArrowLeft" ? 16 : -16));
+            }}
+          />
+          <aside
+            aria-label="Inspector"
+            className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto"
+          >
+            {picking && (
+              <section
+                aria-label="Pick a device"
+                className="rounded-lg border border-line bg-panel p-3"
+              >
+                <h2 className="mb-2 text-sm font-semibold">Pick a device, then click the map</h2>
+                <ul className="max-h-48 overflow-y-auto text-sm">
+                  {instances.map((i) => (
+                    <li key={i.id}>
+                      <button
+                        type="button"
+                        className="w-full truncate rounded px-2 py-1 text-left hover:bg-inset focus-visible:ring-2 focus-visible:ring-in focus-visible:outline-none"
+                        onClick={() => {
+                          setTool({ kind: "box", instanceId: i.id });
+                          setPicking(false);
+                        }}
+                      >
+                        {i.name}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+            {armed && tool.kind === "box" && tool.instanceId !== undefined && (
+              <p className="text-xs text-muted">
+                Click the map to place{" "}
+                {instances.find((i) => i.id === tool.instanceId)?.name ?? "the device"}.
+              </p>
+            )}
+            {vlansOpen && (
+              <VlanPanel
+                doc={doc}
+                edit={(next) => h.commit(next)}
+                onClose={() => setVlansOpen(false)}
+              />
+            )}
+            {tool.kind === "cable" && (
+              <p className="text-xs text-muted">
+                Drag from a port or a box to another one. Escape cancels.
+              </p>
+            )}
+            <section aria-label="Settings" className="rounded-lg border border-line bg-panel p-3">
+              <Inspector
+                doc={doc}
+                selected={selected}
+                instances={instances}
+                live={live}
+                edit={(next) => h.commit(next)}
+                patch={(id, p, key) => h.commit(patchElement(doc, id, p), key ? key : null)}
+                remove={removeSelected}
+              />
+            </section>
             <section
-              aria-label="Pick a device"
+              aria-label="Not on the map yet"
               className="rounded-lg border border-line bg-panel p-3"
             >
-              <h2 className="mb-2 text-sm font-semibold">Pick a device, then click the map</h2>
-              <ul className="max-h-48 overflow-y-auto text-sm">
-                {instances.map((i) => (
-                  <li key={i.id}>
-                    <button
-                      type="button"
-                      className="w-full truncate rounded px-2 py-1 text-left hover:bg-inset focus-visible:ring-2 focus-visible:ring-in focus-visible:outline-none"
-                      onClick={() => {
-                        setTool({ kind: "box", instanceId: i.id });
-                        setPicking(false);
-                      }}
-                    >
-                      {i.name}
-                    </button>
-                  </li>
-                ))}
-              </ul>
+              <h2 className="mb-1 text-sm font-semibold">Not on the map yet</h2>
+              <p className="mb-2 text-xs text-muted">Drag one in, or click it to place it.</p>
+              {notPlaced.length === 0 ? (
+                <p className="text-sm text-muted">Every device is on this map.</p>
+              ) : (
+                <ul className="max-h-56 overflow-y-auto text-sm">
+                  {notPlaced.map((i) => (
+                    <li key={i.id}>
+                      <button
+                        type="button"
+                        draggable
+                        onDragStart={(e) => e.dataTransfer.setData(DRAG_DEVICE_TYPE, i.id)}
+                        className="w-full truncate rounded px-2 py-1 text-left hover:bg-inset focus-visible:ring-2 focus-visible:ring-in focus-visible:outline-none"
+                        onClick={() => placeFromList(i)}
+                      >
+                        {i.name}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </section>
-          )}
-          {armed && tool.kind === "box" && tool.instanceId !== undefined && (
-            <p className="text-xs text-muted">
-              Click the map to place{" "}
-              {instances.find((i) => i.id === tool.instanceId)?.name ?? "the device"}.
-            </p>
-          )}
-          {vlansOpen && (
-            <VlanPanel
-              doc={doc}
-              edit={(next) => h.commit(next)}
-              onClose={() => setVlansOpen(false)}
-            />
-          )}
-          {tool.kind === "cable" && (
-            <p className="text-xs text-muted">
-              Drag from a port or a box to another one. Escape cancels.
-            </p>
-          )}
-          <section aria-label="Settings" className="rounded-lg border border-line bg-panel p-3">
-            <Inspector
-              doc={doc}
-              selected={selected}
-              instances={instances}
-              live={live}
-              edit={(next) => h.commit(next)}
-              patch={(id, p, key) => h.commit(patchElement(doc, id, p), key ? key : null)}
-              remove={removeSelected}
-            />
-          </section>
-          <section
-            aria-label="Not on the map yet"
-            className="rounded-lg border border-line bg-panel p-3"
-          >
-            <h2 className="mb-1 text-sm font-semibold">Not on the map yet</h2>
-            <p className="mb-2 text-xs text-muted">Drag one in, or click it to place it.</p>
-            {notPlaced.length === 0 ? (
-              <p className="text-sm text-muted">Every device is on this map.</p>
-            ) : (
-              <ul className="max-h-56 overflow-y-auto text-sm">
-                {notPlaced.map((i) => (
-                  <li key={i.id}>
-                    <button
-                      type="button"
-                      draggable
-                      onDragStart={(e) => e.dataTransfer.setData(DRAG_DEVICE_TYPE, i.id)}
-                      className="w-full truncate rounded px-2 py-1 text-left hover:bg-inset focus-visible:ring-2 focus-visible:ring-in focus-visible:outline-none"
-                      onClick={() => placeFromList(i)}
-                    >
-                      {i.name}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        </aside>
+          </aside>
+        </div>
       </div>
     </div>
   );

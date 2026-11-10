@@ -208,7 +208,7 @@ export const panelOuter = (g: PanelGeometry): { w: number; h: number } => ({
 });
 
 /** A box carrying the panel origin the browser measured (set by `useMeasuredDoc`). */
-export type MeasuredBox = MapBox & { panelOrigin?: { x: number; y: number } };
+export type MeasuredBox = MapBox & { panelOrigin?: { x: number; y: number; s?: number } };
 
 /** Where the panel's jacks start in the box: measured, else worked out from the layout. */
 function originOf(box: MeasuredBox, g: PanelGeometry): { x: number; y: number } {
@@ -229,14 +229,16 @@ export function boxPanel(
   if (!box.panel) return null;
   const geometry = panelGeometry(box.panel, device, panelRoom(box));
   if (!geometry) return null;
-  const origin = originOf(box, geometry);
+  const origin = originOf(box as MeasuredBox, geometry);
+  // A box taller than its content draws it larger: the jacks scale with it.
+  const k = (box as MeasuredBox).panelOrigin?.s ?? 1;
   const rects = new Map<string, Rect>();
   for (const j of geometry.jacks) {
     rects.set(j.port.id, {
-      x: box.x + origin.x + j.x + j.jackX,
-      y: box.y + origin.y + j.y + j.jackY,
-      w: j.jackW,
-      h: j.jackH,
+      x: box.x + origin.x + (j.x + j.jackX) * k,
+      y: box.y + origin.y + (j.y + j.jackY) * k,
+      w: j.jackW * k,
+      h: j.jackH * k,
     });
   }
   return { geometry, rects };

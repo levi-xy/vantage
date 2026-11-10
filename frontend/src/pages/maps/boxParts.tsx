@@ -3,10 +3,12 @@
 // from device names, so it is only ever rendered as React text. Long text is cut to one line
 // with "…" and the full text is the hover title: nothing overflows its box.
 
+import { useRef } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import type { Instance, MapBox, MapVlan } from "../../api";
 import { tint } from "../../app/deviceColors";
 import { paint, shownItems } from "./boxFacts";
+import { useFitScale } from "./fitScale";
 import type { Identity } from "./boxFacts";
 import { useReportHeight } from "./measure";
 import { MapIcon } from "./MapIcon";
@@ -68,14 +70,19 @@ export function BoxRoot({
   className,
   style,
   children,
+  scalable = true,
 }: {
   m: BoxModel;
   className: string;
   style?: CSSProperties;
   children: ReactNode;
+  /** Content scales up when the box is taller than it (not for the cloud, which sizes itself). */
+  scalable?: boolean;
 }) {
   const { box, down, instance } = m;
   const ref = useReportHeight(box.id);
+  const inner = useRef<HTMLDivElement>(null);
+  const fit = useFitScale(ref, inner, box, scalable);
   const clickable = "onClick" in m.select;
   return (
     <div
@@ -87,10 +94,16 @@ export function BoxRoot({
       className={`absolute box-border text-ink ${down ? "border-crit" : "border-line"} ${
         !m.linked || m.removed ? "border-dashed" : ""
       } ${instance && clickable ? "cursor-pointer focus-visible:ring-2 focus-visible:ring-in focus-visible:outline-none" : ""} ${className}`}
-      style={{ left: box.x, top: box.y, width: box.w, ...style }}
+      style={{ left: box.x, top: box.y, width: box.w, height: fit.height, ...style }}
       {...m.select}
     >
-      {children}
+      {scalable ? (
+        <div ref={inner} data-scale={fit.scale > 1 ? fit.scale : undefined} style={fit.style}>
+          {children}
+        </div>
+      ) : (
+        children
+      )}
     </div>
   );
 }

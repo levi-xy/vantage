@@ -181,7 +181,7 @@ function CloudBox({ m }: { m: BoxModel }) {
   const { box, name, down } = m;
   const height = Math.max(80, Math.round(box.w * 0.55));
   return (
-    <BoxRoot m={m} className="flex items-center justify-center" style={{ height }}>
+    <BoxRoot m={m} scalable={false} className="flex items-center justify-center" style={{ height }}>
       <svg
         aria-hidden="true"
         viewBox="0 0 210 110"

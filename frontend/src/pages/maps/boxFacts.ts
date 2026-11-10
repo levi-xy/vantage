@@ -82,9 +82,18 @@ export function selectable(
   };
 }
 
-/** Boxes, the networks and legend panels, and filled frames: only their width is stored. */
+/** The height a new box gets in the editor: not a chosen height, so content is never scaled to it. */
+export const DEFAULT_BOX_H = 88;
+/** Heights the app assigned itself (the editor's default, and boxes made from old links): not chosen. */
+export const isDefaultBoxH = (h: number): boolean => h === DEFAULT_BOX_H || h === 96;
+
+/**
+ * Elements whose height follows the content (only their width is stored): the networks and
+ * legend panels, filled frames and clouds. A box can be made taller than its content, which
+ * then scales up to fill it.
+ */
 export const contentSized = (e: MapElement): boolean =>
-  e.kind === "box" ||
+  (e.kind === "box" && e.shape === "cloud") ||
   e.kind === "networks" ||
   e.kind === "legend" ||
   (e.kind === "frame" && frameSized(e));

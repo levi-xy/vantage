@@ -21,7 +21,7 @@ import {
 } from "../panel";
 import type { MapLive } from "../mapLive";
 import { hasPorts } from "../devicePorts";
-import { Check, CommitText, labelText } from "./fields";
+import { Check, Collapse, CommitText, labelText } from "./fields";
 import { portsLost, setBoxPorts, vlanSummary } from "./mapOps";
 import { patchElement } from "./model";
 import { PortVlans } from "./PortVlans";
@@ -194,6 +194,7 @@ export function LookAndPorts({
       ...(next === "nas" && !box.nas ? { nas: { bays: 4, bay_disks: [] } } : {}),
     });
 
+  const canRead = !!instance && hasPorts(instance) && device.length > 0;
   const startFrom = (choice: string) => {
     let next: MapDocument;
     if (choice === "blank") {
@@ -251,35 +252,41 @@ export function LookAndPorts({
 
   return (
     <div className="flex flex-col gap-3">
-      <div>
-        <span className={labelText}>Shape</span>
-        <Picker
-          label="Shape"
-          value={shape}
-          options={SHAPES}
-          onChange={setShape}
-          thumb={(id) => <ShapeThumb shape={id} />}
-          columns={3}
-        />
-      </div>
-      {shape === "device" && (
+      <Collapse id="look-shape" title="Shape and look">
         <div>
-          <span className={labelText}>Panel look</span>
+          <span className={labelText}>Shape</span>
           <Picker
-            label="Panel look"
-            value={panel?.look ?? "flat"}
-            options={LOOKS}
-            onChange={(look) =>
-              edit(patchElement(doc, box.id, { panel: { ...(panel ?? emptyPanel()), look } }))
-            }
-            thumb={(id) => <LookThumb look={id} />}
+            label="Shape"
+            value={shape}
+            options={SHAPES}
+            onChange={setShape}
+            thumb={(id) => <ShapeThumb shape={id} />}
+            columns={3}
           />
         </div>
-      )}
-      {shape === "nas" && <NasSettings box={box} live={live} patch={patch} />}
+        {shape === "device" && (
+          <div>
+            <span className={labelText}>Panel look</span>
+            <Picker
+              label="Panel look"
+              value={panel?.look ?? "flat"}
+              options={LOOKS}
+              onChange={(look) =>
+                edit(patchElement(doc, box.id, { panel: { ...(panel ?? emptyPanel()), look } }))
+              }
+              thumb={(id) => <LookThumb look={id} />}
+            />
+          </div>
+        )}
+        {shape === "nas" && <NasSettings box={box} live={live} patch={patch} />}
+      </Collapse>
 
-      <fieldset className="flex flex-col gap-2 border-t border-line pt-3">
-        <legend className={labelText}>Front panel</legend>
+      <Collapse id="look-panel" title="Front panel">
+        {canRead && !panel && (
+          <button type="button" className={buttonSecondary} onClick={() => startFrom("device")}>
+            Read from the device
+          </button>
+        )}
         <select
           className={input}
           aria-label="Start from"
@@ -287,6 +294,9 @@ export function LookAndPorts({
           onChange={(e) => e.target.value && startFrom(e.target.value)}
         >
           <option value="">Start from…</option>
+          <option value="device" disabled={!canRead}>
+            Read from the device
+          </option>
           <optgroup label="Model list">
             {PRESETS.map((p) => (
               <option key={p.id} value={p.id}>
@@ -294,9 +304,6 @@ export function LookAndPorts({
               </option>
             ))}
           </optgroup>
-          <option value="device" disabled={!instance || !hasPorts(instance) || device.length === 0}>
-            Read from the device
-          </option>
           <option value="blank">Blank</option>
         </select>
         <p className="text-xs text-muted">
@@ -473,7 +480,7 @@ export function LookAndPorts({
             </button>
           </>
         )}
-      </fieldset>
+      </Collapse>
     </div>
   );
 }
