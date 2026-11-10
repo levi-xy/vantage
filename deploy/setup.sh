@@ -114,6 +114,23 @@ else
     echo "Created .env from .env.example (edit it to change the address or port)"
 fi
 
+# This server's main IPv4 address (the one its default route uses), or nothing.
+lan_address() {
+    addr=""
+    if command -v ip >/dev/null 2>&1; then
+        addr=$(ip -4 route get 192.0.2.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -n 1)
+    fi
+    if [ -z "$addr" ]; then
+        addr=$(hostname -I 2>/dev/null | awk '{print $1}') || addr=""
+    fi
+    case "$addr" in
+        ""|127.*|*[!0-9.]*|*.*.*.*.*|*..*|.*|*.) addr="" ;;  # dotted quads only
+        *.*.*.*) ;;
+        *) addr="" ;;
+    esac
+    echo "$addr"
+}
+
 # Names for the self-signed certificate's subjectAltName, as "DNS:x" / "IP:x" entries.
 san_entry() {  # $1 = host name or IP address
     case "$1" in
@@ -134,7 +151,10 @@ new_self_signed_cert() {
     esac
     bind=$(setting VANTAGE_BIND_ADDRESS)
     case "$bind" in
-        ""|0.0.0.0|::|"[::]"|127.0.0.1) ;;
+        127.0.0.1) ;;
+        ""|0.0.0.0|::|"[::]")
+            lan=$(lan_address)
+            [ -z "$lan" ] || sans="$sans,IP:$lan" ;;
         *) bind=${bind#[}; sans="$sans,$(san_entry "${bind%]}")" ;;
     esac
     old_ifs=$IFS; IFS=', '; set -f  # split on commas/spaces, no globbing of "*.x"
@@ -223,12 +243,14 @@ docker info >/dev/null 2>&1 || die "can't reach the Docker daemon (is it running
 echo "Starting Vantage (the first run downloads or builds the images and takes a few minutes)..."
 docker compose up -d
 
-bind=$(setting VANTAGE_BIND_ADDRESS); bind=${bind:-127.0.0.1}
+bind=$(setting VANTAGE_BIND_ADDRESS); bind=${bind:-0.0.0.0}
 port=$(setting VANTAGE_HTTPS_PORT)
 [ -n "$port" ] || port=$(setting VANTAGE_HTTP_PORT)  # the name before HTTPS
 port=${port:-8443}
 case "$bind" in
-    0.0.0.0|::|"[::]") shown_host="<this-server's-address>" ;;
+    0.0.0.0|::|"[::]")
+        shown_host=$(lan_address)
+        [ -n "$shown_host" ] || shown_host="<this-server's-address>" ;;
     *:*) shown_host="[${bind#[}"; shown_host="${shown_host%]}]" ;;
     *) shown_host=$bind ;;
 esac
@@ -262,6 +284,12 @@ if [ "$healthy" -eq 1 ]; then
 else
     echo "Vantage didn't report healthy yet. Check: docker compose ps; docker compose logs frontend backend"
     echo "Address once it's up: $url"
+fi
+if [ "$bind" = 127.0.0.1 ]; then
+    echo
+    echo "Only this server can open it (VANTAGE_BIND_ADDRESS=127.0.0.1 in .env). To reach it"
+    echo "from your LAN, set VANTAGE_BIND_ADDRESS=0.0.0.0 in .env, delete certs/tls.crt and"
+    echo "certs/tls.key (so the new certificate covers the LAN address), and run ./setup.sh again."
 fi
 if [ "$cert_created" -eq 1 ] && [ "$scheme" = https ]; then
     echo

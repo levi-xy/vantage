@@ -56,7 +56,7 @@ services:
     # VANTAGE_HTTP_PORT is the name used before HTTPS, still honoured so an existing .env
     # keeps its port.
     ports:
-      - "${VANTAGE_BIND_ADDRESS:-127.0.0.1}:${VANTAGE_HTTPS_PORT:-${VANTAGE_HTTP_PORT:-8443}}:8443"
+      - "${VANTAGE_BIND_ADDRESS:-0.0.0.0}:${VANTAGE_HTTPS_PORT:-${VANTAGE_HTTP_PORT:-8443}}:8443"
     environment:
       VANTAGE_HTTPS: ${VANTAGE_HTTPS:-true}
       VANTAGE_HSTS: ${VANTAGE_HSTS:-false}
