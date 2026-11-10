@@ -149,7 +149,7 @@ python scripts/check.py           # every CI check locally (--fast skips the aud
 
 ## Contributing
 
-Vantage isn't accepting code contributions yet; guidelines will follow. Bug reports and integration findings from real hardware are welcome as [issues](https://github.com/levi-xy/vantage/issues).
+Pull requests for new integrations and bug fixes are welcome; the core (architecture, security, dependencies) stays with the maintainer. Read [CONTRIBUTING.md](CONTRIBUTING.md) before you start. Bug reports and integration findings from real hardware are welcome as [issues](https://github.com/levi-xy/vantage/issues).
 
 ## License
 
