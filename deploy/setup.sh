@@ -124,7 +124,9 @@ lan_address() {
         addr=$(hostname -I 2>/dev/null | awk '{print $1}') || addr=""
     fi
     case "$addr" in
-        ""|127.*|*[!0-9.]*) addr="" ;;
+        ""|127.*|*[!0-9.]*|*.*.*.*.*|*..*|.*|*.) addr="" ;;  # dotted quads only
+        *.*.*.*) ;;
+        *) addr="" ;;
     esac
     echo "$addr"
 }
