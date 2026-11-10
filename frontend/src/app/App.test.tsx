@@ -111,6 +111,52 @@ describe("layout", () => {
     localStorage.clear();
   });
 
+  it("reorders the main menu with Alt+Arrow and remembers it", async () => {
+    localStorage.clear();
+    const first = await renderReady("/");
+    const names = () =>
+      within(screen.getByRole("navigation", { name: "Main" }))
+        .getAllByRole("link")
+        .map((a) => a.textContent);
+    expect(names()).toEqual(["Dashboard", "Devices", "Alerts", "Map", "Settings"]);
+    expect(localStorage.getItem("vantage.navOrder")).toBeNull();
+    const nav = screen.getByRole("navigation", { name: "Main" });
+    fireEvent.keyDown(within(nav).getByRole("link", { name: "Map" }), {
+      key: "ArrowUp",
+      altKey: true,
+    });
+    expect(names()).toEqual(["Dashboard", "Devices", "Map", "Alerts", "Settings"]);
+    expect(within(nav).getByRole("link", { name: "Map" })).toHaveFocus();
+    // The first item can't go further up: nothing changes.
+    fireEvent.keyDown(within(nav).getByRole("link", { name: "Dashboard" }), {
+      key: "ArrowUp",
+      altKey: true,
+    });
+    expect(JSON.parse(localStorage.getItem("vantage.navOrder") ?? "[]")).toEqual([
+      "/",
+      "/devices",
+      "/map",
+      "/alerts",
+      "/settings",
+    ]);
+    first.unmount();
+    await renderReady("/");
+    expect(names()).toEqual(["Dashboard", "Devices", "Map", "Alerts", "Settings"]);
+    localStorage.clear();
+  });
+
+  it("ignores a garbage saved menu order", async () => {
+    localStorage.setItem("vantage.navOrder", '{"not":"a list"}');
+    await renderReady("/");
+    const nav = screen.getByRole("navigation", { name: "Main" });
+    expect(
+      within(nav)
+        .getAllByRole("link")
+        .map((a) => a.textContent),
+    ).toEqual(["Dashboard", "Devices", "Alerts", "Map", "Settings"]);
+    localStorage.clear();
+  });
+
   it("gives map pages the whole area next to the sidebar", async () => {
     await renderReady("/map");
     expect(screen.getByRole("main")).toHaveClass("md:p-0");

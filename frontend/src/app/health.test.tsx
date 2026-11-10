@@ -177,6 +177,8 @@ describe("health status in the top bar", () => {
     fireEvent.click(button);
     const panel = screen.getByRole("dialog", { name: "System health" });
     expect(within(panel).getByText("DOWN")).toBeInTheDocument();
+    // On desktop the panel sits above its button: its top edge must not be pinned.
+    expect(panel).toHaveClass("md:top-auto", "md:bottom-0");
     expect(within(panel).getByRole("link", { name: "Open router-1 is down" })).toHaveAttribute(
       "href",
       "/devices",
