@@ -8,7 +8,6 @@ import type { Instance, MapBox, MapDocument, MapNas, MapPanel, MapPort } from ".
 import { buttonSecondary, input } from "../../../components/styles";
 import {
   emptyPanel,
-  fromDevice,
   isCage,
   KIND_LABEL,
   MAX_GROUP_COUNT,
@@ -25,7 +24,8 @@ import { Check, Collapse, CommitText, labelText } from "./fields";
 import { portsLost, setBoxPorts, vlanSummary } from "./mapOps";
 import { patchElement } from "./model";
 import { PortVlans } from "./PortVlans";
-import { applyPreset, PRESETS } from "./presets";
+import { readDevicePanel } from "./presetLayout";
+import { applyPreset, PRESETS, presetGroups, presetLabel } from "./presets";
 import { LookThumb, ShapeThumb } from "./thumbs";
 
 type Edit = (next: MapDocument) => void;
@@ -44,6 +44,9 @@ const LOOKS: readonly { id: MapPanel["look"]; label: string }[] = [
   { id: "desktop", label: "Desktop" },
   { id: "flat", label: "Flat" },
 ];
+
+/** The integrations that publish `sys_descr`. */
+const SNMP_TYPES: ReadonlySet<string> = new Set(["snmp_device", "mikrotik_swos"]);
 
 const GROUP_KINDS = ["rj45", "sfp", "sfp_plus", "sfp28", "qsfp", "console", "usb"] as const;
 
@@ -196,6 +199,14 @@ export function LookAndPorts({
 
   const canRead = !!instance && hasPorts(instance) && device.length > 0;
   const startFrom = (choice: string) => {
+    if (choice === "device" && instance && live.sysDescr && SNMP_TYPES.has(instance.type_id)) {
+      // An SNMP device says its model in sysDescr: a known model is laid out like its real panel.
+      void live.sysDescr(instance.id).then((descr) => build(choice, descr));
+    } else {
+      build(choice);
+    }
+  };
+  const build = (choice: string, sysDescr?: string) => {
     let next: MapDocument;
     if (choice === "blank") {
       next = setBoxPorts(doc, box.id, {
@@ -214,7 +225,7 @@ export function LookAndPorts({
             : [],
         ),
       );
-      const read = fromDevice(device, panel?.ports ?? [], cabled);
+      const read = readDevicePanel(sysDescr, device, panel?.ports ?? [], cabled);
       next = setBoxPorts(doc, box.id, {
         ...(panel ?? emptyPanel("device")),
         source: "device",
@@ -297,13 +308,15 @@ export function LookAndPorts({
           <option value="device" disabled={!canRead}>
             Read from the device
           </option>
-          <optgroup label="Model list">
-            {PRESETS.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
-              </option>
-            ))}
-          </optgroup>
+          {presetGroups().map(({ vendor, presets }) => (
+            <optgroup key={vendor} label={vendor}>
+              {presets.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {presetLabel(p)}
+                </option>
+              ))}
+            </optgroup>
+          ))}
           <option value="blank">Blank</option>
         </select>
         <p className="text-xs text-muted">

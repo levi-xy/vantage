@@ -261,19 +261,6 @@ describe("port groups and presets", () => {
     expect(edited.ports[0]?.caption).toBe("keep");
   });
 
-  it("has a CRS328-24P-4S+ preset: 24 RJ45 in two rows and 4 SFP+", () => {
-    const preset = PRESETS.find((x) => x.id === "crs328-24p-4s");
-    if (!preset) throw new Error("preset missing");
-    const copied = applyPreset(make({}), preset);
-    const next = copied.panel as MapPanel;
-    expect(next.groups.map((g) => [g.kind, g.count, g.rows])).toEqual([
-      ["rj45", 24, 2],
-      ["sfp_plus", 4, 1],
-    ]);
-    expect(next.ports).toHaveLength(28);
-    expect(copied.model).toBe("CRS328-24P-4S+");
-  });
-
   it("reads a switch like its dashboard card: blocks of 8, cages on their own, odd below", () => {
     // SwOS on a CRS328: port1..port28, the last four are 10G cages.
     const device: DevicePort[] = Array.from({ length: 28 }, (_, i) => ({

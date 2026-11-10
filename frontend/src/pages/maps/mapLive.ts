@@ -3,9 +3,11 @@
 // per figure in use. Nothing here polls per element.
 
 import type { Instance, InstanceStatus, MapDocument } from "../../api";
+import { useApiClient } from "../../app/session";
 import { shownState, useScrapeStates } from "../../cards/metrics/scrapeStatus";
 import { useInstances, useIntegrations } from "../devices/queries";
 import { hasPorts, useDevicePorts } from "./devicePorts";
+import { fetchSysDescr } from "./editor/presetLayout";
 import type { DevicePort } from "./devicePorts";
 import { boxFigures, figureDef, sectionFigures, useFigureValues } from "./figures";
 import type { FigureDef } from "./figures";
@@ -25,6 +27,8 @@ export interface MapLive {
   /** A linked device's own interfaces (undefined: unknown device or not loaded yet). */
   ports: (id: string | null) => DevicePort[] | undefined;
   port: (id: string | null, portId: string | null) => DevicePort | undefined;
+  /** A device's sysDescr (SNMP devices), asked for once when the editor reads its panel. */
+  sysDescr?: (id: string) => Promise<string | undefined>;
   /** The SMART disks of a NAS box's device (and of a SMART exporter on the same host). */
   smartDisks: (id: string | null) => SmartDisk[];
   /** A section item's live value (undefined: no device, no such figure, or no data yet). */
@@ -34,6 +38,7 @@ export interface MapLive {
 }
 
 export function useMapLive(doc: MapDocument | undefined, drawing = true): MapLive {
+  const client = useApiClient();
   const instances = useInstances();
   const integrations = useIntegrations();
   const list = instances.data ?? [];
@@ -94,6 +99,7 @@ export function useMapLive(doc: MapDocument | undefined, drawing = true): MapLiv
     isDown: (id) => state(id) === "down",
     typeName: (typeId) => integrations.data?.find((t) => t.type_id === typeId)?.name ?? typeId,
     ports: (id) => (id ? devicePorts.get(id) : undefined),
+    sysDescr: (id) => fetchSysDescr(client, id),
     smartDisks: (id) => smartSources(list, id).flatMap((src) => smart.get(src) ?? []),
     port: (id, portId) =>
       id && portId ? devicePorts.get(id)?.find((p) => p.id === portId) : undefined,
