@@ -2,6 +2,29 @@
 
 This file collects Vantage's security rules. The hard rules are in `AGENTS.md`.
 
+## Reporting a vulnerability
+
+Please report security problems privately, never in a public issue, discussion or pull
+request.
+
+1. Open the repository's **Security** tab and choose **Report a vulnerability**
+   ([direct link](https://github.com/levi-xy/vantage/security/advisories/new)). This uses
+   GitHub's private vulnerability reporting: only you and the maintainers can see the report.
+2. Describe the problem, the affected version (image tag) and how to reproduce it. A proof of
+   concept helps, but keep it to what's needed to show the problem.
+3. Don't include real IP addresses, hostnames, credentials or other data from your network;
+   use placeholders such as `192.0.2.10` or `example-token`.
+
+What to expect: Vantage is maintained by one person in their spare time, so there is no fixed
+response time, but security reports come before other work. You'll get an answer in the
+report's thread, a fix in a new release, and credit in the advisory if you want it. Please
+give a reasonable time for a fix before you publish details.
+
+In scope: the backend, the frontend, the published images and the deploy files in this
+repository. Out of scope: weaknesses that need an attacker who already controls the Docker
+host or the Vantage admin account, and the accepted risks listed under
+[Accepted risks](#accepted-risks).
+
 ## Threat model
 
 Vantage is a self-hosted, read-only dashboard for a household or a small team. It runs

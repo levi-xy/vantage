@@ -1,0 +1,65 @@
+name: Bug report
+description: Something in Vantage doesn't work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug.
+
+        **Don't include IP addresses, hostnames, domains, usernames, tokens, passwords,
+        community strings or other secrets** anywhere in this issue, including logs and
+        screenshots. Replace them with placeholders such as `192.0.2.10`, `switch.example`
+        or `example-token`.
+
+        Found a security problem? Don't open an issue: report it privately as described in
+        [docs/SECURITY.md](https://github.com/levi-xy/vantage/blob/main/docs/SECURITY.md#reporting-a-vulnerability).
+  - type: input
+    id: version
+    attributes:
+      label: Vantage version
+      description: The image tag you run, e.g. from `docker compose images` (for example `0.1.0`).
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What's wrong
+      description: What happened, and what you expected to happen instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The shortest way to make it happen again.
+      placeholder: |
+        1. Go to …
+        2. Click …
+        3. See …
+    validations:
+      required: false
+  - type: input
+    id: environment
+    attributes:
+      label: Where Vantage runs
+      description: Host OS or NAS model, Docker version, and the browser if it's a UI problem.
+      placeholder: "Debian 12, Docker 27.3, Firefox 132"
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Relevant backend log lines (`docker compose logs backend`) or screenshots, with addresses, names and secrets removed.
+      render: text
+    validations:
+      required: false
+  - type: checkboxes
+    id: redacted
+    attributes:
+      label: Before you submit
+      options:
+        - label: I removed IP addresses, hostnames and secrets from everything above.
+          required: true
