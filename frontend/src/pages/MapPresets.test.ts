@@ -3,7 +3,7 @@ import type { MapBox, MapPanel } from "../api";
 import { faceplate } from "../cards/switch-panel/panel";
 import type { DevicePort } from "./maps/devicePorts";
 import { fromDevice } from "./maps/panel";
-import { layoutOnPreset, readDevicePanel } from "./maps/editor/presetLayout";
+import { fetchSysDescr, layoutOnPreset, readDevicePanel } from "./maps/editor/presetLayout";
 import {
   applyPreset,
   matchPreset,
@@ -27,6 +27,7 @@ const swos: DevicePort[] = Array.from({ length: 28 }, (_, i) => ({
   speed: i >= 24 ? 10e9 : 1e9,
   ref: { source: "snmp", instanceId: "sw", iface: `port${i + 1}` },
   order: i + 1,
+  physical: true,
 }));
 
 const port = (id: string, order: number, source = "snmp", speed = 1e9): DevicePort => ({
@@ -36,6 +37,7 @@ const port = (id: string, order: number, source = "snmp", speed = 1e9): DevicePo
   speed,
   ref: { source, instanceId: "dev", iface: id } as DevicePort["ref"],
   order,
+  physical: true,
 });
 
 describe("preset list", () => {
@@ -131,5 +133,22 @@ describe("read from the device with a known model", () => {
     const read = layoutOnPreset(preset("ubiquiti-udm-pro"), device, [], "all");
     expect(read.groups.at(-1)).toMatchObject({ kind: "rj45", count: 2 });
     expect(read.ports.filter((p) => p.interface).map((p) => p.interface)).toEqual(["eth0", "eth1"]);
+  });
+});
+
+describe("sysDescr lookup", () => {
+  it("reads sys_descr from the device's info series, and nothing when unreachable", async () => {
+    const ok = {
+      query: async () => ({
+        series: [{ labels: { sys_descr: "SwOS CRS328-24P-4S+" }, values: [] }],
+      }),
+    };
+    expect(await fetchSysDescr(ok as never, "id-1")).toBe("SwOS CRS328-24P-4S+");
+    const down = {
+      query: async () => {
+        throw new Error("offline");
+      },
+    };
+    expect(await fetchSysDescr(down as never, "id-1")).toBeUndefined();
   });
 });

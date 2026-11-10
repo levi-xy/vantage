@@ -28,10 +28,14 @@ function commonPrefix(names: readonly string[]): string {
 
 export function layoutOnPreset(
   preset: Preset,
-  device: readonly DevicePort[],
+  allDevice: readonly DevicePort[],
   existing: readonly MapPort[],
   interfaceIds: ReadonlySet<string> | "all" = new Set(),
 ): Pick<MapPanel, "groups" | "ports"> {
+  // Physical ports only, as in the plain read (an existing port keeps its interface).
+  const named = (d: DevicePort) => existing.some((p) => p.interface === d.id || p.id === d.id);
+  const physical = allDevice.filter((d) => d.physical || named(d));
+  const device = physical.length > 0 ? physical : allDevice;
   const groups: MapPortGroup[] = preset.groups.map((g, i) => ({ ...g, id: `g${i + 1}` }));
   const slots = groups
     .filter(hasInterface)
@@ -88,9 +92,9 @@ export function layoutOnPreset(
     for (let n = 1; n <= g.count; n++) {
       const d = placed.get(key(g, n));
       const prev = d && existing.find((p) => p.interface === d.id || p.id === d.id);
-      const named = d && (interfaceIds === "all" || interfaceIds.has(d.id));
+      const byId = d && (interfaceIds === "all" || interfaceIds.has(d.id));
       ports.push(
-        newPort(prev?.id ?? (d && named ? d.id : `${g.id}-${n}`), {
+        newPort(prev?.id ?? (d && byId ? d.id : `${g.id}-${n}`), {
           group: g.id,
           n,
           interface: d?.id ?? "",
