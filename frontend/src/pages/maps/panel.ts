@@ -123,10 +123,16 @@ function commonPrefix(names: readonly string[]): string {
  * interface name as their id (what a cable to an unlisted device port already holds).
  */
 export function fromDevice(
-  device: readonly DevicePort[],
+  allDevice: readonly DevicePort[],
   existing: readonly MapPort[],
   interfaceIds: ReadonlySet<string> | "all" = new Set(),
 ): Pick<MapPanel, "groups" | "ports"> {
+  // Physical ports only (not VLANs, tunnels, bridges); one an existing port already names
+  // stays, so a drawing's own ports are never dropped. With no physical port at all (an
+  // unusual device), everything is kept rather than drawing an empty panel.
+  const placed = (d: DevicePort) => existing.some((p) => p.interface === d.id || p.id === d.id);
+  const physical = allDevice.filter((d) => d.physical || placed(d));
+  const device = physical.length > 0 ? physical : allDevice;
   const groups: MapPortGroup[] = [];
   const ports: MapPort[] = [];
   const add = (list: readonly DevicePort[], kind: MapPortKind, rows: 1 | 2, first?: number) => {

@@ -318,6 +318,8 @@ async def test_poll_full(fake_snmp: FakeSnmp) -> None:
         "if_descr": "Uplink to core (10G)",
         "if_alias": "to core",
         "if_label": "Uplink to core (10G)",
+        "if_type": "",
+        "connector": "",
     }
     assert all("if_label" not in s.labels for s in samples if s.name != f"{PREFIX}_if_info")
     assert_read_only(fake_snmp)

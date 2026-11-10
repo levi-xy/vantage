@@ -8,7 +8,6 @@ import type { CardProps } from "../registry";
 import {
   busiest,
   describe,
-  isInternal,
   NOTCH,
   speedText,
   STATE_TEXT,
@@ -65,7 +64,7 @@ export function SwitchPanelCard({ instanceId, title, instance }: CardProps) {
   const tier = useCardTier();
   const full = tier === "full";
 
-  const physical = all.filter((p) => !isInternal(p));
+  const physical = all.filter((p) => p.physical);
   const hidden = all.length - physical.length;
   const ports = full && showInternal ? all : physical;
   const { copper, sfp } = faceplate(ports);

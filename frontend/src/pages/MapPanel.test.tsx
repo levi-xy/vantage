@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { MapBox, MapPanel, MapPort, MapPortGroup } from "../api";
 import { BoxView } from "./maps/BoxView";
 import { portCables } from "./maps/cableLive";
+import { isPhysicalBsd, isPhysicalSnmp } from "../cards/physicalPorts";
 import type { DevicePort } from "./maps/devicePorts";
 import type { MapLive } from "./maps/mapLive";
 import { emptyPanel, fromDevice, newPort, regeneratePorts } from "./maps/panel";
@@ -131,6 +132,7 @@ describe("front panel jacks", () => {
       state,
       ref: null,
       order: 0,
+      physical: true,
     });
     const box = make({
       panel: {
@@ -281,6 +283,7 @@ describe("port groups and presets", () => {
       speed: i >= 24 ? 10e9 : 1e9,
       ref: { source: "snmp", instanceId: "sw", iface: `port${i + 1}` },
       order: i + 1,
+      physical: true,
     }));
     const read = fromDevice(device, [], "all");
     expect(read.groups.map((g) => [g.kind, g.count, g.first, g.order])).toEqual([
@@ -300,6 +303,7 @@ describe("port groups and presets", () => {
       state: "up",
       ref: null,
       order,
+      physical: true,
     }));
     const read = fromDevice(device, [newPort("ether2", { caption: "x", interface: "ether2" })]);
     expect(read.groups.map((g) => g.kind)).toEqual(["rj45", "sfp_plus"]);
@@ -308,6 +312,65 @@ describe("port groups and presets", () => {
       id: "ether2",
       caption: "x",
     });
+  });
+});
+
+describe("faceplates show physical ports only", () => {
+  const nic = (id: string, order: number): DevicePort => ({
+    id,
+    name: id,
+    state: "up",
+    ref: { source: "pfsense", instanceId: "fw", iface: id },
+    order,
+    physical: isPhysicalBsd(id),
+  });
+  const pfsense = [
+    "igc0",
+    "igc1",
+    "igc1.10",
+    "igc1.20",
+    "lo0",
+    "pflog0",
+    "enc0",
+    "wg0",
+    "ovpns1",
+    "lagg0",
+  ];
+
+  it("reads only igc0 and igc1 from a pfSense with VLANs, tunnels and a lagg", () => {
+    const read = fromDevice(pfsense.map(nic), [], "all");
+    expect(read.ports.map((p) => p.interface)).toEqual(["igc0", "igc1"]);
+  });
+
+  it("keeps a logical interface the drawing already has a port for", () => {
+    const keep = [newPort("igc1.10", { interface: "igc1.10" })];
+    const read = fromDevice(pfsense.map(nic), keep, "all");
+    expect(read.ports.map((p) => p.interface)).toEqual(["igc0", "igc1", "igc1.10"]);
+  });
+
+  it("leaves a CRS328 faceplate as it was when the agent reports ifType 6", () => {
+    const device: DevicePort[] = Array.from({ length: 28 }, (_, i) => ({
+      id: `port${i + 1}`,
+      name: `Port${i + 1}`,
+      state: "up",
+      speed: i >= 24 ? 10e9 : 1e9,
+      ref: { source: "snmp", instanceId: "sw", iface: `port${i + 1}` },
+      order: i + 1,
+      physical: isPhysicalSnmp({
+        id: `port${i + 1}`,
+        ifType: "6",
+        // The SFP+ cages report connector false; that must not remove them.
+        connector: i >= 24 ? "false" : "true",
+        internal: false,
+      }),
+    }));
+    const read = fromDevice(device, [], "all");
+    expect(read.groups.map((g) => [g.kind, g.count, g.first, g.order])).toEqual([
+      ["rj45", 8, 1, "odd_bottom"],
+      ["rj45", 8, 9, "odd_bottom"],
+      ["rj45", 8, 17, "odd_bottom"],
+      ["sfp_plus", 4, 1, "odd_bottom"],
+    ]);
   });
 });
 

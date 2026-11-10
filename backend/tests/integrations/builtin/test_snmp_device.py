@@ -423,6 +423,8 @@ async def test_poll_netsnmp_linux(fake_snmp: FakeSnmp) -> None:
         **eth0,
         "if_descr": "eth0",
         "if_alias": "uplink to example-core",
+        "if_type": "6",  # ethernetCsmacd; the capture has no ifConnectorPresent
+        "connector": "",
     }
     assert got[("if_oper_status", "eth1")].value == 7.0  # lowerLayerDown
     assert got[("if_admin_status", "eth2")].value == 2.0
@@ -502,6 +504,8 @@ async def test_poll_without_ifxtable(fake_snmp: FakeSnmp) -> None:
         "if_name": "if2",
         "if_descr": "port 2",
         "if_alias": "",
+        "if_type": "",
+        "connector": "",
     }
     # ifSpeed, including a link under 1 Mbit/s.
     assert got[("if_speed_bits_per_second", "if1")].value == 100e6
@@ -657,6 +661,31 @@ async def test_poll_interface_cap(fake_snmp: FakeSnmp) -> None:
     assert got[("interfaces_polled", "")].value == 2.0
     # The lowest ifIndex values are kept.
     assert {s.labels["if_index"] for s in samples if "if_index" in s.labels} == {"1", "10001"}
+
+
+async def test_poll_labels_if_info_with_type_and_connector(fake_snmp: FakeSnmp) -> None:
+    mib: dict[str, Any] = {ifmib.SYS_NAME: OctetString(b"example-fw")}
+    for i, (name, kind, conn) in enumerate(
+        [("igc0", 6, 1), ("igc0.10", 135, 2), ("lo0", 24, None), ("wg0", 131, 2)], start=1
+    ):
+        mib[f"{ifmib.IF_TABLE['descr']}.{i}"] = OctetString(name.encode())
+        mib[f"{ifmib.IF_X_TABLE['name']}.{i}"] = OctetString(name.encode())
+        mib[f"{ifmib.IF_TABLE['type']}.{i}"] = Integer32(kind)
+        if conn is not None:
+            mib[f"{ifmib.IF_X_TABLE['connector']}.{i}"] = Integer32(conn)
+    fake_snmp.agent(ADDRESS, mib, community=COMMUNITY)
+    samples = await run_poll(v2c())
+    info = {
+        s.labels["if_name"]: (s.labels["if_type"], s.labels["connector"])
+        for s in samples
+        if s.name.endswith("_if_info")
+    }
+    assert info == {
+        "igc0": ("6", "true"),
+        "igc0.10": ("135", "false"),
+        "lo0": ("24", ""),
+        "wg0": ("131", "false"),
+    }
 
 
 def big_table(rows: int) -> dict[str, Any]:

@@ -18,11 +18,13 @@
 | ifInDiscards, ifInErrors | `1.3.6.1.2.1.2.2.1.13`, `.14` | walk | likewise |
 | ifOutDiscards, ifOutErrors | `1.3.6.1.2.1.2.2.1.19`, `.20` | walk | likewise |
 | ifSpeed | `1.3.6.1.2.1.2.2.1.5` | walk | likewise |
+| ifType | `1.3.6.1.2.1.2.2.1.3` | walk | likewise; with ifConnectorPresent it tells front-panel ports from VLANs and other logical interfaces |
+| ifConnectorPresent | `1.3.6.1.2.1.31.1.1.1.17` | walk | if ifXTable exists |
 | ifHighSpeed | `1.3.6.1.2.1.31.1.1.1.15` | walk | if ifXTable exists |
 | ifHCInOctets, ifHCOutOctets | `1.3.6.1.2.1.31.1.1.1.6`, `.10` | walk | if ifXTable exists; never on v1 |
 | ifInOctets, ifOutOctets | `1.3.6.1.2.1.2.2.1.10`, `.16` | walk | only if a selected interface has no 64-bit counter |
 
-A poll is one GET (two on v1) and up to 15 walks, one per column. `ifDescr` reads at most `MAX_WALK_ROWS` (1024) rows, plus one to tell whether there are more; every other walk reads at most as many rows as `ifDescr` kept. The guarded client stops a walk at the first OID that doesn't increase. The connection test is a single GET of sysDescr and sysName.
+A poll is one GET (two on v1) and up to 17 walks, one per column. `ifDescr` reads at most `MAX_WALK_ROWS` (1024) rows, plus one to tell whether there are more; every other walk reads at most as many rows as `ifDescr` kept. The guarded client stops a walk at the first OID that doesn't increase. The connection test is a single GET of sysDescr and sysName.
 
 **Config:** see `SnmpDeviceConfig`.
 
@@ -46,7 +48,7 @@ A poll is one GET (two on v1) and up to 15 walks, one per column. `ifDescr` read
 | `interfaces` | gauge | none | ifTable rows seen (at most the walk cap) |
 | `interfaces_polled` | gauge | none | rows reported after the filter and the cap |
 | `interfaces_truncated` | gauge | none | 1 if the agent has more than `MAX_WALK_ROWS` ifTable rows and only the first were read (also logged as a warning with the instance id) |
-| `if_info` | gauge, 1 | `if_index`, `if_name`, `if_descr`, `if_alias` | one per polled interface |
+| `if_info` | gauge, 1 | `if_index`, `if_name`, `if_descr`, `if_alias`, `if_type`, `connector` | one per polled interface. `if_type` is the ifType number and `connector` is `true` / `false` (ifConnectorPresent); either is `""` when the agent does not report it. The UI shows an interface on a faceplate (map panel, front-panel card) when its type is an Ethernet one (6, 62, 69, 117) (`connector` is only a tie-breaker when no type is reported: `true` keeps the interface), or when no type is reported; interface lists are not filtered. |
 | `if_in_bytes`, `if_out_bytes` | counter | `if_index`, `if_name` | ifHC*Octets, or ifIn/OutOctets where the agent has no 64-bit counter |
 | `if_counters_64bit` | gauge | `if_index`, `if_name` | 1 if both octet counters are 64-bit |
 | `if_in_errors`, `if_out_errors`, `if_in_discards`, `if_out_discards` | counter | `if_index`, `if_name` | packets |
@@ -64,7 +66,7 @@ Because of its `source` label, `uptime_seconds` starts a new series if an agent'
 - `SNMP walk of <host>:<port> stopped answering partway (...)`: the agent answered, then went silent, or a walk ran past the 15 s limit. Usually a slow agent or a very large interface table.
 - `refused by the network guard: ...`: the host resolves to an address the guard denies.
 - `SNMP agent at <host>:<port> sent walk answers whose OIDs do not increase (...)`: a buggy agent that repeats or goes back; the walk is stopped at that row.
-- `SNMP poll of <host>:<port> took longer than 50 s (...)`: the poll's own budget (`POLL_BUDGET_SECONDS`). One GET and up to 15 walks at 15 s each could take 240 s, far past the collector's 60 s cut-off, so the integration ends the poll itself at 50 s with this message.
+- `SNMP poll of <host>:<port> took longer than 50 s (...)`: the poll's own budget (`POLL_BUDGET_SECONDS`). One GET and up to 17 walks at 15 s each could take 255 s, far past the collector's 60 s cut-off, so the integration ends the poll itself at 50 s with this message.
 
 An agent that hides sysDescr and sysName fails the connection test with a "not readable" message. A poll still reports what it can read.
 
