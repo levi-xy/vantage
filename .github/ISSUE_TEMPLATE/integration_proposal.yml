@@ -1,0 +1,68 @@
+name: Integration proposal
+description: Propose a new integration (device type, exporter or service) before building it.
+labels: ["integration proposal"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Agreeing on the approach first saves building something that can't be merged.
+        Read [CONTRIBUTING.md](https://github.com/levi-xy/vantage/blob/main/CONTRIBUTING.md) and
+        [docs/INTEGRATIONS.md](https://github.com/levi-xy/vantage/blob/main/docs/INTEGRATIONS.md) first.
+
+        **Don't include IP addresses, hostnames, domains, tokens, passwords or other secrets.**
+  - type: input
+    id: target
+    attributes:
+      label: Device or service
+      description: Vendor, product and the models or versions you can test on.
+      placeholder: "UniFi Network Application 9.x"
+    validations:
+      required: true
+  - type: dropdown
+    id: style
+    attributes:
+      label: How Vantage would get the data
+      options:
+        - Polled over HTTP (the device's API)
+        - Polled over SNMP
+        - Scraped from a Prometheus exporter
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: calls
+    attributes:
+      label: Calls it would make
+      description: The endpoints, OIDs or exporter metrics it would read, and how each one is read-only. Link the vendor docs if you can.
+    validations:
+      required: true
+  - type: textarea
+    id: auth
+    attributes:
+      label: Authentication
+      description: How it logs in (API key, read-only user, SNMP community or v3 user …) and whether a read-only account is possible.
+    validations:
+      required: true
+  - type: textarea
+    id: cards
+    attributes:
+      label: What the cards would show
+      description: The values a user would see on the dashboard.
+    validations:
+      required: false
+  - type: textarea
+    id: core
+    attributes:
+      label: Changes outside the integration
+      description: A new dependency, a change to the Integration contract or anything else only the maintainer can change. Write "none" if there are none.
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Before you submit
+      options:
+        - label: Every call I listed only reads; none changes the device's state.
+          required: true
+        - label: I removed IP addresses, hostnames and secrets from everything above.
+          required: true

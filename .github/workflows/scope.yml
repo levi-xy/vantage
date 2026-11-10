@@ -1,0 +1,53 @@
+name: Contribution scope
+
+# Pull requests from forks may change integrations, cards, presets, their tests and docs, and
+# fix bugs outside the core. This check fails when such a PR touches core, security,
+# dependency, CI or deploy files (see CONTRIBUTING.md). It runs the base branch's copy of this
+# file (pull_request_target), so a PR can't edit the check away. It never checks out or runs
+# the PR's code: it only reads the list of changed file names from the API.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  scope:
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check changed paths
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)' > files.txt
+          blocked=0
+          while IFS= read -r f; do
+            case "$f" in
+              backend/app/integrations/builtin/*|backend/tests/integrations/builtin/*) continue ;;
+              .github/*|.claude/*|.gitleaks.toml|.pre-commit-config.yaml|.gitattributes|.gitignore|.dockerignore|.nvmrc \
+              |AGENTS.md|BUILD-PLAN.md|CHANGELOG.md|CONTRIBUTING.md|LICENSE|NOTICE \
+              |deploy/*|scripts/*|docs/SECURITY.md|docs/ARCHITECTURE.md \
+              |backend/app/core/*|backend/app/api/*|backend/app/models/*|backend/app/sd/*|backend/app/query/* \
+              |backend/app/alerts/*|backend/app/collectors/*|backend/app/live/*|backend/app/cli/* \
+              |backend/app/main.py|backend/app/heartbeat.py|backend/app/integrations/base.py \
+              |backend/migrations/*|backend/alembic.ini|backend/pyproject.toml|backend/Dockerfile|backend/tests/* \
+              |frontend/package.json|frontend/package-lock.json|frontend/Dockerfile|frontend/docker/* \
+              |frontend/nginx.conf|frontend/index.html|frontend/icons.manifest.json|frontend/scripts/* \
+              |frontend/vite.config.*|frontend/tsconfig*|frontend/eslint.config.js|frontend/.prettierrc* \
+              |frontend/src/api/*|frontend/src/app/*|frontend/src/main.tsx|frontend/src/test-setup.ts)
+                echo "::error file=$f::Outside the scope open to contributors: $f"
+                blocked=1 ;;
+            esac
+          done < files.txt
+          if [ "$blocked" -ne 0 ]; then
+            echo "This PR changes files only the maintainer changes. See CONTRIBUTING.md, \"What's in scope\"."
+            echo "If your change needs one of them, say so in the PR description and the maintainer will make it."
+            exit 1
+          fi
+          echo "All changed files are in scope."
