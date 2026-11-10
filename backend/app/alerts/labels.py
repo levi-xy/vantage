@@ -54,6 +54,7 @@ DISPLAY_LABELS: tuple[str, ...] = (
     "tunnel_name",
     "guest_name",
     "guest_tags",
+    "interface_name",
     "server_name",
     "version",
     "sys_name",

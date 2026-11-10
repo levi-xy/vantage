@@ -8,6 +8,10 @@ import { EmbyNowPlayingCard } from "./emby-now-playing/EmbyNowPlayingCard";
 import { EmbyOverviewCard } from "./emby-overview/EmbyOverviewCard";
 import { HttpCheckCard } from "./http-check/HttpCheckCard";
 import { LinuxHostCard } from "./linux-host/LinuxHostCard";
+import { OpnsenseGatewaysCard } from "./opnsense-gateways/OpnsenseGatewaysCard";
+import { OpnsenseInterfacesCard } from "./opnsense-interfaces/OpnsenseInterfacesCard";
+import { OpnsenseOverviewCard } from "./opnsense-overview/OpnsenseOverviewCard";
+import { OpnsenseServicesCard } from "./opnsense-services/OpnsenseServicesCard";
 import { PingCheckCard } from "./ping-check/PingCheckCard";
 import {
   PfsenseGatewaysCard,
@@ -59,6 +63,10 @@ const CARD_COMPONENTS: Readonly<Record<string, ComponentType<CardProps>>> = {
   "emby-overview": EmbyOverviewCard,
   "http-check": HttpCheckCard,
   "linux-host": LinuxHostCard,
+  "opnsense-gateways": OpnsenseGatewaysCard,
+  "opnsense-interfaces": OpnsenseInterfacesCard,
+  "opnsense-overview": OpnsenseOverviewCard,
+  "opnsense-services": OpnsenseServicesCard,
   "pfsense-gateways": PfsenseGatewaysCard,
   "pfsense-interfaces": PfsenseInterfacesCard,
   "pfsense-overview": PfsenseOverviewCard,
@@ -97,6 +105,10 @@ const FULL_SIZES: Readonly<Record<string, [number, number]>> = {
   "emby-overview": [4, 3],
   "http-check": [3, 3],
   "linux-host": [4, 4],
+  "opnsense-gateways": [4, 3],
+  "opnsense-interfaces": [4, 3],
+  "opnsense-overview": [4, 4],
+  "opnsense-services": [4, 3],
   "pfsense-gateways": [4, 3],
   "pfsense-interfaces": [4, 3],
   "pfsense-overview": [4, 4],

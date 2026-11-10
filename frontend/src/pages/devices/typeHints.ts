@@ -8,6 +8,8 @@ export const TYPE_HINTS: Readonly<Record<string, string>> = {
   snmp_device: "Any SNMP device: uptime and interface traffic.",
   mikrotik_swos: "MikroTik switch running SwOS, over SNMP: ports and traffic.",
   pfsense: "pfSense firewall through Telegraf: interfaces, gateways, resources.",
+  opnsense:
+    "OPNsense firewall through its API with a read-only key: interfaces, gateways, services.",
   proxmox: "Proxmox VE nodes, VMs and containers, through the API with a read-only token.",
   cloudflared: "A Cloudflare Tunnel connector, from its metrics endpoint.",
   cloudflare: "A Cloudflare account: zone traffic and tunnels, with a read-only API token.",

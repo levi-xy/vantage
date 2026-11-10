@@ -1,0 +1,5 @@
+{"items":[
+ {"name":"WAN_DHCP","address":"192.0.2.1","monitor":"192.0.2.1","status":"none","status_translated":"Online","loss":"0.0 %","delay":"4.3 ms","stddev":"0.6 ms"},
+ {"name":"BACKUP_GW","address":"198.51.100.1","monitor":"198.51.100.1","status":"down","status_translated":"Offline","loss":"100.0 %","delay":"~","stddev":"~"},
+ {"name":"bad name; drop","address":"203.0.113.1","status":"none","loss":"0.0 %","delay":"1 ms","stddev":"0 ms"}
+],"status":"ok"}

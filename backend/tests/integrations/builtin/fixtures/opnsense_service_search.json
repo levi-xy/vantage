@@ -1,0 +1,5 @@
+{"total":3,"rowCount":3,"current":1,"rows":[
+ {"id":"unbound","locked":0,"running":1,"description":"Unbound DNS","name":"unbound"},
+ {"id":"dhcpd","locked":0,"running":0,"description":"DHCPv4 server","name":"dhcpd"},
+ {"id":"openssh","locked":0,"running":1,"description":"Secure Shell Daemon","name":"openssh"}
+]}
