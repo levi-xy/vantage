@@ -80,7 +80,7 @@ A PR may be closed if it's out of scope, needs a contract change that isn't appr
 quiet for a month.
 
 By contributing you agree that your contribution is licensed under the project's
-[Apache License 2.0](LICENSE) (section 5 of the license).
+[MIT License](LICENSE).
 
 ## Bug reports, findings and questions
 

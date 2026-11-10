@@ -1,7 +1,8 @@
 Vantage
 Copyright 2026 levi-xy
 
-Licensed under the Apache License, Version 2.0 (see LICENSE).
+Licensed under the MIT License (see LICENSE). Versions up to and including
+0.1.0-rc.2 were released under the Apache License, Version 2.0.
 
 The backend image also contains psycopg (the PostgreSQL driver), used unmodified
 as a separate library under the GNU Lesser General Public License v3.0. Its

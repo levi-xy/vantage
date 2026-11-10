@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/levi-xy/vantage/actions/workflows/ci.yml/badge.svg)](https://github.com/levi-xy/vantage/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/levi-xy/vantage?include_prereleases&sort=semver)](https://github.com/levi-xy/vantage/releases)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Vantage puts your firewall, hypervisor, NAS, switches, tunnels and services on one live dashboard, with cards shaped like the hardware instead of generic graphs. You add devices from the web UI: no config files, and as many of each type as you need. It only ever reads from your devices, and it alerts you on Telegram when something goes wrong.
 
@@ -153,4 +153,4 @@ Pull requests for new integrations and bug fixes are welcome; the core (architec
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Copyright 2026 levi-xy.
+MIT License. See [LICENSE](LICENSE) and, for bundled third-party components, [NOTICE](NOTICE). Copyright 2026 levi-xy.
