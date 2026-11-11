@@ -8,6 +8,10 @@
 
 Vantage puts your firewall, hypervisor, NAS, switches, tunnels and services on one live dashboard, with cards shaped like the hardware instead of generic graphs. You add devices from the web UI: no config files, and as many of each type as you need. It only ever reads from your devices, and it alerts you on Telegram when something goes wrong.
 
+![A Vantage network map: firewall, switch with live ports, NAS, Proxmox hosts with their guests, VLANs and a legend](docs/images/map.png)
+
+<sub>Screenshots use demo names and addresses.</sub>
+
 ## Features
 
 - **Add devices from the UI.** Pick a type, fill in the form, test the connection, save. If the test times out, Vantage tells you which firewall rule is missing.
@@ -17,6 +21,20 @@ Vantage puts your firewall, hypervisor, NAS, switches, tunnels and services on o
 - **History and alerts.** Prometheus stores the history. You manage alert rules in the UI, and alerts go to Telegram. A missing value never counts as "recovered": the alert shows **No data** until the device answers again.
 - **Watches itself.** Vantage alerts you when Prometheus is down, metrics stop arriving or alert checks stall, and `/healthz` lets an outside monitor watch Vantage.
 - **Secure by default.** It never changes anything on a device. Credentials are encrypted and never sent back to the browser. Every outbound connection is checked, the dashboard is served over HTTPS, there are admin and viewer roles, and every change is in the audit log.
+
+## Screenshots
+
+**Hardware-shaped cards.** The switch's front panel with live ports, the firewall, throughput, the NAS and its drives, checks and tunnels on one dashboard.
+
+![The Vantage dashboard: pfSense, a MikroTik switch front panel, throughput, a NAS, drive health and checks](docs/images/dashboard.png)
+
+**Live state on the map.** When the switch stops answering, its box and cables turn red.
+
+![The network map with the switch down: the switch box and its cables shown in red](docs/images/map-down.png)
+
+**Maps are drawn in the UI.** Place devices, frames, text and tables, connect ports with cables, and set speed, VLANs and colour in the side panel. No config files.
+
+![The map editor: a toolbar of elements on the left, the drawing in the middle, and a cable's settings in the side panel](docs/images/map-editor.png)
 
 ## Quick start
 
