@@ -11,8 +11,8 @@ CI and deployment) stays with the maintainer.
 | A new integration (a device type, exporter or service) | `backend/app/integrations/builtin/<type_id>/`, one line in `backend/app/integrations/registry.py`, tests in `backend/tests/integrations/builtin/`, cards in `frontend/src/cards/<card_type>/`, `docs/integrations/<type_id>.md` |
 | Fixes and improvements to an existing integration or its cards | the same folders |
 | Front panel presets for real hardware | `frontend/src/pages/maps/editor/presetModels.ts` |
-| Bug fixes in pages and components | `frontend/src/pages/`, `frontend/src/components/` |
-| Docs fixes | `README.md`, `docs/INTEGRATIONS.md`, `docs/OPERATIONS.md`, `docs/integrations/`, `docs/exporters/` |
+| Bug fixes in pages and components | `frontend/src/pages/`, `frontend/src/components/` (update `docs/USER-GUIDE.md` when what users see changes) |
+| Docs fixes | `README.md`, `docs/USER-GUIDE.md`, `docs/INTEGRATIONS.md`, `docs/OPERATIONS.md`, `docs/integrations/`, `docs/exporters/` |
 
 **Those paths are the only ones open to contributors.** A CI check (*Contribution scope*) fails
 any PR from a fork that touches a file anywhere else. That includes:
