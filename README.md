@@ -43,7 +43,7 @@ You need Docker Engine with Compose v2 (2.17 or newer) and `openssl`. Images are
 Download the install bundle from the [latest release](https://github.com/levi-xy/vantage/releases/latest) and run the setup script:
 
 ```bash
-V=0.1.0   # the release version
+V=0.1.0-rc.4   # the release version
 curl -fLO https://github.com/levi-xy/vantage/releases/download/v$V/vantage-deploy-$V.tar.gz
 tar -xzf vantage-deploy-$V.tar.gz && cd vantage-deploy-$V
 ./setup.sh
