@@ -114,6 +114,16 @@ describe("alerts page: events and rules", () => {
     });
   });
 
+  it("points to Settings when there are no channels yet", async () => {
+    renderApp("/alerts", adminBackend({ "GET /channels": () => json([]) }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add a rule" }));
+    const form = await screen.findByRole("form", { name: "Add a rule" });
+    const link = await within(form).findByRole("link", {
+      name: "Settings → Notification channels",
+    });
+    expect(link).toHaveAttribute("href", "/settings/channels");
+  });
+
   it("disables a rule with a PATCH", async () => {
     const backend = adminBackend({
       "GET /alerts/rules": () => json([RULE]),

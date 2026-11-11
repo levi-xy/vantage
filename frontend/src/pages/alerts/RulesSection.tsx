@@ -4,6 +4,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import type { FormEvent } from "react";
+import { Link } from "react-router";
 import { ApiError } from "../../api";
 import type { AlertRule, AlertRuleInput, AlertSeverity, AlertTemplate } from "../../api";
 import { useApiClient } from "../../app/session";
@@ -184,7 +185,13 @@ function RuleForm({
       <fieldset className="md:col-span-2">
         <legend className={label}>Send to</legend>
         {(channels.data ?? []).length === 0 ? (
-          <p className={fieldHint}>No channels yet. Add one below.</p>
+          <p className={fieldHint}>
+            No channels yet. Add one in{" "}
+            <Link to="/settings/channels" className="text-in hover:underline">
+              Settings → Notification channels
+            </Link>
+            .
+          </p>
         ) : (
           <div className="flex flex-wrap gap-4">
             {(channels.data ?? []).map((c) => (

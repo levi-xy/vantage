@@ -45,7 +45,7 @@ jobs:
               backend/app/integrations/builtin/*|backend/app/integrations/registry.py \
               |backend/tests/integrations/builtin/* \
               |frontend/src/cards/*|frontend/src/pages/*|frontend/src/components/* \
-              |docs/integrations/*|docs/exporters/*|docs/INTEGRATIONS.md|docs/OPERATIONS.md|README.md) continue ;;
+              |docs/integrations/*|docs/exporters/*|docs/INTEGRATIONS.md|docs/OPERATIONS.md|docs/USER-GUIDE.md|README.md) continue ;;
             esac
             safe=$(printf '%s' "$f" | tr -d '%\r\n')
             echo "::error file=$safe::Outside the scope open to contributors: $safe"
