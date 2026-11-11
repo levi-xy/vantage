@@ -8,9 +8,7 @@
 
 Vantage puts your firewall, hypervisor, NAS, switches, tunnels and services on one live dashboard, with cards shaped like the hardware instead of generic graphs. You add devices from the web UI: no config files, and as many of each type as you need. It only ever reads from your devices, and it alerts you on Telegram when something goes wrong.
 
-![The Vantage dashboard: pfSense, a MikroTik switch front panel, throughput, a NAS, drive health and checks](docs/images/dashboard.webp)
-
-![A Vantage network map: firewall, switch with live ports, NAS, Proxmox hosts with their guests, VLANs and a legend](docs/images/map.webp)
+![A Vantage network map: firewall, switch with live ports, NAS, Proxmox hosts with their guests, VLANs and a legend](docs/images/map.png)
 
 <sub>Screenshots use demo names and addresses.</sub>
 
@@ -24,13 +22,15 @@ Vantage puts your firewall, hypervisor, NAS, switches, tunnels and services on o
 - **Watches itself.** Vantage alerts you when Prometheus is down, metrics stop arriving or alert checks stall, and `/healthz` lets an outside monitor watch Vantage.
 - **Secure by default.** It never changes anything on a device. Credentials are encrypted and never sent back to the browser. Every outbound connection is checked, the dashboard is served over HTTPS, there are admin and viewer roles, and every change is in the audit log.
 
-## When something goes down
+## Screenshots
 
-The same dashboard and map with the switch not answering: its card says **DOWN** with how long, the device count names it, an alert pops up with the likely cause, and on the map the switch and its cables turn red.
+**Hardware-shaped cards.** The switch's front panel with live ports, the firewall, throughput, the NAS and its drives, checks and tunnels on one dashboard.
 
-![The dashboard with the MikroTik switch down: a DOWN badge, "1 down: MikroTik" and an alert explaining the missing SNMP response](docs/images/dashboard-down.webp)
+![The Vantage dashboard: pfSense, a MikroTik switch front panel, throughput, a NAS, drive health and checks](docs/images/dashboard.png)
 
-![The network map with the switch down: the switch box and its cables shown in red](docs/images/map-down.webp)
+**Live state on the map.** When the switch stops answering, its box and cables turn red.
+
+![The network map with the switch down: the switch box and its cables shown in red](docs/images/map-down.png)
 
 ## Quick start
 
