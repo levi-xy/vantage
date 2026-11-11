@@ -1,4 +1,4 @@
-"""The compose file: network layout VANTAGE_TRUSTED_PROXIES depends on (M1.7), Prometheus caps.
+"""Both compose files: network layout VANTAGE_TRUSTED_PROXIES depends on (M1.7), Prometheus caps.
 
 The backend trusts exactly the frontend's fixed address. That only holds if the frontend
 address can't be handed to another container (it is outside ``ip_range``) and the
@@ -16,12 +16,13 @@ from typing import Any
 import pytest
 import yaml
 
-COMPOSE = Path(__file__).resolve().parents[2] / "deploy" / "docker-compose.yml"
+DEPLOY = Path(__file__).resolve().parents[2] / "deploy"
 
 
-@pytest.fixture(scope="module")
-def compose() -> dict[str, Any]:
-    with COMPOSE.open(encoding="utf-8") as f:
+# The setup.sh bundle's file and the standalone (Portainer, Dockge) one.
+@pytest.fixture(scope="module", params=["docker-compose.yml", "compose.standalone.yml"])
+def compose(request: pytest.FixtureRequest) -> dict[str, Any]:
+    with (DEPLOY / request.param).open(encoding="utf-8") as f:
         data: dict[str, Any] = yaml.safe_load(f)
     return data
 

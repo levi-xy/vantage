@@ -267,7 +267,10 @@ docker compose exec backend python -m app.cli setup-code
 ```
 
 `setup.sh` runs this after the stack is up and prints the code next to the address
-(the one exception to "`setup.sh` never prints a secret").
+(the one exception to "`setup.sh` never prints a secret"). The standalone compose install
+(`deploy/compose.standalone.yml`) never makes a code by itself: the admin runs the
+command in the backend container's console, so the code stays out of the container
+logs that stack managers keep and show.
 
 - **One-time, one code.** A code is 16 characters from a 31-character alphabet without
   look-alikes (about 79 bits), shown as `ABCD-EFGH-JKMN-PQRS`. Each run replaces the
@@ -794,6 +797,22 @@ Known and deliberately accepted; listed so nobody rediscovers them as bugs.
   can't enter the directories, but members of the `docker` group can read the files
   (they can read everything in the containers anyway). Run `setup.sh` as root for
   owner-only modes.
+
+- **Standalone install: keys in Docker volumes, next to the data.** The standalone
+  compose file (`deploy/compose.standalone.yml`, for Portainer and Dockge) keeps the
+  master key, the Prometheus token and the TLS key in named volumes. They sit under the
+  Docker data root (`/var/lib/docker/volumes`) beside the `backend-data` volume with the
+  encrypted credentials, so one copy of that folder (a host backup or snapshot, a disk
+  taken out of the server) holds both the credentials and the key that opens them. The
+  files get the owners and modes `setup.sh` gives them as root (the key 0400 for the
+  backend user, the token 0440 for backend and Prometheus, the TLS key 0400 for nginx),
+  each service mounts only the volumes it reads, read-only, and the volumes folder is
+  root-only on the host; root and members of the `docker` group can read them, as with
+  any install. To keep the key off that disk, back it up separately and leave the Docker
+  data root out of host backups (or encrypt them), or use the `setup.sh` install and
+  keep `secrets/` where you choose. The one-shot `init` container that creates the files
+  runs as root with only `CHOWN` and `FOWNER`, without network, on a read-only root,
+  with the data volume read-only.
 
 ## Self-monitoring and /healthz
 

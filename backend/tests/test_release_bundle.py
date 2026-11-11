@@ -1,4 +1,4 @@
-"""deploy/make_bundle.py: the release's install bundle pulls the published images."""
+"""deploy/make_bundle.py: the release's install files pull the published images."""
 
 import importlib.util
 import re
@@ -46,17 +46,18 @@ def test_bad_versions_are_refused(version: str, tmp_path: Path) -> None:
         bundle.build(version, tmp_path)
 
 
-def test_bundle_holds_what_an_install_needs_and_no_secret(tmp_path: Path) -> None:
-    path = bundle.build("0.1.0-rc.1", tmp_path)
-    assert path.name == "vantage-deploy-0.1.0-rc.1.tar.gz"
+@pytest.mark.parametrize("top", ["vantage-deploy-0.1.0-rc.1", "vantage-deploy"])
+def test_bundle_holds_what_an_install_needs_and_no_secret(tmp_path: Path, top: str) -> None:
+    paths = bundle.build("0.1.0-rc.1", tmp_path)
+    path = tmp_path / f"{top}.tar.gz"
+    assert path in paths
     with tarfile.open(path) as tar:
         names = set(tar.getnames())
-        compose = tar.extractfile("vantage-deploy-0.1.0-rc.1/docker-compose.yml")
+        compose = tar.extractfile(f"{top}/docker-compose.yml")
         assert compose is not None
         assert "vantage-backend:${VANTAGE_VERSION:-0.1.0-rc.1}" in compose.read().decode()
-        setup = tar.getmember("vantage-deploy-0.1.0-rc.1/setup.sh")
+        setup = tar.getmember(f"{top}/setup.sh")
         assert setup.mode & 0o111  # still executable
-    top = "vantage-deploy-0.1.0-rc.1/"
     for needed in (
         "setup.sh",
         ".env.example",
@@ -65,8 +66,35 @@ def test_bundle_holds_what_an_install_needs_and_no_secret(tmp_path: Path) -> Non
         "NOTICE",
         "docker-compose.yml",
     ):
-        assert top + needed in names
+        assert f"{top}/{needed}" in names
     for name in names:
-        assert name.startswith(top)
+        assert name.startswith(f"{top}/")
         assert not name.endswith((".key", ".crt", "/.env", ".pyc", "make_bundle.py"))
         assert "/secrets/" not in name and "/certs/" not in name
+
+
+def test_build_writes_both_bundles_and_the_standalone_compose(tmp_path: Path) -> None:
+    paths = bundle.build("1.2.3", tmp_path)
+    assert [p.name for p in paths] == [
+        "vantage-deploy-1.2.3.tar.gz",
+        "vantage-deploy.tar.gz",
+        "compose.yml",
+    ]
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted(p.name for p in paths)
+
+
+def test_standalone_compose_gets_the_release_version(tmp_path: Path) -> None:
+    source = (REPO / "deploy" / "compose.standalone.yml").read_text()
+    bundle.build("1.2.3-rc.9", tmp_path)
+    out = (tmp_path / "compose.yml").read_text()
+    assert out.count("ghcr.io/levi-xy/vantage-backend:1.2.3-rc.9\n") == 2  # init, backend
+    assert out.count("ghcr.io/levi-xy/vantage-frontend:1.2.3-rc.9\n") == 1
+    assert "prom/prometheus:v3.2.1" in out
+    # Nothing else changes.
+    strip = re.compile(r"(vantage-(?:backend|frontend)):\S+")
+    assert strip.sub(r"\1", out) == strip.sub(r"\1", source)
+
+
+def test_standalone_compose_without_the_three_images_is_refused() -> None:
+    with pytest.raises(ValueError, match="3 Vantage images"):
+        bundle.standalone_compose("image: ghcr.io/levi-xy/vantage-backend:1.0.0\n", "1.2.3")

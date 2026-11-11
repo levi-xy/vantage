@@ -94,3 +94,19 @@ jobs:
           tar -xzf gitleaks.tar.gz gitleaks
       - name: Scan full history
         run: ./gitleaks git --redact --verbose .
+
+  # The standalone compose install (Portainer, Dockge), started from scratch with images
+  # built from this checkout: init creates the files, the stack answers /healthz/live.
+  standalone:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Build the images
+        run: |
+          docker build -t ghcr.io/levi-xy/vantage-backend:0.0.0-ci --build-context license=. backend
+          docker build -t ghcr.io/levi-xy/vantage-frontend:0.0.0-ci --build-context license=. frontend
+      - name: Write the standalone compose file for these images
+        run: python3 deploy/make_bundle.py 0.0.0-ci dist
+      - name: Start it from scratch and check it
+        run: scripts/standalone_smoke.sh dist/compose.yml
