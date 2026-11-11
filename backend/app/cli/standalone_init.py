@@ -300,6 +300,11 @@ def run(
     names = env.get("VANTAGE_TLS_NAMES", "")
     _san_entries(names)  # a bad name stops here, before anything is written
     force = env.get("VANTAGE_FORCE_NEW_KEY", "").strip().lower() == "true"
+    if force:
+        out(
+            "Warning: VANTAGE_FORCE_NEW_KEY=true. Remove it after this start, or a lost key "
+            "volume next to existing data is no longer caught."
+        )
     if not have[layout.master_key.path] and _data_may_exist(layout, env) and not force:
         raise InitError(
             "the master key is missing, but data from an earlier install may exist (the "

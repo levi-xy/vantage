@@ -160,8 +160,9 @@ def test_a_missing_key_next_to_old_data_is_refused(layout: si.Layout, sign: str)
     assert not layout.tls_cert.path.exists()
 
     env["VANTAGE_FORCE_NEW_KEY"] = "true"
-    run(layout, env)
+    lines = run(layout, env)
     assert layout.master_key.path.exists()
+    assert any(line.startswith("Warning: VANTAGE_FORCE_NEW_KEY=true") for line in lines)
 
 
 def test_sqlite_url_alone_is_not_old_data(layout: si.Layout) -> None:

@@ -24,7 +24,9 @@ On every start a one-shot `init` container (the backend image, no network, read-
 
 Settings are the same variables as in [`.env.example`](../deploy/.env.example) (port, bind address, HTTPS, retention), set as the stack's environment variables. Before the first start, set `VANTAGE_TLS_NAMES` to the server's address and any names you use for it (for example `192.0.2.10,vantage.home.example`), so the generated certificate covers them. Without it, the certificate covers only `localhost`: browsers warn about the self-signed certificate either way, so this is only about the name in the warning. To regenerate it later, delete the `tls` volume (stop the stack first) and start again.
 
-Open `https://<server-address>:8443` and accept the certificate warning. If the stack doesn't start, read the `init` container's log: it says what is wrong, for example a TLS volume with only one of the two files.
+Open `https://<server-address>:8443` and accept the certificate warning. If the stack doesn't start, read the `init` container's log: it says what is wrong. A TLS volume with only one of the two files (your own certificate without its key, or a first start that was cut off) needs the missing file copied in, or the `tls` volume deleted so a new self-signed pair is made.
+
+With an external database (`VANTAGE_DATABASE_URL` pointing at Postgres), `init` can't tell whether it already holds data, so the first start needs `VANTAGE_FORCE_NEW_KEY=true` to create the key; remove the variable afterwards.
 
 ### The setup code (standalone)
 
