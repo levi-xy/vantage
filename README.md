@@ -8,6 +8,12 @@
 
 Vantage puts your firewall, hypervisor, NAS, switches, tunnels and services on one live dashboard, with cards shaped like the hardware instead of generic graphs. You add devices from the web UI: no config files, and as many of each type as you need. It only ever reads from your devices, and it alerts you on Telegram when something goes wrong.
 
+![The Vantage dashboard: pfSense, a MikroTik switch front panel, throughput, a NAS, drive health and checks](docs/images/dashboard.webp)
+
+![A Vantage network map: firewall, switch with live ports, NAS, Proxmox hosts with their guests, VLANs and a legend](docs/images/map.webp)
+
+<sub>Screenshots use demo names and addresses.</sub>
+
 ## Features
 
 - **Add devices from the UI.** Pick a type, fill in the form, test the connection, save. If the test times out, Vantage tells you which firewall rule is missing.
