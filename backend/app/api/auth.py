@@ -4,6 +4,7 @@ from datetime import timedelta
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from sqlalchemy import CursorResult, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -22,12 +23,12 @@ from app.api.deps import (
     session_token,
     set_session_cookie,
 )
-from app.core import audit
+from app.core import audit, setup_code
 from app.core.auth import LoginRateLimiter, Passwords, csrf_token, new_session_token, session_id
 from app.core.config import Settings
 from app.core.db import utcnow
 from app.core.login_failures import UserLoginFailures
-from app.core.users import SETUP_MARKER
+from app.core.users import SETUP_MARKER, setup_open
 from app.models import AuditLog, Role, Setting, User, UserSession
 
 router = APIRouter()
@@ -60,6 +61,9 @@ class SetupRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     username: str = Field(pattern=USERNAME_PATTERN)
     password: SecretStr = Field(min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
+    # The one-time code printed by setup.sh / `python -m app.cli setup-code`. Missing or
+    # empty is refused like a wrong code (403 setup_code_invalid), not as a 422.
+    setup_code: SecretStr = Field(default=SecretStr(""), max_length=setup_code.MAX_INPUT_LENGTH)
 
 
 class LoginRequest(BaseModel):
@@ -81,8 +85,7 @@ def _me(user: User, token: str) -> Me:
 
 
 def _setup_required(db: Session) -> bool:
-    users = db.scalar(select(func.count()).select_from(User))
-    return users == 0 and db.get(Setting, SETUP_MARKER) is None
+    return setup_open(db)
 
 
 def _start_session(db: Session, user: User, settings: Settings) -> str:
@@ -104,22 +107,52 @@ def _setup_closed() -> HTTPException:
     return HTTPException(status.HTTP_409_CONFLICT, "setup has already been completed")
 
 
+SETUP_CODE_INVALID = {
+    "detail": "the setup code is wrong or no longer valid",
+    "reason": "setup_code_invalid",
+}
+
+
 @router.get("/setup/status")
 def setup_status(db: DbDep) -> SetupStatus:
     return SetupStatus(setup_required=_setup_required(db))
 
 
-@router.post("/setup", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_json)])
+@router.post(
+    "/setup",
+    status_code=status.HTTP_201_CREATED,
+    response_model=Me,
+    dependencies=[Depends(require_json)],
+)
 def setup(
     body: SetupRequest,
     response: Response,
     db: DbDep,
     settings: SettingsDep,
     passwords: PasswordsDep,
-) -> Me:
-    """Create the first admin and log them in. Only works while no users exist."""
+    limiter: LimiterDep,
+    client: ClientAddressDep,
+) -> Response | Me:
+    """Create the first admin and log them in.
+
+    Only works while no users exist, and only with the one-time setup code
+    (app.core.setup_code), which this deletes in the same transaction.
+    """
     if not _setup_required(db):
         raise _setup_closed()
+    # Wrong codes count on the client's login limit (counted up front, refunded on
+    # success), so a client can't keep guessing. The code itself is never logged,
+    # echoed or audited.
+    client_keys = [f"client:{client}"]
+    retry_after = limiter.acquire(client_keys)
+    if retry_after is not None:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "too many failed attempts, try again later",
+            headers={"Retry-After": str(retry_after)},
+        )
+    if not setup_code.matches(db, body.setup_code.get_secret_value()):
+        return JSONResponse(SETUP_CODE_INVALID, status_code=status.HTTP_403_FORBIDDEN)
     now = utcnow()
     user = User(
         username=body.username,
@@ -135,6 +168,7 @@ def setup(
     except IntegrityError:
         db.rollback()
         raise _setup_closed() from None
+    setup_code.clear(db)  # one-time: gone with the same commit that creates the admin
     audit.record(
         db,
         actor_type=audit.ActorType.USER,
@@ -146,6 +180,7 @@ def setup(
     )
     token = _start_session(db, user, settings)
     db.commit()
+    limiter.refund(client_keys)
     set_session_cookie(response, token, settings)
     return _me(user, token)
 

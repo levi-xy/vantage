@@ -16,7 +16,7 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import { ApiError } from "../api";
-import type { ApiClient, Credentials, Me } from "../api";
+import type { ApiClient, Credentials, Me, SetupRequest } from "../api";
 
 /** The current user, without the CSRF token (that stays inside the ApiClient). */
 export type SessionUser = Omit<Me, "csrf_token">;
@@ -41,7 +41,7 @@ export interface SessionContextValue {
   /** Throws the ApiError on failure (wrong credentials, rate limit...) for the form to show. */
   login: (credentials: Credentials) => Promise<void>;
   /** Create the first admin; the backend logs them in. Throws on failure. */
-  setup: (credentials: Credentials) => Promise<void>;
+  setup: (request: SetupRequest) => Promise<void>;
   /**
    * Throws if the backend couldn't end the session; the user then stays logged in. If it
    * then can't even be asked for the session again, the state becomes "unreachable".
@@ -131,10 +131,10 @@ export function SessionProvider({ client, children }: { client: ApiClient; child
   );
 
   const setup = useCallback(
-    async (credentials: Credentials) => {
+    async (request: SetupRequest) => {
       let me: Me;
       try {
-        me = await client.setup(credentials);
+        me = await client.setup(request);
       } catch (error) {
         // Someone else finished setup first: the wizard is closed for good.
         if (error instanceof ApiError && error.status === 409) {

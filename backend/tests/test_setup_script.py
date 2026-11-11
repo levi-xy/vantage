@@ -26,8 +26,17 @@ echo "docker $*" >> "$STUB_LOG"
 case "$1 $2" in
   "volume inspect") [ -n "${STUB_VOLUME_EXISTS:-}" ] && exit 0 || exit 1 ;;
 esac
+case "$*" in
+  *"exec -T backend python -m app.cli setup-code"*)
+    [ -n "${STUB_SETUP_CODE_FAILS:-}" ] && { echo "boom" >&2; exit 1; }
+    [ -n "${STUB_SETUP_DONE:-}" ] && exit 0
+    echo "ABCD-EFGH-JKMN-PQRS"
+    exit 0 ;;
+esac
 exit 0
 """
+FAKE_SETUP_CODE = "ABCD-EFGH-JKMN-PQRS"
+CODE_HINT = "docker compose exec backend python -m app.cli setup-code"
 
 # The server's LAN address as `ip route get` and `hostname -I` report it.
 IP_STUB = """#!/bin/sh
@@ -148,6 +157,26 @@ def test_full_run_starts_stack_and_prints_url(deploy: Path) -> None:
     assert "Only this server can open it" not in result.stdout
     assert "self-signed" in result.stdout
     assert_no_secret_in_output(deploy, result)
+
+
+def test_full_run_prints_the_one_time_setup_code(deploy: Path) -> None:
+    result = run(deploy)
+    assert result.returncode == 0, result.stderr
+    assert "exec -T backend python -m app.cli setup-code --quiet" in stub_log(deploy)
+    assert f"Setup code: {FAKE_SETUP_CODE} (enter it when you create" in result.stdout
+
+
+def test_no_setup_code_once_setup_is_done(deploy: Path) -> None:
+    result = run(deploy, extra_env={"STUB_SETUP_DONE": "1"})
+    assert result.returncode == 0, result.stderr
+    assert "Setup code" not in result.stdout and "setup-code" not in result.stdout
+
+
+def test_setup_code_failure_prints_how_to_get_one(deploy: Path) -> None:
+    result = run(deploy, extra_env={"STUB_SETUP_CODE_FAILS": "1"})
+    assert result.returncode == 0, result.stderr
+    assert "Setup code:" not in result.stdout and "boom" not in result.stdout + result.stderr
+    assert f"Couldn't create a setup code. Get one with: {CODE_HINT}" in result.stdout
 
 
 def test_old_env_port_name_still_used(deploy: Path) -> None:

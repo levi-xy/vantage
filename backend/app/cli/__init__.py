@@ -6,6 +6,7 @@ Run it where the backend runs::
     docker compose exec backend python -m app.cli create-user <username> --role admin
     docker compose exec backend python -m app.cli list-users
     docker compose exec backend python -m app.cli unlock <username>
+    docker compose exec backend python -m app.cli setup-code
     docker compose exec -T backend python -m app.cli backup - > vantage-backup.json.gz
     docker compose stop backend
     docker compose run --rm -T backend python -m app.cli restore - < vantage-backup.json.gz
@@ -56,7 +57,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.auth import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, USERNAME_PATTERN
 from app.cli import backup_restore as backups
-from app.core import audit, maintenance, timezone, users
+from app.core import audit, maintenance, setup_code, timezone, users
 from app.core.auth import Passwords
 from app.core.config import ConfigError, Settings, load_settings
 from app.core.crypto import MasterKeyError, SecretBox, decode_key, load_master_key, read_key_file
@@ -355,6 +356,39 @@ def create_user(ctx: Context, username: str, role: Role, from_stdin: bool) -> No
                 "warning: there is no admin user, and setup in the browser is now closed. "
                 "Create one with: python -m app.cli create-user <username> --role admin"
             )
+
+
+def new_setup_code(ctx: Context, quiet: bool) -> None:
+    """Make a fresh one-time setup code and print it (maintainer-approved 2026-11-10).
+
+    Only while setup is open (no user, never closed); otherwise prints that setup is
+    done (nothing with ``--quiet``) and stores nothing. Replaces any earlier code. Only
+    its hash is stored; the code is printed once and never logged or audited. Safe
+    while the backend runs: one short transaction.
+    """
+    with ctx.session_factory() as db:
+        if not users.setup_open(db):
+            if not quiet:
+                ctx.console.out("Setup is already done; no setup code is needed.")
+            return
+        code = setup_code.generate()
+        setup_code.store(db, code)
+        audit.record(
+            db,
+            actor_type=audit.ActorType.CLI,
+            action=audit.Action.CREATE,
+            target_type="setup_code",
+            target_id=None,
+            user_id=None,
+            changes={"source": AUDIT_SOURCE},
+        )
+        db.commit()
+    if not quiet:
+        ctx.console.out(
+            "One-time setup code (enter it when you create the admin account; it works "
+            "once, and running this again replaces it):"
+        )
+    ctx.console.out(code)
 
 
 def list_users(ctx: Context) -> None:
@@ -680,6 +714,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     unlock_cmd.add_argument("username")
 
+    code_cmd = commands.add_parser(
+        "setup-code",
+        help="print a one-time code for creating the first admin in the browser",
+        description=(
+            "Make a new one-time setup code and print it (the code alone on the last "
+            "line). The setup page asks for it when creating the first admin. Replaces "
+            "any earlier code; does nothing once setup is done."
+        ),
+        allow_abbrev=False,
+    )
+    code_cmd.add_argument(
+        "--quiet", action="store_true", help="print only the code (nothing once setup is done)"
+    )
+
     backup_cmd = commands.add_parser(
         "backup",
         help="export the whole database to a file (secrets stay encrypted)",
@@ -784,6 +832,8 @@ def main(
             create_user(ctx, args.username, Role(args.role), args.password_stdin)
         elif args.command == "unlock":
             unlock(ctx, args.username)
+        elif args.command == "setup-code":
+            new_setup_code(ctx, args.quiet)
         elif args.command == "backup":
             backup(ctx, args.file)
         elif args.command == "restore":

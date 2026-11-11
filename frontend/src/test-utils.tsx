@@ -29,6 +29,7 @@ export function mockSystemTheme(dark: boolean) {
 }
 
 export const EXAMPLE_PASSWORD = "example-password";
+export const EXAMPLE_SETUP_CODE = "ABCD-EFGH-JKMN-PQRS";
 export const EXAMPLE_CSRF = "example-csrf-token";
 
 export function exampleMe(role: Role = "admin", username = role): Me {
@@ -78,7 +79,13 @@ export function fakeBackend(options: FakeBackendOptions = {}) {
         return json({ setup_required: state.setupRequired });
       case "POST /setup": {
         if (!state.setupRequired) return json({ detail: "setup has already been completed" }, 409);
-        const { username } = body as { username: string };
+        const { username, setup_code } = body as { username: string; setup_code?: string };
+        if (setup_code !== EXAMPLE_SETUP_CODE) {
+          return json(
+            { detail: "the setup code is wrong or no longer valid", reason: "setup_code_invalid" },
+            403,
+          );
+        }
         state.setupRequired = false;
         state.session = { ...exampleMe("admin"), username };
         return json(state.session, 201);

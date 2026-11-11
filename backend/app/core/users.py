@@ -23,6 +23,7 @@ from sqlalchemy import CursorResult, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core import setup_code
 from app.core.login_failures import UserLoginFailures
 from app.models import Role, Setting, User, UserSession
 
@@ -30,6 +31,12 @@ from app.models import Role, Setting, User, UserSession
 # Its primary key makes a second, concurrent setup request fail, and it keeps network
 # setup closed even if every user is later deleted.
 SETUP_MARKER = "setup.completed"
+
+
+def setup_open(db: Session) -> bool:
+    """True while network setup can create the first admin: no users, never closed."""
+    count = db.scalar(select(func.count()).select_from(User))
+    return count == 0 and db.get(Setting, SETUP_MARKER) is None
 
 
 class UsernameTaken(Exception):
@@ -66,6 +73,8 @@ def add_user(db: Session, *, username: str, password_hash: str, role: Role) -> U
         if username_taken(db, username):
             raise UsernameTaken from None
         raise
+    if close_setup:
+        setup_code.clear(db)  # setup is closed: a stored code is of no use any more
     return user
 
 
