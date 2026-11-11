@@ -86,6 +86,10 @@ cd vantage/deploy
 
 Next steps: [reach it from other machines](docs/OPERATIONS.md#reaching-the-dashboard-from-other-machines), [use your own certificate](docs/OPERATIONS.md#https-certificate), [backups](docs/OPERATIONS.md#backups) and [upgrading](docs/OPERATIONS.md#upgrading).
 
+## Start simple
+
+You don't need SNMP, API tokens or exporters to begin. Add your devices by IP as **Ping checks** and you already get the live map, dashboard cards, history and Telegram alerts. Upgrade a device to its full integration later for ports, traffic and hardware details. See [First steps](docs/USER-GUIDE.md#first-steps) in the user guide.
+
 ## Supported integrations
 
 | Integration | Collects via | What you see |
@@ -142,6 +146,7 @@ Keep the dashboard off the internet: a monitoring VLAN with access from your adm
 
 ## Documentation
 
+- [User guide](docs/USER-GUIDE.md): how to add devices, arrange dashboards, draw maps, set up alerts
 - [Running Vantage](docs/OPERATIONS.md): network access, certificates, upgrades, backups, alert timing
 - [Security](docs/SECURITY.md): threat model, controls, recovery procedures
 - [Architecture](docs/ARCHITECTURE.md): components and data flow
