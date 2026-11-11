@@ -24,6 +24,14 @@ Vantage puts your firewall, hypervisor, NAS, switches, tunnels and services on o
 - **Watches itself.** Vantage alerts you when Prometheus is down, metrics stop arriving or alert checks stall, and `/healthz` lets an outside monitor watch Vantage.
 - **Secure by default.** It never changes anything on a device. Credentials are encrypted and never sent back to the browser. Every outbound connection is checked, the dashboard is served over HTTPS, there are admin and viewer roles, and every change is in the audit log.
 
+## When something goes down
+
+The same dashboard and map with the switch not answering: its card says **DOWN** with how long, the device count names it, an alert pops up with the likely cause, and on the map the switch and its cables turn red.
+
+![The dashboard with the MikroTik switch down: a DOWN badge, "1 down: MikroTik" and an alert explaining the missing SNMP response](docs/images/dashboard-down.webp)
+
+![The network map with the switch down: the switch box and its cables shown in red](docs/images/map-down.webp)
+
 ## Quick start
 
 You need Docker Engine with Compose v2 (2.17 or newer) and `openssl`. Images are published for amd64 and arm64.
