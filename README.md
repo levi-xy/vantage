@@ -32,6 +32,10 @@ Vantage puts your firewall, hypervisor, NAS, switches, tunnels and services on o
 
 ![The network map with the switch down: the switch box and its cables shown in red](docs/images/map-down.png)
 
+**Maps are drawn in the UI.** Place devices, frames, text and tables, connect ports with cables, and set speed, VLANs and colour in the side panel. No config files.
+
+![The map editor: a toolbar of elements on the left, the drawing in the middle, and a cable's settings in the side panel](docs/images/map-editor.png)
+
 ## Quick start
 
 You need Docker Engine with Compose v2 (2.17 or newer) and `openssl`. Images are published for amd64 and arm64.
