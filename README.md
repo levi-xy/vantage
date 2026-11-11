@@ -49,7 +49,7 @@ tar -xzf vantage-deploy-$V.tar.gz && cd vantage-deploy-$V
 ./setup.sh
 ```
 
-`setup.sh` creates the master key, the Prometheus token, a self-signed HTTPS certificate and `.env` (it never replaces ones that already exist), starts the stack and prints the address: `https://<server-address>:8443`, reachable from any machine on your LAN. Open it, create the admin account, then add your first device.
+`setup.sh` creates the master key, the Prometheus token, a self-signed HTTPS certificate and `.env` (it never replaces ones that already exist), starts the stack and prints the address: `https://<server-address>:8443`, reachable from any machine on your LAN, plus a one-time setup code. Open it, create the admin account with that code, then add your first device.
 
 **Back up `secrets/master.key` somewhere off the server.** Without it, stored device credentials can't be decrypted, and it isn't part of Vantage's own backups.
 

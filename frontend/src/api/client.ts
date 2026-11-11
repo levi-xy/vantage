@@ -17,6 +17,7 @@ import type {
   ChannelTestResult,
   ChannelUpdate,
   Credentials,
+  SetupRequest,
   Dashboard,
   DashboardCreate,
   DashboardLayout,
@@ -49,11 +50,14 @@ type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 export class ApiError extends Error {
   /** HTTP status; 0 when the request failed before a response arrived. */
   readonly status: number;
+  /** The body's machine-readable `reason`, when it has one (e.g. "setup_code_invalid"). */
+  readonly reason: string | undefined;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, reason?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.reason = reason;
   }
 }
 
@@ -91,6 +95,12 @@ function errorMessage(body: unknown, fallback: string): string {
     if (msgs.length) return msgs.join("; ");
   }
   return fallback;
+}
+
+/** The `reason` code some error bodies carry next to `detail`. */
+function errorReason(body: unknown): string | undefined {
+  if (typeof body !== "object" || body === null || !("reason" in body)) return undefined;
+  return typeof body.reason === "string" ? body.reason : undefined;
 }
 
 export class ApiClient {
@@ -159,6 +169,7 @@ export class ApiClient {
       throw new ApiError(
         response.status,
         errorMessage(data, `Request failed (${response.status})`),
+        errorReason(data),
       );
     }
     return data as T;
@@ -174,8 +185,8 @@ export class ApiClient {
   }
 
   /** Create the first admin; the backend logs them in. */
-  async setup(credentials: Credentials): Promise<Me> {
-    return this.#session(await this.request<Me>("POST", "/setup", credentials));
+  async setup(request: SetupRequest): Promise<Me> {
+    return this.#session(await this.request<Me>("POST", "/setup", request));
   }
 
   async login(credentials: Credentials): Promise<Me> {

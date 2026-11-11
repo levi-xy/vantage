@@ -9,6 +9,7 @@ The first release.
 **Platform**
 - Devices are added from the UI: pick a type, fill the generated form, test the connection (with a firewall hint when it times out), save. Secrets are encrypted at rest (AES-GCM, bound to their row) and never returned.
 - FastAPI backend, Prometheus underneath (HTTP service discovery, a fixed bootstrap config), React frontend served by nginx over HTTPS. One `setup.sh` creates the keys, the certificate and `.env`, and starts the stack.
+- First-run setup needs a one-time setup code that `setup.sh` prints (or `python -m app.cli setup-code`), so nobody else on the network can create the first admin.
 - Users with admin and viewer roles, persistent login lockout, sessions stored hashed, an audit log (with usernames) for every change.
 - Every outbound connection goes through the SSRF guard (private ranges by default; loopback, link-local, metadata and the host's own addresses always refused; DNS resolved once).
 

@@ -3,6 +3,7 @@ import { ApiError } from "../api";
 import {
   EXAMPLE_CSRF,
   EXAMPLE_PASSWORD,
+  EXAMPLE_SETUP_CODE,
   exampleMe,
   fakeBackend,
   json,
@@ -110,6 +111,7 @@ describe("first-run setup", () => {
   it("creates the admin, logs them in and opens the dashboard", async () => {
     const { router, backend, client } = renderApp("/", fakeBackend({ setupRequired: true }));
     await screen.findByRole("heading", { level: 1, name: "Welcome to Vantage" });
+    fill("Setup code", EXAMPLE_SETUP_CODE);
     fill("Admin username", "example-admin");
     fill(/^Password/, "a-long-example-password");
     fill("Confirm password", "a-long-example-password");
@@ -124,6 +126,7 @@ describe("first-run setup", () => {
     expect(JSON.parse(String(sent?.[1]?.body))).toEqual({
       username: "example-admin",
       password: "a-long-example-password",
+      setup_code: EXAMPLE_SETUP_CODE,
     });
   });
 
@@ -139,6 +142,7 @@ describe("first-run setup", () => {
       }),
     );
     await screen.findByRole("heading", { level: 1, name: "Welcome to Vantage" });
+    fill("Setup code", EXAMPLE_SETUP_CODE);
     fill("Admin username", "admin");
     fill(/^Password/, "a-long-example-password");
     fill("Confirm password", "a-long-example-password");
@@ -151,6 +155,7 @@ describe("first-run setup", () => {
     const { router } = renderApp("/setup", backend);
     await screen.findByRole("heading", { level: 1, name: "Welcome to Vantage" });
     backend.state.setupRequired = false;
+    fill("Setup code", EXAMPLE_SETUP_CODE);
     fill("Admin username", "admin");
     fill(/^Password/, "a-long-example-password");
     fill("Confirm password", "a-long-example-password");

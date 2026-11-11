@@ -38,12 +38,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.db import utcnow
+from app.core.setup_code import SETUP_CODE_KEY
 from app.models import Setting
 
 LOCK_KEY = "maintenance_lock"
 HEARTBEAT_KEY = "backend_heartbeat"
-# Runtime state, not data: left out of backups, kept (not replaced) by a restore.
-RUNTIME_KEYS = frozenset({LOCK_KEY, HEARTBEAT_KEY})
+# Runtime state, not data: left out of backups, kept (not replaced) by a restore. The
+# one-time setup code (app.core.setup_code) is runtime state too.
+RUNTIME_KEYS = frozenset({LOCK_KEY, HEARTBEAT_KEY, SETUP_CODE_KEY})
 
 HEARTBEAT_SECONDS = 10.0
 # A heartbeat younger than this means the backend runs (3 missed beats).

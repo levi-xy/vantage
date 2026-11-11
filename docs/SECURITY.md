@@ -46,7 +46,8 @@ devices on private networks.
 **Attackers** considered:
 
 - **Someone on the network** who can reach the dashboard port but has no account:
-  password guessing, session theft over plain HTTP, request forgery.
+  password guessing, session theft over plain HTTP, request forgery, and racing the
+  owner to create the first admin on a fresh install.
 - **A web page an admin visits**: cross-site requests, cross-site WebSocket hijacking,
   DNS rebinding.
 - **A logged-in viewer** trying to become admin, read secrets, or slow the backend down
@@ -79,6 +80,8 @@ physical access.
 
 ## Controls in short
 
+- **First-run setup:** the first admin can only be created with a one-time setup code
+  printed on the server (below).
 - **Authentication:** Argon2id password hashes; sessions are random tokens in an
   httpOnly, `SameSite=Strict`, `Secure` (by default) cookie, stored only as a SHA-256
   hash, with an absolute and an idle timeout; per-user and per-client login limits.
@@ -252,6 +255,35 @@ Limits:
   limit still applies to each account.
 - Never list a range that ordinary clients can reach the backend from: a trusted peer
   can claim any client address.
+
+## First-run setup
+
+Until the first admin exists, `POST /api/v1/setup` is the one request that creates an
+account without logging in, so it must not belong to whoever reaches the page first.
+It needs a one-time **setup code** that only someone with a shell on the server can get:
+
+```bash
+docker compose exec backend python -m app.cli setup-code
+```
+
+`setup.sh` runs this after the stack is up and prints the code next to the address
+(the one exception to "`setup.sh` never prints a secret").
+
+- **One-time, one code.** A code is 16 characters from a 31-character alphabet without
+  look-alikes (about 79 bits), shown as `ABCD-EFGH-JKMN-PQRS`. Each run replaces the
+  previous code. A successful setup deletes it in the same transaction that creates the
+  admin; once any user exists the command stores nothing and setup answers 409 as before.
+- **Only a hash is stored.** The `settings` row `setup_code` holds the code's SHA-256
+  and `created_at`. It is runtime state: left out of backups and not restored, like
+  the maintenance lock. Typed variants (lower case, without dashes) are accepted; the
+  comparison is constant-time.
+- **Refusals.** A missing or wrong code, or no code stored at all, answers 403
+  `{"detail", "reason": "setup_code_invalid"}` and creates nothing. Wrong codes count on
+  the per-client login limit (50 per 15 minutes, then 429), which on top of the code's
+  size makes guessing hopeless.
+- **Never echoed.** The code is printed only by the CLI (and `setup.sh`); it is not in
+  any response, log line or audit entry. The CLI's audit entry is a `create` on
+  `setup_code` with `actor_type` `cli` and no value.
 
 ## Recovering a lost admin password
 
@@ -693,7 +725,9 @@ can only send `ping`.
 A web page can rebind its own host name to the dashboard's address and then send
 requests the browser treats as same-origin for that page. Over HTTPS the certificate
 check normally stops this; over plain HTTP (`VANTAGE_HTTPS=false`) nothing does, and
-before the first admin exists `/setup` is open to whoever gets there first.
+before the first admin exists a rebinding page could drive the setup page in a
+browser. Creating the admin still needs the one-time setup code printed on the server
+(see [First-run setup](#first-run-setup)), so a page that doesn't know it can't.
 
 Set `VANTAGE_PUBLIC_HOSTS` to the names the dashboard is reached by (comma-separated,
 `host` or `host:port`, IPv6 in brackets; a name without a port allows any port). The
@@ -721,6 +755,10 @@ Known and deliberately accepted; listed so nobody rediscovers them as bugs.
   the Argon2 check; an unknown username only runs a dummy Argon2 check. The difference
   is a few milliseconds against tens of milliseconds of hashing, and both answer the
   same 401/429, but it could hint at which usernames exist.
+- **The setup code is shown on the terminal.** `setup.sh` prints it so the person
+  installing can type it in; it is in that terminal's scrollback until setup is done.
+  It is useless once the admin exists, and anyone who can read that terminal on the
+  server is out of scope anyway.
 - **Account lockout as denial of service.** Anyone who can reach the login form can lock
   an account's password login with 5 wrong guesses per 15 minutes. Recover with
   `docker compose exec backend python -m app.cli unlock <username>`; existing sessions

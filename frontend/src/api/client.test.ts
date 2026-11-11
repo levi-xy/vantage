@@ -120,7 +120,7 @@ describe("ApiClient requests", () => {
   it("creates the first admin through setup", async () => {
     const { client, fetchMock } = setup(json(ME, 201));
     await expect(
-      client.setup({ username: "admin", password: "example-password" }),
+      client.setup({ username: "admin", password: "example-password", setup_code: "ABCD" }),
     ).resolves.toEqual(ME);
     expect(call(fetchMock).url).toBe(`${API_BASE}/setup`);
     expect(client.hasSession).toBe(true);
@@ -145,7 +145,11 @@ describe("ApiClient CSRF", () => {
 
   it.each([
     ["login", (c: ApiClient) => c.login({ username: "admin", password: "example-password" })],
-    ["setup", (c: ApiClient) => c.setup({ username: "admin", password: "example-password" })],
+    [
+      "setup",
+      (c: ApiClient) =>
+        c.setup({ username: "admin", password: "example-password", setup_code: "ABCD" }),
+    ],
   ])("takes the token from the %s response", async (_name, start) => {
     const { client, fetchMock } = setup(json(ME), json({}));
     await start(client);
@@ -242,7 +246,9 @@ describe("ApiClient errors", () => {
       { loc: ["body", "password"], msg: "String too short", type: "y" },
     ];
     const { client } = setup(json({ detail }, 422));
-    await expect(client.setup({ username: "-", password: "x" })).rejects.toMatchObject({
+    await expect(
+      client.setup({ username: "-", password: "x", setup_code: "ABCD" }),
+    ).rejects.toMatchObject({
       status: 422,
       message: "String should match pattern; String too short",
     });

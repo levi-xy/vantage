@@ -7,10 +7,15 @@ export interface SetupStatus {
   setup_required: boolean;
 }
 
-/** Body of `POST /setup` and `POST /auth/login`. */
+/** Body of `POST /auth/login`. */
 export interface Credentials {
   username: string;
   password: string;
+}
+
+/** Body of `POST /setup`: the first admin, plus the one-time code setup.sh printed. */
+export interface SetupRequest extends Credentials {
+  setup_code: string;
 }
 
 /** `GET /me`, and the body of a successful login or setup. */

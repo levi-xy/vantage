@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.api.auth import SETUP_MARKER
 from app.api.deps import AdminDep, AuthDep
+from app.core import setup_code
 from app.core.auth import LoginRateLimiter, Passwords, csrf_token, session_id
 from app.core.config import Settings, normalize_database_url
 from app.core.crypto import SecretBox
@@ -68,8 +69,24 @@ def db(engine: Engine) -> Iterator[Session]:
         yield s
 
 
+def issue_setup_code(client: TestClient) -> str:
+    """Store a fresh one-time setup code, as `python -m app.cli setup-code` does."""
+    factory = client.app.state.session_factory  # type: ignore[attr-defined]
+    code = setup_code.generate()
+    with factory() as s:
+        setup_code.store(s, code)
+        s.commit()
+    return code
+
+
+def setup_body(
+    client: TestClient, username: str = ADMIN, password: str = PASSWORD
+) -> dict[str, str]:
+    return {"username": username, "password": password, "setup_code": issue_setup_code(client)}
+
+
 def do_setup(client: TestClient, username: str = ADMIN, password: str = PASSWORD) -> dict[str, str]:
-    r = client.post("/api/v1/setup", json={"username": username, "password": password})
+    r = client.post("/api/v1/setup", json=setup_body(client, username, password))
     assert r.status_code == 201, r.text
     body: dict[str, str] = r.json()
     return body
@@ -114,14 +131,14 @@ def test_setup_creates_admin_and_logs_in(client: TestClient, db: Session) -> Non
 
 def test_setup_only_works_once(client: TestClient) -> None:
     do_setup(client)
-    r = client.post("/api/v1/setup", json={"username": "second", "password": PASSWORD})
+    r = client.post("/api/v1/setup", json=setup_body(client, "second"))
     assert r.status_code == 409
 
 
 def test_setup_refused_when_users_exist(client: TestClient, db: Session) -> None:
     add_user(db, "existing", Role.VIEWER)
     assert client.get("/api/v1/setup/status").json() == {"setup_required": False}
-    r = client.post("/api/v1/setup", json={"username": ADMIN, "password": PASSWORD})
+    r = client.post("/api/v1/setup", json=setup_body(client, ADMIN))
     assert r.status_code == 409
 
 
@@ -131,7 +148,7 @@ def test_setup_stays_closed_after_all_users_are_deleted(client: TestClient, db: 
     db.commit()
     assert db.get(Setting, SETUP_MARKER) is not None
     assert client.get("/api/v1/setup/status").json() == {"setup_required": False}
-    r = client.post("/api/v1/setup", json={"username": "intruder", "password": PASSWORD})
+    r = client.post("/api/v1/setup", json=setup_body(client, "intruder"))
     assert r.status_code == 409
 
 
@@ -158,11 +175,77 @@ def test_setup_requires_json(client: TestClient) -> None:
     assert client.get("/api/v1/setup/status").json() == {"setup_required": True}
 
 
+# --- setup code (maintainer-approved 2026-11-10) ----------------------------------------
+
+
+def _no_user_created(client: TestClient, db: Session) -> None:
+    assert db.scalar(select(func.count()).select_from(User)) == 0
+    assert db.get(Setting, SETUP_MARKER) is None
+    assert client.get("/api/v1/setup/status").json() == {"setup_required": True}
+    assert SECURE_COOKIE not in client.cookies
+
+
+@pytest.mark.parametrize("stored", [True, False])
+@pytest.mark.parametrize("submitted", [None, "", "ABCD-EFGH-JKMN-PQRS"])
+def test_setup_refused_without_the_right_code(
+    client: TestClient, db: Session, stored: bool, submitted: str | None
+) -> None:
+    code = issue_setup_code(client) if stored else None
+    body = {"username": ADMIN, "password": PASSWORD}
+    if submitted is not None:
+        body["setup_code"] = submitted
+    r = client.post("/api/v1/setup", json=body)
+    assert r.status_code == 403
+    assert r.json() == {
+        "detail": "the setup code is wrong or no longer valid",
+        "reason": "setup_code_invalid",
+    }
+    _no_user_created(client, db)
+    if code is not None:
+        assert code not in r.text
+        db.expire_all()
+        assert db.get(Setting, setup_code.SETUP_CODE_KEY) is not None  # still usable
+
+
+@pytest.mark.parametrize("variant", [str.lower, lambda c: c.replace("-", ""), lambda c: f" {c} "])
+def test_setup_code_typed_variants_work(client: TestClient, db: Session, variant: object) -> None:
+    code = issue_setup_code(client)
+    typed = variant(code)  # type: ignore[operator]
+    r = client.post(
+        "/api/v1/setup", json={"username": ADMIN, "password": PASSWORD, "setup_code": typed}
+    )
+    assert r.status_code == 201, r.text
+    assert code not in r.text and code.lower() not in r.text
+    db.expire_all()
+    assert db.get(Setting, setup_code.SETUP_CODE_KEY) is None  # one-time: deleted
+
+
+def test_setup_code_cannot_be_reused(client: TestClient) -> None:
+    code = issue_setup_code(client)
+    body = {"username": ADMIN, "password": PASSWORD, "setup_code": code}
+    assert client.post("/api/v1/setup", json=body).status_code == 201
+    r = client.post("/api/v1/setup", json={**body, "username": "second"})
+    assert r.status_code == 409
+    assert code not in r.text
+
+
+def test_wrong_setup_codes_are_rate_limited(engine: Engine, db_url: str, db: Session) -> None:
+    with make_client(db_url) as client:
+        client.app.state.login_limiter = LoginRateLimiter({"user": 5, "client": 3})  # type: ignore[attr-defined]
+        code = issue_setup_code(client)
+        body = {"username": ADMIN, "password": PASSWORD, "setup_code": "WRONG-CODE"}
+        assert [client.post("/api/v1/setup", json=body).status_code for _ in range(3)] == [403] * 3
+        r = client.post("/api/v1/setup", json={**body, "setup_code": code})
+        assert r.status_code == 429
+        assert "Retry-After" in r.headers
+        _no_user_created(client, db)
+
+
 # --- cookies -------------------------------------------------------------------------
 
 
 def test_session_cookie_flags(client: TestClient) -> None:
-    r = client.post("/api/v1/setup", json={"username": ADMIN, "password": PASSWORD})
+    r = client.post("/api/v1/setup", json=setup_body(client, ADMIN))
     cookie = r.headers["set-cookie"]
     assert cookie.startswith(f"{SECURE_COOKIE}=")
     for flag in ("HttpOnly", "Secure", "SameSite=strict", "Path=/", "Max-Age=43200"):
@@ -172,7 +255,7 @@ def test_session_cookie_flags(client: TestClient) -> None:
 
 def test_insecure_cookie_option(engine: Engine, db_url: str) -> None:
     with make_client(db_url, cookie_secure=False) as client:
-        r = client.post("/api/v1/setup", json={"username": ADMIN, "password": PASSWORD})
+        r = client.post("/api/v1/setup", json=setup_body(client, ADMIN))
     cookie = r.headers["set-cookie"]
     assert cookie.startswith("vantage_session=")
     assert "Secure" not in cookie
@@ -212,7 +295,7 @@ def test_bad_login_gives_one_generic_error(client: TestClient, db: Session, user
 
 
 def test_responses_never_contain_password_or_hash(client: TestClient, db: Session) -> None:
-    texts = [client.post("/api/v1/setup", json={"username": ADMIN, "password": PASSWORD}).text]
+    texts = [client.post("/api/v1/setup", json=setup_body(client, ADMIN)).text]
     texts.append(client.get("/api/v1/me").text)
     texts.append(
         client.post("/api/v1/auth/login", json={"username": ADMIN, "password": PASSWORD}).text

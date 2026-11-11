@@ -10,6 +10,16 @@ An install from before 0.1.0-rc.4 has `VANTAGE_BIND_ADDRESS=127.0.0.1` in its `.
 
 Never publish the dashboard to the internet. Recommended: a dedicated monitoring VLAN, outbound internet blocked except the cloud API hosts you use, and dashboard access only from admin machines or your VPN.
 
+## The setup code
+
+Creating the first admin in the browser needs a one-time setup code. `setup.sh` prints one after it starts Vantage. If you lost it, it didn't print, or it was already used without creating an admin, get a new one (this replaces the old code) from the folder you ran `setup.sh` in:
+
+```bash
+docker compose exec backend python -m app.cli setup-code
+```
+
+Once an admin exists the command only says setup is done. Details: [SECURITY.md](SECURITY.md#first-run-setup).
+
 ## HTTPS certificate
 
 The bundled nginx serves the dashboard over HTTPS (TLS 1.2+) from `certs/tls.crt` and `certs/tls.key`; plain HTTP to the same port is redirected. Browsers warn about the generated self-signed certificate until you accept it.

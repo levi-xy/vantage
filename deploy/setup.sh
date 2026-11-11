@@ -8,7 +8,8 @@
 #
 # Safe to re-run: existing files are kept (the master key and certificate are never
 # overwritten), and the secret file permissions are fixed on every run. No secret is
-# ever printed.
+# ever printed, with one exception: while no admin account exists, each run that starts
+# Vantage prints a fresh one-time setup code, needed once to create the first admin.
 set -eu
 
 BACKEND_UID=10001     # backend container user (backend/Dockerfile)
@@ -278,12 +279,28 @@ echo
 scheme=https
 [ "$(setting VANTAGE_HTTPS)" = false ] && scheme=http
 url="$scheme://$shown_host:$port"
+# A fresh one-time setup code while no admin exists (each run replaces the last one);
+# nothing once setup is done. Only the code itself is accepted from the output.
+code_hint="docker compose exec backend python -m app.cli setup-code"
 if [ "$healthy" -eq 1 ]; then
     echo "Vantage is running: $url"
-    echo "Open it and create the admin account."
+    if code_out=$(docker compose exec -T backend python -m app.cli setup-code --quiet 2>/dev/null); then
+        code=$(printf '%s\n' "$code_out" | tail -n 1 | tr -d '\r')
+        case "$code" in
+            "") ;;  # setup already done
+            ????-????-????-????)
+                echo "Open it and create the admin account."
+                echo "Setup code: $code (enter it when you create the admin account; it works once)"
+                ;;
+            *) echo "Couldn't read a setup code. Get one with: $code_hint" ;;
+        esac
+    else
+        echo "Couldn't create a setup code. Get one with: $code_hint"
+    fi
 else
     echo "Vantage didn't report healthy yet. Check: docker compose ps; docker compose logs frontend backend"
     echo "Address once it's up: $url"
+    echo "Then get the one-time setup code for the admin account with: $code_hint"
 fi
 if [ "$bind" = 127.0.0.1 ]; then
     echo

@@ -1,9 +1,11 @@
 """Admin CLI (M1.6): reset-password, create-user, list-users; unlock (M1.8)."""
 
+import hashlib
 import io
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -19,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.api.auth import LOGIN_LIMITS, SETUP_MARKER
 from app.cli import AUDIT_SOURCE, LIMITER_HINT, Console, build_parser, main
 from app.collectors.scheduler import PollScheduler
+from app.core import setup_code
 from app.core.auth import Passwords
 from app.core.config import Settings, normalize_database_url
 from app.core.crypto import SecretBox
@@ -718,3 +721,49 @@ def test_reset_password_clears_the_lockout(cli: CliRunner, db: Session, db_url: 
     assert f"cleared {LOGIN_LIMITS['user']} failed login(s)" in run.out
     with make_client(db_url) as browser:
         login(browser, ADMIN, NEW_PASSWORD)
+
+
+# --- setup-code (maintainer-approved 2026-11-10) -----------------------------------------
+
+
+def test_setup_code_stores_only_the_hash_and_works_once(
+    cli: CliRunner, db: Session, db_url: str
+) -> None:
+    first = cli("setup-code")
+    assert first.code == 0, first.err
+    code = first.out.strip().splitlines()[-1]
+    assert re.fullmatch(r"([A-HJKMNP-Z2-9]{4}-){3}[A-HJKMNP-Z2-9]{4}", code)
+
+    quiet = cli("setup-code", "--quiet")
+    assert quiet.code == 0
+    newer = quiet.out.strip()
+    assert newer != code and re.fullmatch(r"[A-Z2-9-]{19}", newer)
+
+    db.expire_all()
+    row = db.get(Setting, setup_code.SETUP_CODE_KEY)
+    assert row is not None and set(row.value) == {"sha256", "created_at"}
+    assert row.value["sha256"] == hashlib.sha256(newer.replace("-", "").encode()).hexdigest()
+    stored = json.dumps([s.value for s in db.scalars(select(Setting))])
+    assert code not in stored and newer not in stored
+    audit_text = raw_audit_text(db)
+    assert code not in audit_text and newer not in audit_text
+    entries = [r for r in audit_rows(db) if r.target_type == "setup_code"]
+    assert len(entries) == 2
+    assert all(r.actor_type == ActorType.CLI and r.action == "create" for r in entries)
+
+    with make_client(db_url) as browser:
+        body = {"username": ADMIN, "password": PASSWORD}
+        old = browser.post("/api/v1/setup", json={**body, "setup_code": code})
+        assert old.status_code == 403  # replaced by the newer code
+        assert browser.post("/api/v1/setup", json={**body, "setup_code": newer}).status_code == 201
+
+
+def test_setup_code_refused_once_a_user_exists(cli: CliRunner, db: Session) -> None:
+    add_user(db, "existing", Role.VIEWER)
+    run = cli("setup-code")
+    assert run.code == 0
+    assert "already done" in run.out
+    assert cli("setup-code", "--quiet").out == ""
+    db.expire_all()
+    assert db.get(Setting, setup_code.SETUP_CODE_KEY) is None
+    assert not [r for r in audit_rows(db) if r.target_type == "setup_code"]

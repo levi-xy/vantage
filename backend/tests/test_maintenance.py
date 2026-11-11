@@ -19,6 +19,7 @@ from app.core import maintenance
 from app.core.db import make_engine, make_session_factory, utcnow
 from app.core.key_check import KEY_CHECK_KEY
 from app.core.maintenance import HEARTBEAT_KEY, LOCK_KEY
+from app.core.setup_code import SETUP_CODE_KEY
 from app.models import ActorType, AuditLog, Setting
 from tests.conftest import BACKEND_DIR, alembic_config
 from tests.test_auth import ADMIN, PASSWORD, do_setup, make_client
@@ -254,6 +255,7 @@ def test_clean_shutdown_deletes_the_heartbeat(
     with make_client(db_url):
         beat = row(engine, HEARTBEAT_KEY)
         assert isinstance(beat, dict) and beat["state"] == "running"
+        assert run_cli(db_url, "setup-code").code == 0
         # A backup taken while the backend runs leaves the runtime rows out.
         target = tmp_path / "b.json.gz"
         assert run_cli(db_url, "backup", str(target)).code == 0
@@ -262,6 +264,7 @@ def test_clean_shutdown_deletes_the_heartbeat(
         at = settings["columns"].index("key")
         keys = [r[at] for r in settings["rows"]]
         assert HEARTBEAT_KEY not in keys
+        assert row(engine, SETUP_CODE_KEY) is not None and SETUP_CODE_KEY not in keys
     assert row(engine, HEARTBEAT_KEY) is None
     # So an offline command runs at once after `docker compose stop backend`.
     run = run_cli(db_url, "rotate-master-key", "--new-key-file", key_file)
