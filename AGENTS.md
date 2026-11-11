@@ -285,6 +285,7 @@ Nothing device-specific is ever added to it.
 - **A different agent reviews every PR** than the one that wrote it, using the checklist below. The maintainer merges.
 - Don't touch files outside your task's scope except to fix something that blocks you; note it in the PR.
 - If information is missing, leave a clear `TODO(maintainer):` and say so in the PR rather than inventing behavior.
+- A change to what users see or do in the UI (a page, button, label, field, role or workflow) updates `docs/USER-GUIDE.md` in the same PR.
 
 ## Review checklist
 
@@ -295,3 +296,4 @@ Nothing device-specific is ever added to it.
 - [ ] Tests cover success, failure and the security assertions
 - [ ] Contracts unchanged, or the change is approved
 - [ ] Docs updated (`docs/INTEGRATIONS.md` for new integrations)
+- [ ] `docs/USER-GUIDE.md` updated when the PR changes what users see or do in the UI
