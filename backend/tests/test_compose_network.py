@@ -79,3 +79,27 @@ def test_prometheus_history_is_capped_by_time_and_size(compose: dict[str, Any]) 
     command = compose["services"]["prometheus"]["command"]
     assert "--storage.tsdb.retention.time=${VANTAGE_PROMETHEUS_RETENTION:-30d}" in command
     assert "--storage.tsdb.retention.size=${VANTAGE_PROMETHEUS_RETENTION_SIZE:-10GB}" in command
+
+
+# Group IDs an unprivileged LXC (Proxmox) maps by default: Docker can't set a
+# ping_group_range beyond them there, and the backend wouldn't start.
+LXC_MAX_GID = 65535
+
+
+def _backend_gid() -> int:
+    """The backend user's fixed group, from backend/Dockerfile (groupadd and useradd agree)."""
+    dockerfile = (DEPLOY.parent / "backend" / "Dockerfile").read_text(encoding="utf-8")
+    groupadd = re.search(r"groupadd\b[^\n]*--gid (\d+) vantage", dockerfile)
+    useradd = re.search(r"useradd\b[^\n]*--gid (\d+)", dockerfile)
+    assert groupadd and useradd, "the backend's group must have a fixed GID"
+    assert groupadd.group(1) == useradd.group(1)
+    return int(groupadd.group(1))
+
+
+def test_ping_group_range_fits_an_unprivileged_lxc_and_covers_the_backend(
+    compose: dict[str, Any],
+) -> None:
+    value = compose["services"]["backend"]["sysctls"]["net.ipv4.ping_group_range"]
+    low, high = (int(n) for n in value.split())
+    assert 0 <= low <= high <= LXC_MAX_GID
+    assert low <= _backend_gid() <= high

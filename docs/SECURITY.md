@@ -600,10 +600,12 @@ Every outbound connection to a device or cloud API goes through the SSRF guard i
   connected to the checked address and without `SO_BROADCAST` (so the kernel refuses
   a broadcast address it knows about). A reply counts only if it comes from the
   checked address and echoes the run's random nonce and the expected sequence number.
-  Integration code never opens sockets. The compose file sets the
-  `net.ipv4.ping_group_range` sysctl on the backend
+  Integration code never opens sockets. The compose files set the
+  `net.ipv4.ping_group_range` sysctl to `0 65535` on the backend
   container (its own network namespace only), so the backend keeps running as a
-  non-root user with every capability dropped, `NET_RAW` included.
+  non-root user with every capability dropped, `NET_RAW` included. The range covers
+  the backend's fixed group (10001, `backend/Dockerfile`) and stays inside the group IDs
+  an unprivileged LXC maps (0 to 65535), which refuses a wider range.
 
 ### Known limitation: the Docker host's LAN address
 

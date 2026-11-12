@@ -14,7 +14,7 @@
 
 **Alert templates:** `instance-down-ping_check` (`vantage_instance_up == 0`) is the "host not answering" alert: a host that answers nothing reports no loss ratio, so a loss rule can't catch it. `ping-check-loss` fires on packet loss above 20% for 5 min. Migration `0005` rewrote rules made from the earlier `packet_loss_ratio >= 1` template, which could never fire.
 
-**Firewall:** `icmp`, port `None`: allow echo requests from the backend to the host and the replies back. The backend container needs the `net.ipv4.ping_group_range` sysctl, which `deploy/docker-compose.yml` sets.
+**Firewall:** `icmp`, port `None`: allow echo requests from the backend to the host and the replies back. The backend container needs the `net.ipv4.ping_group_range` sysctl, which both compose files set to `0 65535` (it covers the backend's group, 10001, and works in an unprivileged LXC).
 
 **Cards:** `ping-check`, "Ping check", 2 by 2.
 

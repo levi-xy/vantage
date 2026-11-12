@@ -18,7 +18,11 @@ COPY alembic.ini ./
 COPY migrations ./migrations
 # The license and notice (the repository root, passed as the "license" build context).
 COPY --from=license LICENSE NOTICE /usr/share/doc/vantage/
-RUN pip install ".[postgres]" && useradd --system --uid 10001 --no-create-home vantage \
+# The user and its group have fixed IDs (10001). The group must stay inside the compose
+# files' net.ipv4.ping_group_range ("0 65535"; tests/test_compose_network.py checks it),
+# or the backend can't open unprivileged ICMP sockets for ping checks.
+RUN pip install ".[postgres]" && groupadd --system --gid 10001 vantage \
+    && useradd --system --uid 10001 --gid 10001 --no-create-home vantage \
     && mkdir /data && chown vantage /data
 
 USER vantage

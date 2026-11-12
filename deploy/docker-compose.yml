@@ -41,8 +41,10 @@ services:
     # ICMP ping (ping_check): lets the non-root backend open unprivileged ICMP datagram
     # sockets, so it needs no NET_RAW capability (cap_drop: ALL stays). The sysctl is
     # per network namespace: it applies to this container only, not the Docker host.
+    # 0-65535, not the kernel's maximum: an unprivileged LXC (Proxmox) maps only those
+    # group IDs and refuses a wider range. The backend's group is 10001 (backend/Dockerfile).
     sysctls:
-      net.ipv4.ping_group_range: "0 2147483647"
+      net.ipv4.ping_group_range: "0 65535"
 
   frontend:
     <<: *hardening
