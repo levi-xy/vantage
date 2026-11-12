@@ -28,6 +28,13 @@ Open `https://<server-address>:8443` and accept the certificate warning. If the 
 
 With an external database (`VANTAGE_DATABASE_URL` pointing at Postgres), `init` can't tell whether it already holds data, so the first start needs `VANTAGE_FORCE_NEW_KEY=true` to create the key; remove the variable afterwards.
 
+### Keep the volumes
+
+Everything lives in the stack's volumes: the master key, the token, the certificate, the database and the metric history.
+
+- **`docker compose down` is safe.** `docker compose down -v`, `docker volume prune`, or removing the stack together with its volumes (Portainer's and Dockge's delete options) deletes everything, including the master key. Back the key up first (below).
+- **The stack's name is part of the volume names** (`<stack>_master-key`, `<stack>_backend-data` and so on). Redeploying under a different stack name starts an empty install; your old data stays in the old volumes. To get it back, deploy under the old name again.
+
 ### The setup code (standalone)
 
 The standalone install never prints the setup code, so it doesn't end up in container logs, which stack managers keep and show. Get one from the backend container's console:

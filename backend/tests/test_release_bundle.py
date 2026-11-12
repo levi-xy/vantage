@@ -74,9 +74,9 @@ def test_bundle_holds_what_an_install_needs_and_no_secret(tmp_path: Path, top: s
 
 
 def test_build_writes_both_bundles_and_the_standalone_compose(tmp_path: Path) -> None:
-    paths = bundle.build("1.2.3", tmp_path)
+    paths = bundle.build("1.2.3-rc.1", tmp_path)
     assert [p.name for p in paths] == [
-        "vantage-deploy-1.2.3.tar.gz",
+        "vantage-deploy-1.2.3-rc.1.tar.gz",
         "vantage-deploy.tar.gz",
         "compose.yml",
     ]
@@ -98,3 +98,23 @@ def test_standalone_compose_gets_the_release_version(tmp_path: Path) -> None:
 def test_standalone_compose_without_the_three_images_is_refused() -> None:
     with pytest.raises(ValueError, match="3 Vantage images"):
         bundle.standalone_compose("image: ghcr.io/levi-xy/vantage-backend:1.0.0\n", "1.2.3")
+
+
+def test_a_final_release_must_match_the_standalone_compose_version(tmp_path: Path) -> None:
+    named = bundle.source_version()
+    bundle.check_release_version(named)  # the version in the file: fine
+    major, minor, patch = (int(n) for n in named.split("-")[0].split("."))
+    newer = f"{major}.{minor}.{patch + 1}"
+    with pytest.raises(ValueError, match=f"names {re.escape(named)}"):
+        bundle.check_release_version(newer)
+    with pytest.raises(ValueError, match="names"):
+        bundle.build(newer, tmp_path)
+    assert not list(tmp_path.iterdir())  # refused before writing anything
+
+
+def test_pre_releases_skip_the_version_check() -> None:
+    bundle.check_release_version("99.0.0-rc.1")
+
+
+def test_the_standalone_compose_names_one_version() -> None:
+    assert bundle.VERSION_RE.fullmatch(bundle.source_version())

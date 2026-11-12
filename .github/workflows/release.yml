@@ -16,7 +16,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Before anything is built or pushed: a final release tag must match the image version
+  # in deploy/compose.standalone.yml, the file the README shows, so the copy people paste
+  # never names an old release. Pre-release tags pass.
+  version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: The tag matches the standalone compose file
+        run: python3 deploy/make_bundle.py --check "$GITHUB_REF_NAME"
+
   image:
+    needs: version
     runs-on: ubuntu-latest
     # arm64 builds run under QEMU; a stuck build must not hold the runner for 6 hours.
     timeout-minutes: 60

@@ -13,6 +13,13 @@ Writes into ``dist/``:
   version-free ``/releases/latest/download/`` link.
 * ``compose.yml``: deploy/compose.standalone.yml with this version in its image tags.
 
+A final release (a version without ``-pre``) must match the version already in
+deploy/compose.standalone.yml, which the README shows (a test keeps the two equal), so
+the copy people paste never names an old release. The release workflow checks this
+before it builds any image::
+
+    python deploy/make_bundle.py --check 0.1.0
+
 Standard library only.
 """
 
@@ -68,6 +75,32 @@ def standalone_compose(source: str, version: str) -> str:
     return out
 
 
+def source_version() -> str:
+    """The image version deploy/compose.standalone.yml names (one for all three images)."""
+    source = (DEPLOY / "compose.standalone.yml").read_text()
+    tags = {m[0].rsplit(":", 1)[1] for m in IMAGE_TAG_RE.finditer(source)}
+    if len(tags) != 1:
+        raise ValueError(f"compose.standalone.yml names more than one version: {sorted(tags)}")
+    return tags.pop()
+
+
+def check_release_version(version: str) -> None:
+    """Refuse a final release whose version isn't the one compose.standalone.yml names.
+
+    Pre-releases (``1.2.0-rc.1``) pass: the README keeps showing the last final release.
+    """
+    if not VERSION_RE.fullmatch(version):
+        raise ValueError(f"not a version: {version!r} (want X.Y.Z or X.Y.Z-pre)")
+    if "-" in version:
+        return
+    named = source_version()
+    if named != version:
+        raise ValueError(
+            f"the tag is {version} but deploy/compose.standalone.yml (and the README copy) "
+            f"names {named}. Bump both to {version} in a PR, merge it, then tag that commit."
+        )
+
+
 def _skip(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
     name = Path(info.name).name
     if name in ("__pycache__", ".env") or name.endswith((".pyc", ".key", ".crt")):
@@ -94,8 +127,7 @@ def _bundle(version: str, path: Path, top: str) -> Path:
 
 def build(version: str, out_dir: Path) -> list[Path]:
     """Write the release's install files; returns their paths (versioned bundle first)."""
-    if not VERSION_RE.fullmatch(version):
-        raise ValueError(f"not a version: {version!r} (want X.Y.Z or X.Y.Z-pre)")
+    check_release_version(version)
     out_dir.mkdir(parents=True, exist_ok=True)
     versioned = f"vantage-deploy-{version}"
     standalone = out_dir / "compose.yml"
@@ -110,7 +142,18 @@ def build(version: str, out_dir: Path) -> list[Path]:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        sys.exit("usage: make_bundle.py <version> <out-dir>")
-    for written in build(sys.argv[1].removeprefix("v"), Path(sys.argv[2])):
-        print(written)
+    try:
+        if len(sys.argv) == 3 and sys.argv[1] == "--check":
+            tag = sys.argv[2].removeprefix("v")
+            check_release_version(tag)
+            if "-" in tag:
+                print(f"ok: {tag} is a pre-release; the README version isn't checked")
+            else:
+                print(f"ok: {tag} matches deploy/compose.standalone.yml")
+        elif len(sys.argv) == 3:
+            for written in build(sys.argv[1].removeprefix("v"), Path(sys.argv[2])):
+                print(written)
+        else:
+            sys.exit("usage: make_bundle.py <version> <out-dir> | --check <version>")
+    except ValueError as exc:
+        sys.exit(f"error: {exc}")
