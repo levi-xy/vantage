@@ -2,7 +2,7 @@
 
 All notable changes, newest first. Versions follow [semantic versioning](https://semver.org/); before 1.0, a minor version (0.2) may change behaviour, and its notes say how to upgrade.
 
-## 0.1.0 (unreleased)
+## 0.1.0 (2026-11-12)
 
 The first release.
 
