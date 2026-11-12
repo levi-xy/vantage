@@ -13,6 +13,7 @@ Run it where the backend runs::
     docker compose run --rm -T backend python -m app.cli rotate-master-key \
         --new-key-file - < secrets/master.key.new
     docker compose run --rm backend python -m app.cli maintenance-unlock
+    python -m app.cli standalone-init   (the standalone compose file's init service)
 
 ``restore`` and ``rotate-master-key`` are offline (P0-6): they hold the maintenance lock
 (``app.core.maintenance``) for their whole transaction and refuse to run while the
@@ -57,6 +58,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.auth import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, USERNAME_PATTERN
 from app.cli import backup_restore as backups
+from app.cli import standalone_init
 from app.core import audit, maintenance, setup_code, timezone, users
 from app.core.auth import Passwords
 from app.core.config import ConfigError, Settings, load_settings
@@ -787,6 +789,18 @@ def build_parser() -> argparse.ArgumentParser:
         allow_abbrev=False,
     )
     commands.add_parser(
+        "standalone-init",
+        help="(standalone compose init service) create the key, token, certificate and "
+        "Prometheus config in their volumes",
+        description=(
+            "Create whatever is missing of the master key, the Prometheus token, a "
+            "self-signed TLS pair and prometheus.yml in the volumes mounted under "
+            "/vantage-init, and give each file its owner and mode. Never replaces an "
+            "existing file and never prints a secret."
+        ),
+        allow_abbrev=False,
+    )
+    commands.add_parser(
         "startup-gate",
         help="(backend container start) exit 1 while a maintenance command holds the lock",
         description=(
@@ -814,6 +828,18 @@ def main(
         return exc.code if isinstance(exc.code, int) else 2
     engine: Engine | None = None
     ctx: Context | None = None
+    if args.command == "standalone-init":
+        # Before the settings: there is no master key or token yet, and no database.
+        try:
+            standalone_init.run(console.out)
+        except standalone_init.InitError as exc:
+            console.err(f"error: {exc}")
+            return 1
+        except OSError as exc:
+            # The errno text and the path only: no file content.
+            console.err(f"error: {exc.strerror or 'file operation failed'}: {exc.filename}")
+            return 1
+        return 0
     try:
         settings = settings or load_settings()
         if args.command == "startup-gate":

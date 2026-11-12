@@ -38,14 +38,15 @@ Vantage puts your firewall, hypervisor, NAS, switches, tunnels and services on o
 
 ## Quick start
 
-You need Docker Engine with Compose v2 (2.17 or newer) and `openssl`. Images are published for amd64 and arm64.
+You need Docker Engine with Compose v2 (2.17 or newer). Images are published for amd64 and arm64. Two ways to install, both from the [latest release](https://github.com/levi-xy/vantage/releases/latest):
 
-Download the install bundle from the [latest release](https://github.com/levi-xy/vantage/releases/latest) and run the setup script:
+### With the setup script
+
+Needs `openssl` too.
 
 ```bash
-V=0.1.0-rc.4   # the release version
-curl -fLO https://github.com/levi-xy/vantage/releases/download/v$V/vantage-deploy-$V.tar.gz
-tar -xzf vantage-deploy-$V.tar.gz && cd vantage-deploy-$V
+curl -fLO https://github.com/levi-xy/vantage/releases/latest/download/vantage-deploy.tar.gz
+tar -xzf vantage-deploy.tar.gz && cd vantage-deploy
 ./setup.sh
 ```
 
@@ -53,20 +54,152 @@ tar -xzf vantage-deploy-$V.tar.gz && cd vantage-deploy-$V
 
 **Back up `secrets/master.key` somewhere off the server.** Without it, stored device credentials can't be decrypted, and it isn't part of Vantage's own backups.
 
+### Portainer / Dockge
+
+Paste this into a new stack (Portainer: Stacks → Add stack; Dockge: Compose) and deploy it, or save it as `compose.yml` and run `docker compose up -d`. It needs no other files. It is also on every release: `curl -fLO https://github.com/levi-xy/vantage/releases/latest/download/compose.yml`.
+
+```yaml
+# Vantage for Portainer, Dockge or `docker compose up -d`: needs no files on the host.
+# On first start, `init` creates the master key, the Prometheus token, a self-signed
+# HTTPS certificate and prometheus.yml in volumes; it never replaces existing ones.
+# Then open https://<server-address>:8443. Setup code, key backup and upgrades:
+# https://github.com/levi-xy/vantage/blob/main/docs/OPERATIONS.md#standalone-install
+
+x-hardening: &hardening
+  read_only: true
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+  restart: unless-stopped
+
+services:
+  init:
+    <<: *hardening
+    image: ghcr.io/levi-xy/vantage-backend:0.1.0
+    command: ["python", "-m", "app.cli", "standalone-init"]
+    # Root with only the two capabilities needed to give each file its owner and mode.
+    user: "0:0"
+    cap_add: [CHOWN, FOWNER]
+    network_mode: none
+    restart: "no"
+    environment:
+      # Extra names/addresses for the certificate, comma-separated (e.g. 192.0.2.10).
+      VANTAGE_TLS_NAMES: ${VANTAGE_TLS_NAMES:-}
+      VANTAGE_FORCE_NEW_KEY: ${VANTAGE_FORCE_NEW_KEY:-false}
+      VANTAGE_DATABASE_URL: ${VANTAGE_DATABASE_URL:-sqlite:////data/vantage.db}
+    volumes:
+      - master-key:/vantage-init/key
+      - prometheus-token:/vantage-init/token
+      - tls:/vantage-init/tls
+      - prometheus-config:/vantage-init/prometheus
+      - backend-data:/data:ro
+    tmpfs: [/tmp]
+
+  backend:
+    <<: *hardening
+    image: ghcr.io/levi-xy/vantage-backend:0.1.0
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    stop_grace_period: 20s
+    environment:
+      VANTAGE_DATABASE_URL: ${VANTAGE_DATABASE_URL:-sqlite:////data/vantage.db}
+      VANTAGE_MASTER_KEY_FILE: /run/vantage/key/master_key
+      VANTAGE_PROMETHEUS_TOKEN_FILE: /run/secrets/prometheus_token
+      VANTAGE_COOKIE_SECURE: ${VANTAGE_COOKIE_SECURE:-true}
+      VANTAGE_SESSION_MAX_HOURS: ${VANTAGE_SESSION_MAX_HOURS:-12}
+      VANTAGE_SESSION_IDLE_MINUTES: ${VANTAGE_SESSION_IDLE_MINUTES:-120}
+      VANTAGE_DOWN_AFTER_FAILED_CYCLES: ${VANTAGE_DOWN_AFTER_FAILED_CYCLES:-3}
+      VANTAGE_LOG_LEVEL: ${VANTAGE_LOG_LEVEL:-INFO}
+      VANTAGE_PROMETHEUS_RETENTION: ${VANTAGE_PROMETHEUS_RETENTION:-30d}
+      # Only the bundled nginx (frontend, fixed address below) may name the client.
+      VANTAGE_TRUSTED_PROXIES: ${VANTAGE_TRUSTED_PROXIES:-192.168.255.242/32}
+      VANTAGE_PUBLIC_HOSTS: ${VANTAGE_PUBLIC_HOSTS:-}
+    volumes:
+      - backend-data:/data
+      - master-key:/run/vantage/key:ro
+      - prometheus-token:/run/secrets:ro
+    tmpfs: [/tmp]
+    # ICMP ping without NET_RAW; applies to this container only.
+    sysctls:
+      net.ipv4.ping_group_range: "0 2147483647"
+
+  frontend:
+    <<: *hardening
+    image: ghcr.io/levi-xy/vantage-frontend:0.1.0
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      backend:
+        condition: service_started
+    ports:
+      - "${VANTAGE_BIND_ADDRESS:-0.0.0.0}:${VANTAGE_HTTPS_PORT:-8443}:8443"
+    environment:
+      VANTAGE_HTTPS: ${VANTAGE_HTTPS:-true}
+      VANTAGE_HSTS: ${VANTAGE_HSTS:-false}
+    volumes:
+      - tls:/run/secrets:ro
+    tmpfs: [/tmp]
+    networks:
+      default:
+        # Fixed so the backend can trust exactly this container (VANTAGE_TRUSTED_PROXIES).
+        ipv4_address: 192.168.255.242
+
+  prometheus:
+    <<: *hardening
+    image: prom/prometheus:v3.2.1
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    command:
+      - --config.file=/etc/vantage/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${VANTAGE_PROMETHEUS_RETENTION:-30d}
+      - --storage.tsdb.retention.size=${VANTAGE_PROMETHEUS_RETENTION_SIZE:-10GB}
+    volumes:
+      - prometheus-config:/etc/vantage:ro
+      - prometheus-token:/run/secrets:ro
+      - prometheus-data:/prometheus
+
+# Fixed subnet: the frontend's address is outside ip_range, so no other container can
+# take it. If it clashes with your LAN, change subnet, ip_range, gateway, the frontend's
+# ipv4_address and VANTAGE_TRUSTED_PROXIES together, then take the stack down and up.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 192.168.255.240/28
+          ip_range: 192.168.255.248/29
+          gateway: 192.168.255.241
+
+volumes:
+  master-key:
+  prometheus-token:
+  tls:
+  prometheus-config:
+  backend-data:
+  prometheus-data:
+```
+
+Then open `https://<server-address>:8443`, get the setup code from the backend container's console (`python -m app.cli setup-code`) and **back up the master key** from its volume. Steps, settings and upgrades: [Standalone install](docs/OPERATIONS.md#standalone-install).
+
+Everything, the master key included, lives in the stack's volumes: `docker compose down` is safe, but `down -v`, `docker volume prune -a` or deleting the stack with its volumes erases the install, and redeploying under a different stack name starts an empty one ([details](docs/OPERATIONS.md#keep-the-volumes)).
+
+To install a specific version, take the files from its release instead: `https://github.com/levi-xy/vantage/releases/download/v<version>/vantage-deploy-<version>.tar.gz` (unpacks into `vantage-deploy-<version>/`) or `https://github.com/levi-xy/vantage/releases/download/v<version>/compose.yml`.
+
 <details>
 <summary>Verify the download (optional)</summary>
 
-To check that the bundle arrived intact, run this in the folder you downloaded it to:
+To check that the files arrived intact, run this in the folder you downloaded them to:
 
 ```bash
-curl -fLO https://github.com/levi-xy/vantage/releases/download/v$V/SHA256SUMS
-sha256sum -c SHA256SUMS
+curl -fLO https://github.com/levi-xy/vantage/releases/latest/download/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
 ```
 
-The images are signed with [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) (keyless, tied to the release workflow):
+The images are signed with [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) (keyless, tied to the release workflow). Use the version you installed, the image tag in the compose file:
 
 ```bash
-cosign verify ghcr.io/levi-xy/vantage-backend:$V \
+cosign verify ghcr.io/levi-xy/vantage-backend:<version> \
   --certificate-identity-regexp '^https://github.com/levi-xy/vantage/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```

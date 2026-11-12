@@ -52,6 +52,8 @@ docker compose exec backend python -m app.cli setup-code
 
 Once an admin exists, the command only says setup is done. More in [OPERATIONS.md](OPERATIONS.md#the-setup-code).
 
+Installed with the compose file in Portainer or Dockge? Nothing prints a code there. Run `python -m app.cli setup-code` in the backend container's console; see [the standalone setup code](OPERATIONS.md#the-setup-code-standalone).
+
 ### How do I create the admin account?
 
 Open the address `setup.sh` printed. The **Welcome to Vantage** page asks for:

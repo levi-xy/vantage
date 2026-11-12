@@ -10,9 +10,68 @@ An install from before 0.1.0-rc.4 has `VANTAGE_BIND_ADDRESS=127.0.0.1` in its `.
 
 Never publish the dashboard to the internet. Recommended: a dedicated monitoring VLAN, outbound internet blocked except the cloud API hosts you use, and dashboard access only from admin machines or your VPN.
 
+## Standalone install
+
+For Portainer, Dockge and other stack managers: a single compose file that needs no files on the host. It is shown in the [README](../README.md#portainer--dockge) and attached to every release as `compose.yml`. `setup.sh` stays the other way to install; the two don't share files, so pick one per server.
+
+On every start a one-shot `init` container (the backend image, no network, read-only, only allowed to change file owners and modes) creates whatever is missing, each in its own named volume: the master key (`master-key`), the Prometheus token (`prometheus-token`), a self-signed certificate (`tls`) and `prometheus.yml` (`prometheus-config`). It gives each file the owner and mode `setup.sh` would and never replaces a file that exists. The other containers start only after it has finished, and mount these volumes read-only, each only the ones it needs.
+
+### Install
+
+- **Portainer:** Stacks → Add stack → Web editor. Paste the file, add any settings under Environment variables, then Deploy the stack.
+- **Dockge:** Compose → paste the file into the editor, give the stack a name, add settings in the `.env` box, then Deploy.
+- **Command line:** in an empty folder, `curl -fLO https://github.com/levi-xy/vantage/releases/latest/download/compose.yml`, then `docker compose up -d`.
+
+Settings are the same variables as in [`.env.example`](../deploy/.env.example) (port, bind address, HTTPS, retention), set as the stack's environment variables. Before the first start, set `VANTAGE_TLS_NAMES` to the server's address and any names you use for it (for example `192.0.2.10,vantage.home.example`), so the generated certificate covers them. Without it, the certificate covers only `localhost`: browsers warn about the self-signed certificate either way, so this is only about the name in the warning. To regenerate it later, delete the `tls` volume (stop the stack first) and start again.
+
+Open `https://<server-address>:8443` and accept the certificate warning. If the stack doesn't start, read the `init` container's log: it says what is wrong. A TLS volume with only one of the two files (your own certificate without its key, or a first start that was cut off) needs the missing file copied in, or the `tls` volume deleted so a new self-signed pair is made.
+
+With an external database (`VANTAGE_DATABASE_URL` pointing at Postgres), `init` can't tell whether it already holds data, so the first start needs `VANTAGE_FORCE_NEW_KEY=true` to create the key; remove the variable afterwards.
+
+### Keep the volumes
+
+Everything lives in the stack's volumes: the master key, the token, the certificate, the database and the metric history.
+
+- **`docker compose down` is safe.** `docker compose down -v`, `docker volume prune -a` (a plain `prune` on Docker older than 23), or removing the stack together with its volumes (Portainer's and Dockge's delete options) deletes everything, including the master key. Back the key up first (below).
+- **The stack's name is part of the volume names** (`<stack>_master-key`, `<stack>_backend-data` and so on). Redeploying under a different stack name starts an empty install; your old data stays in the old volumes. To get it back, deploy under the old name again.
+
+### The setup code (standalone)
+
+The standalone install never prints the setup code, so it doesn't end up in container logs, which stack managers keep and show. Get one from the backend container's console:
+
+- **Portainer:** Containers → `<stack>-backend-1` → Console → Connect (command `/bin/sh`), then run `python -m app.cli setup-code`.
+- **Dockge:** the backend's terminal button (`sh`), then `python -m app.cli setup-code`.
+- **Command line:** `docker compose exec backend python -m app.cli setup-code`.
+
+### Back up the master key
+
+Do this right after the first start. The key is in the `master-key` volume, readable only by the backend container. Copy it out on the server, from the folder that holds the compose file (Dockge keeps it in `/opt/stacks/<stack>`):
+
+```bash
+docker compose cp backend:/run/vantage/key/master_key ./vantage-master.key
+```
+
+For a Portainer stack, use the container's name: `docker cp <stack>-backend-1:/run/vantage/key/master_key ./vantage-master.key`. Store the copy somewhere off the server, then delete it there. Without the key, stored device credentials can't be decrypted, and it isn't part of Vantage's own backups.
+
+To put a key back (a new server, or a lost `master-key` volume), stop the stack and copy it into the `init` container, which gives it the right owner and mode on the next start:
+
+```bash
+docker compose stop                     # on a new server: docker compose create
+docker compose cp ./vantage-master.key init:/vantage-init/key/master_key
+docker compose up -d
+```
+
+If the key volume is gone but data from an earlier install is still there (the token, the data volume, or an external database), `init` refuses to make a new key and the stack doesn't start. Put the old key back as above, or, if that data is gone or you want to start over, set `VANTAGE_FORCE_NEW_KEY=true` for one start.
+
+### Upgrading (standalone)
+
+Back up first (the backup command below works the same). Then replace the compose file with the new release's `compose.yml` (or change the three `ghcr.io/levi-xy/vantage-…` image tags to the new version) and redeploy: in Portainer, Update the stack with "Re-pull image" on; in Dockge, Save, then Update; on the command line, `docker compose pull && docker compose up -d`. The volumes, and so the key, token, certificate and data, are kept. Database migrations run by themselves.
+
+`init` never replaces `prometheus.yml`. If a release's notes say the Prometheus config changed, stop the stack, delete the `prometheus-config` volume (it holds nothing else) and start again. When a release changes the compose network, take the stack down and up again, as for the setup.sh install.
+
 ## The setup code
 
-Creating the first admin in the browser needs a one-time setup code. `setup.sh` prints one after it starts Vantage. If you lost it, it didn't print, or it was already used without creating an admin, get a new one (this replaces the old code) from the folder you ran `setup.sh` in:
+Creating the first admin in the browser needs a one-time setup code. `setup.sh` prints one after it starts Vantage (the [standalone install](#the-setup-code-standalone) never prints it). If you lost it, it didn't print, or it was already used without creating an admin, get a new one (this replaces the old code) from the folder you ran `setup.sh` in:
 
 ```bash
 docker compose exec backend python -m app.cli setup-code
@@ -48,9 +107,9 @@ Database migrations run by themselves when the backend starts. When a release ch
 docker compose exec -T backend python -m app.cli backup - > vantage-backup.json.gz
 ```
 
-This runs while Vantage is up. The master key (`secrets/master.key`) is not in the backup: keep its own copy somewhere off the server. Without it, stored device credentials can't be decrypted.
+This runs while Vantage is up. The master key (`secrets/master.key`, or the `master-key` volume for the [standalone install](#back-up-the-master-key)) is not in the backup: keep its own copy somewhere off the server. Without it, stored device credentials can't be decrypted.
 
-Restoring (`app.cli restore`) and master-key rotation (`app.cli rotate-master-key`, which re-encrypts every stored secret with a new key) are offline. Stop the backend first (`docker compose stop backend`) and run them with `docker compose run --rm -T backend python -m app.cli ...`. They refuse while the backend runs, and the backend doesn't start while one of them runs. Details: [SECURITY.md](SECURITY.md#backup-restore-and-master-key-rotation).
+Restoring (`app.cli restore`) and master-key rotation (`app.cli rotate-master-key`, which re-encrypts every stored secret with a new key) are offline. Stop the backend first (`docker compose stop backend`) and run them with `docker compose run --rm -T backend python -m app.cli ...`. They refuse while the backend runs, and the backend doesn't start while one of them runs. On the standalone install, after a rotation put the new key in place the way a key is [put back](#back-up-the-master-key) (copy it into the `init` container), instead of replacing `secrets/master.key`. Details: [SECURITY.md](SECURITY.md#backup-restore-and-master-key-rotation).
 
 ## Monitoring Vantage itself
 
