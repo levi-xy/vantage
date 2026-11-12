@@ -182,7 +182,7 @@ volumes:
 
 Then open `https://<server-address>:8443`, get the setup code from the backend container's console (`python -m app.cli setup-code`) and **back up the master key** from its volume. Steps, settings and upgrades: [Standalone install](docs/OPERATIONS.md#standalone-install).
 
-Everything, the master key included, lives in the stack's volumes: `docker compose down` is safe, but `down -v`, a volume prune or deleting the stack with its volumes erases the install, and redeploying under a different stack name starts an empty one ([details](docs/OPERATIONS.md#keep-the-volumes)).
+Everything, the master key included, lives in the stack's volumes: `docker compose down` is safe, but `down -v`, `docker volume prune -a` or deleting the stack with its volumes erases the install, and redeploying under a different stack name starts an empty one ([details](docs/OPERATIONS.md#keep-the-volumes)).
 
 To install a specific version, take the files from its release instead: `https://github.com/levi-xy/vantage/releases/download/v<version>/vantage-deploy-<version>.tar.gz` (unpacks into `vantage-deploy-<version>/`) or `https://github.com/levi-xy/vantage/releases/download/v<version>/compose.yml`.
 

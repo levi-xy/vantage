@@ -32,7 +32,7 @@ With an external database (`VANTAGE_DATABASE_URL` pointing at Postgres), `init` 
 
 Everything lives in the stack's volumes: the master key, the token, the certificate, the database and the metric history.
 
-- **`docker compose down` is safe.** `docker compose down -v`, `docker volume prune`, or removing the stack together with its volumes (Portainer's and Dockge's delete options) deletes everything, including the master key. Back the key up first (below).
+- **`docker compose down` is safe.** `docker compose down -v`, `docker volume prune -a` (a plain `prune` on Docker older than 23), or removing the stack together with its volumes (Portainer's and Dockge's delete options) deletes everything, including the master key. Back the key up first (below).
 - **The stack's name is part of the volume names** (`<stack>_master-key`, `<stack>_backend-data` and so on). Redeploying under a different stack name starts an empty install; your old data stays in the old volumes. To get it back, deploy under the old name again.
 
 ### The setup code (standalone)
