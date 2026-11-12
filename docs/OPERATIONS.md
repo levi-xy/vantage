@@ -2,6 +2,12 @@
 
 How to run, expose, upgrade and back up a Vantage install, and how its device and alert timing works. Start with the [Quick start](../README.md#quick-start); security details are in [SECURITY.md](SECURITY.md).
 
+## Docker in a Proxmox LXC
+
+Vantage runs under Docker inside a Proxmox LXC container, unprivileged ones included. Docker in an LXC needs the container's `nesting` feature (Options → Features; for an unprivileged container usually `keyctl` as well). Nothing in Vantage's compose files needs changing.
+
+Up to 0.1.0-rc.5 the backend didn't start in an unprivileged LXC (`failed to write sysctl net.ipv4.ping_group_range = "0 2147483647": invalid argument`): the ping permission's group range went beyond the group IDs such a container maps (0 to 65535). It is now `0 65535`. An install that hit this needs the new compose file: the new release's bundle with `./setup.sh`, or its `compose.yml` for a standalone stack (see [Upgrading](#upgrading)).
+
 ## Reaching the dashboard from other machines
 
 The dashboard listens on every address of the server, so it's reachable from your LAN at `https://<server-address>:8443`; `setup.sh` prints the address and puts it in the generated certificate. To listen on one network only, set `VANTAGE_BIND_ADDRESS` in `.env` (in the folder you ran `setup.sh` from) to the server's address on it, or to `127.0.0.1` for the server alone (behind a reverse proxy on the host), then run `docker compose up -d`. Add any other names you use for the server to `VANTAGE_TLS_NAMES` before the first run, so the generated certificate covers them. Give the server a fixed address (a DHCP reservation): the certificate holds the address it had at setup.

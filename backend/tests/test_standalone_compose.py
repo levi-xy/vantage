@@ -193,3 +193,10 @@ def test_readme_shows_the_file_exactly() -> None:
     assert STANDALONE.read_text() in blocks, (
         "README.md must show deploy/compose.standalone.yml unchanged in a ```yaml block"
     )
+    # Collapsed under the numbered install steps.
+    collapsed = re.search(
+        r"<details>\n<summary>Show compose file</summary>\n\n```yaml\n(.*?)```\n\n</details>",
+        readme,
+        re.DOTALL,
+    )
+    assert collapsed and collapsed.group(1) == STANDALONE.read_text()

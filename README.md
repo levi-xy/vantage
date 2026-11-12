@@ -56,7 +56,15 @@ tar -xzf vantage-deploy.tar.gz && cd vantage-deploy
 
 ### Portainer / Dockge
 
-Paste this into a new stack (Portainer: Stacks → Add stack; Dockge: Compose) and deploy it, or save it as `compose.yml` and run `docker compose up -d`. It needs no other files. It is also on every release: `curl -fLO https://github.com/levi-xy/vantage/releases/latest/download/compose.yml`.
+One compose file that needs no other files on the host. It is also on every release: `curl -fLO https://github.com/levi-xy/vantage/releases/latest/download/compose.yml`.
+
+1. **Deploy** the compose file below as a new stack (Portainer: Stacks → Add stack → Web editor; Dockge: Compose), or save it as `compose.yml` and run `docker compose up -d`.
+2. **Get the setup code:** `docker compose exec backend python -m app.cli setup-code`, or in Portainer and Dockge run `python -m app.cli setup-code` in the backend container's console.
+3. **Open** `https://<server-address>:8443`, accept the certificate warning and create the admin account with the setup code.
+4. **Back up the master key** somewhere off the server: `docker compose cp backend:/run/vantage/key/master_key ./vantage-master.key` (for a Portainer stack: `docker cp <stack>-backend-1:/run/vantage/key/master_key ./vantage-master.key`). Without it, stored device credentials can't be decrypted.
+
+<details>
+<summary>Show compose file</summary>
 
 ```yaml
 # Vantage for Portainer, Dockge or `docker compose up -d`: needs no files on the host.
@@ -119,9 +127,10 @@ services:
       - master-key:/run/vantage/key:ro
       - prometheus-token:/run/secrets:ro
     tmpfs: [/tmp]
-    # ICMP ping without NET_RAW; applies to this container only.
+    # ICMP ping without NET_RAW; this container only. 0-65535 so it also works in an
+    # unprivileged LXC; covers the backend's group (10001).
     sysctls:
-      net.ipv4.ping_group_range: "0 2147483647"
+      net.ipv4.ping_group_range: "0 65535"
 
   frontend:
     <<: *hardening
@@ -180,7 +189,9 @@ volumes:
   prometheus-data:
 ```
 
-Then open `https://<server-address>:8443`, get the setup code from the backend container's console (`python -m app.cli setup-code`) and **back up the master key** from its volume. Steps, settings and upgrades: [Standalone install](docs/OPERATIONS.md#standalone-install).
+</details>
+
+Settings, upgrades and restoring the key: [Standalone install](docs/OPERATIONS.md#standalone-install).
 
 Everything, the master key included, lives in the stack's volumes: `docker compose down` is safe, but `down -v`, `docker volume prune -a` or deleting the stack with its volumes erases the install, and redeploying under a different stack name starts an empty one ([details](docs/OPERATIONS.md#keep-the-volumes)).
 
