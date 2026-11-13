@@ -99,9 +99,9 @@ describe("health level", () => {
       title: "Live connection closed",
     });
     const lost = health({ connection: "reconnecting" }).issues[0];
-    expect(lost.title).toBe("Live connection lost");
-    expect(lost.detail).toContain("live updates are paused");
-    expect(lost.detail).toContain("reverse proxy");
+    expect(lost?.title).toBe("Live connection lost");
+    expect(lost?.detail).toContain("live updates are paused");
+    expect(lost?.detail).toContain("reverse proxy");
     expect(level({ delivery: { stuck: 2 } })).toBe("warning");
     expect(
       level({
