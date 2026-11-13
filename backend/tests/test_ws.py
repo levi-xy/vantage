@@ -107,10 +107,8 @@ def test_origin_listing_matches_scheme_host_and_port_exactly(engine: Engine, db_
             with pytest.raises(WebSocketDisconnect):
                 with connect(c, origin=origin, **host):
                     pass
-    with make_client(db_url, public_hosts=("testserver", "10.0.0.5:8443", "10.0.0.9")) as c:
-        do_setup(c)
-        with connect(c, origin="https://10.0.0.5:8443", host="10.0.0.9:8443"):
-            pass
+    assert ws_module._origin_listed("https://10.0.0.5:8443", ("10.0.0.5:8443",))
+    assert not ws_module._origin_listed("https://10.0.0.5", ("10.0.0.5:8443",))
 
 
 def test_refusal_logs_a_rate_limited_warning_without_the_cookie(
