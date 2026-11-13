@@ -90,7 +90,7 @@ def test_a_vantage_release_bump_with_the_tags_is_accepted() -> None:
 def test_any_other_standalone_env_change_is_refused(old: str, new: str) -> None:
     changed = _standalone().replace(old, new, 1)
     assert changed != _standalone()
-    with pytest.raises(promote.PromoteError, match="deploy/compose.standalone.yml"):
+    with pytest.raises(promote.PromoteError, match=r"deploy/compose\.standalone\.yml"):
         promote.check_changes(["deploy/compose.standalone.yml"], _standalone(), changed)
 
 
