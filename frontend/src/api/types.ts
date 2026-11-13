@@ -25,13 +25,22 @@ export interface Me {
   role: Role;
   /** Sent back in the X-CSRF-Token header. Held in memory only, never in storage. */
   csrf_token: string;
-  /** The backend's version ("dev" for an unstamped build). */
-  server_version: string;
+  /**
+   * The release version the server reports ("dev" for an unstamped build); missing from a
+   * backend older than 0.1.1.
+   */
+  server_version?: string;
+  /** The source revision the server's image was built from; null or missing = unknown. */
+  server_commit?: string | null;
 }
 
 /** `GET /about` (any role). Null = not known. */
 export interface About {
+  /** The release version (what the UI shows). */
   backend_version: string;
+  /** The version the server's image was built as (an rc's for a promoted final release). */
+  backend_build_version?: string;
+  backend_commit?: string | null;
   backend_build_date: string | null;
   schema_version: string | null;
   prometheus_version: string | null;

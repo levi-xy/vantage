@@ -10,7 +10,7 @@ from sqlalchemy import CursorResult, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import __version__
+from app import version
 from app.api.deps import (
     AuthDep,
     ClientAddressDep,
@@ -79,18 +79,22 @@ class Me(BaseModel):
     role: Role
     # Send back in the X-CSRF-Token header on every state-changing request.
     csrf_token: str
-    # The backend's version (maintainer-approved 2026-11-13). Only in responses that
+    # The release version and the commit the backend image was built from
+    # (maintainer-approved 2026-11-13; commit None = unknown). Only in responses that
     # already need a session (or the setup code), never in /setup/status.
     server_version: str
+    server_commit: str | None
 
 
 def _me(user: User, token: str) -> Me:
+    info = version.current()
     return Me(
         id=user.id,
         username=user.username,
         role=user.role,
         csrf_token=csrf_token(token),
-        server_version=__version__,
+        server_version=info.release,
+        server_commit=info.commit,
     )
 
 

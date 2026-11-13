@@ -9,9 +9,9 @@ So the final release ships byte for byte what was tested. A final tag with no rc
 
 What the promotion checks before it tags anything (`scripts/release_promote.py`, tested in `backend/tests/test_release_promote.py`):
 
-- the final version matches `deploy/compose.standalone.yml` (the existing guard, first job, same as for any build);
+- the final version matches `deploy/compose.standalone.yml`: its image tags and the backend's `VANTAGE_RELEASE` (the guard in the first job, `deploy/make_bundle.py --check`, same as for any build);
 - the rc it promotes is the highest `vX.Y.Z-rc.N` tag of that version;
-- the final tag's commit is the rc's commit, or a descendant whose only changes since the rc are release metadata: `README.md`, `CHANGELOG.md`, and `deploy/compose.standalone.yml` with nothing but its three Vantage image tags changed. None of those is in an image or in the setup.sh bundle, so the install files of the final release are the ones you tested too (apart from the version they name). Anything else (a fix, a docs page, a workflow change) is refused: tag a new rc;
+- the final tag's commit is the rc's commit, or a descendant whose only changes since the rc are release metadata: `README.md`, `CHANGELOG.md`, and `deploy/compose.standalone.yml` with nothing but its three Vantage image tags and its `VANTAGE_RELEASE` changed. None of those is in an image or in the setup.sh bundle, so the install files of the final release are the ones you tested too (apart from the version they name). Anything else (a fix, a docs page, a workflow change) is refused: tag a new rc;
 - each rc image's digest carries a cosign signature from this workflow, run for that exact rc tag (`release.yml@refs/tags/vX.Y.Z-rc.N`), started at the rc's commit.
 
 Then it adds a second signature from the final tag's run (so `release.yml@refs/tags/vX.Y.Z` verifies too), makes sure (with a dry run) that copying the tags keeps the rc's digest, adds `X.Y.Z` to both images and only then moves `X.Y` and `latest`, and checks that every new tag resolves to the rc's digest. Both images are checked before either is signed or tagged, and a failure halfway never leaves `latest` on a backend and frontend from different releases. The SBOM and provenance are part of the image index, so they come along unchanged.
@@ -63,6 +63,7 @@ cd /root
 - [ ] **Checksums.** In the folder with the downloads: `curl -fLO https://github.com/levi-xy/vantage/releases/download/v0.1.1-rc.1/SHA256SUMS && sha256sum -c --ignore-missing SHA256SUMS`.
 - [ ] **Upgrade from the last final release**, if the release touches migrations, the compose files or secrets: install the previous version, add a device, then upgrade the way [OPERATIONS.md](OPERATIONS.md#upgrading) says and check the device, its secrets and the dashboards survive.
 - [ ] **What the release changes**, tried by hand (the CHANGELOG entry is the list).
+- [ ] **About page** (Settings → About): Version `0.1.1-rc.1`, no "Built as", both commits shown and equal, no "different builds" warning.
 
 On your own machine (cosign isn't in the dind image):
 
@@ -81,9 +82,11 @@ If something is wrong: fix it in a PR, merge, and tag `v0.1.1-rc.2` from the new
 
 A PR that changes only:
 
-- the three `ghcr.io/levi-xy/vantage-…` image tags in `deploy/compose.standalone.yml` to `0.1.1`;
+- the three `ghcr.io/levi-xy/vantage-…` image tags in `deploy/compose.standalone.yml` to `0.1.1`, and the backend's `VANTAGE_RELEASE: "0.1.1"` in the same file (the version the UI shows; the guard refuses a final tag when the two differ);
 - the copy of that file in `README.md` (a test keeps the two equal);
-- the date of the version's `CHANGELOG.md` entry.
+- the date of the version's `CHANGELOG.md` entry (it stays the first `##` section: the About page links to `CHANGELOG.md` at the release tag, which then opens on it).
+
+`deploy/docker-compose.yml` needs no bump: it builds from source and names no version; the setup.sh bundle gets its image tags and `VANTAGE_RELEASE` from `make_bundle.py`.
 
 Merge it **with nothing else merged since the rc tag**: anything else between the rc and the final tag makes the promotion refuse (and you'd need a new rc). The README shows the new version from this merge on, so tag the final right after.
 
@@ -128,7 +131,8 @@ grep -c 'vantage-.*:0.1.1$' compose.yml   # 3
 - [ ] the `/releases/latest/download/` links fetch this version's files (above);
 - [ ] anonymous pulls of `0.1.1`, `0.1` and `latest` work (in a fresh dind container, as in step 2), and their digests are the rc's;
 - [ ] the README's cosign command (with `--certificate-identity-regexp`) verifies `0.1.1` for both images;
-- [ ] the README's "Release" badge shows 0.1.1.
+- [ ] the README's "Release" badge shows 0.1.1;
+- [ ] a fresh install from the downloaded `compose.yml` shows Version `0.1.1 · Built as 0.1.1-rc.N` on Settings → About, with no "different builds" warning.
 
 ## Rollback: a bad final release
 
@@ -153,10 +157,12 @@ If the problem is caught before step 5 (the draft isn't published yet), the imag
 
 ## The version shown in the app
 
-Promotion doesn't change an image, so anything baked into it at build time keeps the rc's value. If the images get a build-time version stamp (a `VANTAGE_VERSION` build argument shown in the UI, in progress at the time of writing), a promoted final release would report `0.1.1-rc.1`. Reading the version from the image's tag at runtime isn't possible (a container doesn't know which tags point at its image). Options:
+Promotion doesn't change an image, so everything baked into it at build time keeps the rc's value: a promoted 0.1.1 is *built as* `0.1.1-rc.N`. A container can't read its own image tags, so the release version comes from the compose file (maintainer-approved 2026-11-13):
 
-- **(a)** stamp only `X.Y.Z` in rc builds (`0.1.1` for `v0.1.1-rc.1`): the promoted image then reports the right version; during the test phase the rc reports the version it will become, and which rc it is shows in the image tag and digest (or add the short commit next to it, `0.1.1 (abc1234)`, which stays true after promotion);
-- **(b)** keep the full rc version: honest about the build, but every final release reports "-rc.N" in the UI;
-- **(c)** rebuild for finals: the shipped image is no longer the tested one, which this flow exists to avoid.
+- **Baked into both images** by the rc build (`release.yml`, `image` job): `VANTAGE_VERSION` (the rc's version), `VANTAGE_BUILD_DATE` and `VANTAGE_COMMIT` (the tagged commit, from `git rev-parse HEAD`). The same commit is the OCI label `org.opencontainers.image.revision`, set in the Dockerfiles and by the workflow (overriding docker/metadata-action's default, `github.sha`), so the label and the build argument can't differ.
+- **The release version** is `VANTAGE_RELEASE` on the backend service. `deploy/compose.standalone.yml` pins it next to the image tags (bumped together in step 3; `make_bundle.py --check` refuses a final tag when they differ, and the promotion allows exactly this change besides the tags). The setup.sh bundle's compose file gets `VANTAGE_RELEASE: ${VANTAGE_VERSION:-X.Y.Z}`, generated with its image tags, so an `.env` that picks another release (`VANTAGE_VERSION`) moves both. `deploy/docker-compose.yml` in the repository builds from source and sets none.
+- **The backend** reports `VANTAGE_RELEASE` when it is a plain version (`X.Y.Z` or `X.Y.Z-pre`; anything else is ignored with a WARNING in the log), else its baked version: `server_version` on `/me`, `backend_version` on `/about`, plus `backend_build_version` (the baked one) and the commit (`server_commit`, `backend_commit`).
+- **The web app** shows the server's release version (its own baked one only when the server reports none: a backend older than 0.1.1). Settings → About adds "Built as 0.1.1-rc.N" when the build version differs. The "different builds" warning compares the web app's baked commit with the server's: equal for an rc and its promoted final, different after a half-pulled upgrade or in a stale browser tab. A missing, empty or `dev` commit on either side means unknown: no warning.
+- **Release notes link**: `https://github.com/levi-xy/vantage/blob/v<release>/CHANGELOG.md`, without a section anchor. CHANGELOG.md lists the newest version first, so the file at the release tag opens on that release; an anchor would depend on the heading's date, which no rc build can know.
 
-TODO(maintainer): choose (a), (b) or (c) when the version stamp lands. (a) with the short commit is the suggestion: the release workflow would pass `VANTAGE_VERSION=${tag%%-*}` (and the commit) to both image builds.
+Installs whose compose file has no `VANTAGE_RELEASE` (every 0.1.0 compose file) show the baked version: a promoted final shows its rc version until the user takes the new compose file. Nothing breaks.

@@ -66,6 +66,7 @@ function authenticated(me: Me): SessionState {
       username: me.username,
       role: me.role,
       server_version: me.server_version,
+      server_commit: me.server_commit,
     },
   };
 }

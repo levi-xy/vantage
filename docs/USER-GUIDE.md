@@ -346,9 +346,15 @@ The bot token is stored encrypted and never shown again; the edit form only says
 
 ### Which version is running?
 
-The sidebar footer shows "Vantage <version>" (click it for the details); on a phone, open **More → About**. **Settings → About** is open to every user and shows the web app's and the server's version with their build dates, the database schema version, the Prometheus version, when the server last started, and a link to the release notes for this version. A value Vantage can't find shows as "unknown"; a development build shows "dev".
+The sidebar footer shows "Vantage <version>" (click it for the details); on a phone, open **More → About**. **Settings → About** is open to every user and shows:
 
-If the web app and the server are different versions, a warning appears on the About page and a ⚠ in the footer. Reload the page; if it persists, pull both images again (see [OPERATIONS.md](OPERATIONS.md)).
+- **Version**: the release the server reports. A final release ships the images of its tested release candidate, so it may add "Built as 0.1.1-rc.1": the images were built as that release candidate and are otherwise the same. With a compose file from before 0.1.1, the version shown is the one the images were built as (take the new release's compose file to see the release, see [OPERATIONS.md](OPERATIONS.md#upgrading)).
+- **Server (backend)** and **Web app (frontend)**: the source commit each was built from (hover for the full one) and the build date.
+- the database schema version, the Prometheus version, when the server last started, and a link to the release notes for this version.
+
+A value Vantage can't find shows as "unknown"; a development build shows "dev".
+
+If the web app and the server come from different builds (different commits), a warning appears on the About page and a ⚠ in the footer: usually a browser tab left open across an upgrade, or only one of the two images pulled. Reload the page; if it persists, pull both images again (see [OPERATIONS.md](OPERATIONS.md)). When either commit is unknown (a development build, or a server older than 0.1.1), no warning is shown.
 
 ### What can admins and viewers do?
 

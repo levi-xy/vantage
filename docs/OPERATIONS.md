@@ -71,7 +71,7 @@ If the key volume is gone but data from an earlier install is still there (the t
 
 ### Upgrading (standalone)
 
-Back up first (the backup command below works the same). Then replace the compose file with the new release's `compose.yml` (or change the three `ghcr.io/levi-xy/vantage-…` image tags to the new version) and redeploy: in Portainer, Update the stack with "Re-pull image" on; in Dockge, Save, then Update; on the command line, `docker compose pull && docker compose up -d`. The volumes, and so the key, token, certificate and data, are kept. Database migrations run by themselves.
+Back up first (the backup command below works the same). Then replace the compose file with the new release's `compose.yml` (or change the three `ghcr.io/levi-xy/vantage-…` image tags and the backend's `VANTAGE_RELEASE` to the new version; `VANTAGE_RELEASE` is the version Settings → About shows, and a compose file from before 0.1.1 has none, which only means About may show the version the images were built as, such as `0.1.1-rc.1`) and redeploy: in Portainer, Update the stack with "Re-pull image" on; in Dockge, Save, then Update; on the command line, `docker compose pull && docker compose up -d`. The volumes, and so the key, token, certificate and data, are kept. Database migrations run by themselves.
 
 `init` never replaces `prometheus.yml`. If a release's notes say the Prometheus config changed, stop the stack, delete the `prometheus-config` volume (it holds nothing else) and start again. When a release changes the compose network, take the stack down and up again, as for the setup.sh install.
 
@@ -102,7 +102,7 @@ Once browsers trust your certificate you can turn on HSTS with `VANTAGE_HSTS=tru
 
 Back up first (see below), then:
 
-- **From a release:** download the new bundle and unpack it next to the old one. Copy your `secrets/`, `certs/` and `.env` from the old folder (never the other files: the new compose file belongs to the new release). In the new folder run `docker compose down`, then `./setup.sh`. If the release notes say the compose file didn't change, you can instead set `VANTAGE_VERSION=<new version>` in `.env` and run `docker compose pull && docker compose up -d`.
+- **From a release:** download the new bundle and unpack it next to the old one. Copy your `secrets/`, `certs/` and `.env` from the old folder (never the other files: the new compose file belongs to the new release). In the new folder run `docker compose down`, then `./setup.sh`. If the release notes say the compose file didn't change, you can instead set `VANTAGE_VERSION=<new version>` in `.env` and run `docker compose pull && docker compose up -d` (from the 0.1.1 bundle on, `VANTAGE_VERSION` also sets the version Settings → About shows; with an older bundle About may show the version the images were built as, such as `0.1.1-rc.1`).
 - **From source:** `git pull`, then `docker compose up -d --build` in `deploy/`.
 
 Database migrations run by themselves when the backend starts. When a release changes the compose network (the release notes say so), run `docker compose down` before `up -d`: a plain `up -d` leaves the frontend without its fixed address and the dashboard down. The [CHANGELOG](../CHANGELOG.md) lists each version's upgrade notes.

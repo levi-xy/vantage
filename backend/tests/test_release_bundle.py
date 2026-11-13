@@ -7,6 +7,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+import yaml
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -27,12 +28,28 @@ def test_compose_build_blocks_become_pinned_images() -> None:
     out = bundle.image_compose(source, "1.2.3")
     assert "ghcr.io/levi-xy/vantage-backend:${VANTAGE_VERSION:-1.2.3}" in out
     assert "ghcr.io/levi-xy/vantage-frontend:${VANTAGE_VERSION:-1.2.3}" in out
+    # The backend reports the same release as its image tag (a promoted final release runs
+    # its rc's images): one VANTAGE_RELEASE, in the backend's environment.
+    backend = yaml.safe_load(out)["services"]["backend"]
+    assert backend["environment"]["VANTAGE_RELEASE"] == "${VANTAGE_VERSION:-1.2.3}"
+    assert out.count("VANTAGE_RELEASE") == 1
     assert not re.search(r"^\s+build:", out, re.MULTILINE)
     assert "additional_contexts" not in out and "../" not in out
     # Everything else is untouched: same lines once the build blocks are taken out.
     kept = [line for line in out.splitlines() if "vantage-" not in line or "image:" not in line]
     assert "    stop_grace_period: 20s" in kept
     assert out.count("\n") < source.count("\n")
+
+
+def test_the_source_compose_names_no_release() -> None:
+    """It builds from source; the release goes into the bundle, next to the image tag."""
+    source = (REPO / "deploy" / "docker-compose.yml").read_text()
+    assert "VANTAGE_RELEASE" not in source
+    pinned = source.replace(
+        "    environment:\n", '    environment:\n      VANTAGE_RELEASE: "1.2.3"\n', 1
+    )
+    with pytest.raises(ValueError, match="must not set VANTAGE_RELEASE"):
+        bundle.image_compose(pinned, "1.2.3")
 
 
 def test_compose_without_the_expected_build_blocks_is_refused() -> None:
@@ -55,7 +72,9 @@ def test_bundle_holds_what_an_install_needs_and_no_secret(tmp_path: Path, top: s
         names = set(tar.getnames())
         compose = tar.extractfile(f"{top}/docker-compose.yml")
         assert compose is not None
-        assert "vantage-backend:${VANTAGE_VERSION:-0.1.0-rc.1}" in compose.read().decode()
+        text = compose.read().decode()
+        assert "vantage-backend:${VANTAGE_VERSION:-0.1.0-rc.1}" in text
+        assert "VANTAGE_RELEASE: ${VANTAGE_VERSION:-0.1.0-rc.1}" in text
         setup = tar.getmember(f"{top}/setup.sh")
         assert setup.mode & 0o111  # still executable
     for needed in (
@@ -89,15 +108,39 @@ def test_standalone_compose_gets_the_release_version(tmp_path: Path) -> None:
     out = (tmp_path / "compose.yml").read_text()
     assert out.count("ghcr.io/levi-xy/vantage-backend:1.2.3-rc.9\n") == 2  # init, backend
     assert out.count("ghcr.io/levi-xy/vantage-frontend:1.2.3-rc.9\n") == 1
+    assert out.count('VANTAGE_RELEASE: "1.2.3-rc.9"\n') == 1
     assert "prom/prometheus:v3.2.1" in out
     # Nothing else changes.
-    strip = re.compile(r"(vantage-(?:backend|frontend)):\S+")
-    assert strip.sub(r"\1", out) == strip.sub(r"\1", source)
+    strip = re.compile(r"(vantage-(?:backend|frontend)):\S+|(VANTAGE_RELEASE: )\S+")
+    assert strip.sub(r"\1\2", out) == strip.sub(r"\1\2", source)
 
 
 def test_standalone_compose_without_the_three_images_is_refused() -> None:
     with pytest.raises(ValueError, match="3 Vantage images"):
         bundle.standalone_compose("image: ghcr.io/levi-xy/vantage-backend:1.0.0\n", "1.2.3")
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ('VANTAGE_RELEASE: "{v}"', 'VANTAGE_RELEASE: "9.9.9"'),  # not bumped with the tags
+        ('      VANTAGE_RELEASE: "{v}"\n', ""),  # missing
+    ],
+)
+def test_the_standalone_release_must_match_its_image_tags(
+    old: str, new: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    named = bundle.source_version()
+    source = (REPO / "deploy" / "compose.standalone.yml").read_text()
+    changed = source.replace(old.format(v=named), new)
+    assert changed != source
+    (tmp_path / "compose.standalone.yml").write_text(changed)
+    (tmp_path / "docker-compose.yml").write_text(
+        (REPO / "deploy" / "docker-compose.yml").read_text()
+    )
+    monkeypatch.setattr(bundle, "DEPLOY", tmp_path)
+    with pytest.raises(ValueError, match="VANTAGE_RELEASE"):
+        bundle.check_release_version(named)
 
 
 def test_a_final_release_must_match_the_standalone_compose_version(tmp_path: Path) -> None:

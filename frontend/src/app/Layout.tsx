@@ -11,7 +11,7 @@ import { HealthStatus } from "./HealthStatus";
 import { useLastDataUpdate, useLiveUpdates } from "./live";
 import { useNavOrder } from "./navOrder";
 import { useApiClient, useSession, useUser } from "./session";
-import { FRONTEND_VERSION, versionsMismatch } from "./version";
+import { commitsMismatch, FRONTEND_COMMIT, FRONTEND_VERSION, shownVersion } from "./version";
 import { setTimeZone } from "./time";
 import { TIME_KEY } from "./timeSettings";
 
@@ -449,18 +449,18 @@ function AccountMenu({
   );
 }
 
-/** "Vantage <version>" at the foot of the sidebar; a marker while web app and server differ. */
+/** "Vantage <release>" at the foot of the sidebar; a marker while web app and server are different builds. */
 function VersionFooter() {
-  const server = useUser().server_version;
-  const mismatch = versionsMismatch(FRONTEND_VERSION, server);
+  const user = useUser();
+  const mismatch = commitsMismatch(FRONTEND_COMMIT, user.server_commit);
   return (
     <Link
       to="/settings/about"
       className={`hidden truncate px-1 text-center text-xs text-muted hover:text-ink md:block ${focusRing}`}
     >
-      Vantage {FRONTEND_VERSION}
+      Vantage {shownVersion(user.server_version, FRONTEND_VERSION)}
       {mismatch && (
-        <span className="text-crit-text" title="The web app and the server are different versions">
+        <span className="text-crit-text" title="The web app and the server are different builds">
           {" "}
           <span aria-hidden="true">⚠</span>
           <span className="sr-only"> (version mismatch, see About)</span>

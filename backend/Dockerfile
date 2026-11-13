@@ -25,12 +25,17 @@ RUN pip install ".[postgres]" && groupadd --system --gid 10001 vantage \
     && useradd --system --uid 10001 --gid 10001 --no-create-home vantage \
     && mkdir /data && chown vantage /data
 
-# The release version, passed by the release workflow ("dev" for local and CI builds).
-# After the install layers, so a new version doesn't rebuild the dependencies.
+# The version this image is built as and its git commit, passed by the release workflow
+# ("dev" and empty for local and CI builds). The version the UI shows is VANTAGE_RELEASE
+# from the compose file when set (a promoted final release runs its rc's image). After
+# the install layers, so a new version doesn't rebuild the dependencies.
 ARG VANTAGE_VERSION=dev
 ARG VANTAGE_BUILD_DATE=
+ARG VANTAGE_COMMIT=
 ENV VANTAGE_VERSION=${VANTAGE_VERSION} \
-    VANTAGE_BUILD_DATE=${VANTAGE_BUILD_DATE}
+    VANTAGE_BUILD_DATE=${VANTAGE_BUILD_DATE} \
+    VANTAGE_COMMIT=${VANTAGE_COMMIT}
+LABEL org.opencontainers.image.revision="${VANTAGE_COMMIT}"
 
 USER vantage
 EXPOSE 8000

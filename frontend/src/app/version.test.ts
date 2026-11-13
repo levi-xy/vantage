@@ -1,33 +1,36 @@
-import { changelogAnchor, slug } from "../../scripts/changelog-anchor.mjs";
+import {
+  changelogUrl,
+  commitsMismatch,
+  isKnownCommit,
+  RELEASES_URL,
+  shownVersion,
+} from "./version";
 
-const LOG = `# Changelog
+const A = "a".repeat(40);
+const B = "b".repeat(40);
 
-## 0.1.10 (2026-12-01)
-
-- x
-
-## 0.1.1 (2026-11-20)
-
-- y
-
-## 0.1.1-rc.1 (2026-11-15)
-`;
-
-describe("changelog anchor", () => {
-  it("slugs headings the way GitHub does", () => {
-    expect(slug("0.1.0 (2026-11-12)")).toBe("010-2026-11-12");
-    expect(slug("0.1.1-rc.1 (2026-11-15)")).toBe("011-rc1-2026-11-15");
+describe("versions", () => {
+  it("shows the server's release version, else the web app's own", () => {
+    expect(shownVersion("0.1.1", "0.1.1-rc.1")).toBe("0.1.1");
+    expect(shownVersion(undefined, "0.1.1-rc.1")).toBe("0.1.1-rc.1");
+    expect(shownVersion("", "0.1.1-rc.1")).toBe("0.1.1-rc.1");
   });
 
-  it("matches the version as a whole token", () => {
-    expect(changelogAnchor(LOG, "0.1.1")).toBe("011-2026-11-20");
-    expect(changelogAnchor(LOG, "0.1.1-rc.1")).toBe("011-rc1-2026-11-15");
-    expect(changelogAnchor(LOG, "0.1.10")).toBe("0110-2026-12-01");
+  it("compares commits, and only known ones", () => {
+    expect(commitsMismatch(A, A)).toBe(false);
+    expect(commitsMismatch(A, B)).toBe(true);
+    for (const unknown of ["", "dev", null, undefined]) {
+      expect(isKnownCommit(unknown)).toBe(false);
+      expect(commitsMismatch(A, unknown)).toBe(false);
+      expect(commitsMismatch(typeof unknown === "string" ? unknown : "", B)).toBe(false);
+    }
   });
 
-  it("gives no anchor for dev, empty or unknown versions", () => {
-    expect(changelogAnchor(LOG, "dev")).toBe("");
-    expect(changelogAnchor(LOG, "")).toBe("");
-    expect(changelogAnchor(LOG, "0.2.0")).toBe("");
+  it("links the release tag's changelog", () => {
+    expect(changelogUrl("0.1.1")).toBe(
+      "https://github.com/levi-xy/vantage/blob/v0.1.1/CHANGELOG.md",
+    );
+    expect(changelogUrl("dev")).toBe(RELEASES_URL);
+    expect(changelogUrl("0.1.1/../x")).toBe(RELEASES_URL);
   });
 });

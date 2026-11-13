@@ -1,6 +1,8 @@
 // Settings -> About (maintainer-approved 2026-11-13): what is running. Any logged-in user.
-// A backend without `GET /about` (or with some fields null) shows "unknown" for those rows;
-// the web app's own version never depends on the backend.
+// The version is the server's release version (`GET /me`), with "Built as" when the images
+// were built as another version (a final release promoted from its rc). A backend without
+// `GET /about` (or with some fields null) shows "unknown" for those rows; a backend that
+// reports no version shows the web app's own.
 
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
@@ -9,11 +11,15 @@ import { useApiClient, useUser } from "../app/session";
 import { formatDateTime } from "../app/time";
 import {
   changelogUrl,
+  commitsMismatch,
   FRONTEND_BUILD_DATE,
+  FRONTEND_COMMIT,
   FRONTEND_VERSION,
+  isKnownCommit,
   MISMATCH_TEXT,
   RELEASES_URL,
-  versionsMismatch,
+  shortCommit,
+  shownVersion,
 } from "../app/version";
 import { PageHeader } from "../components/PageHeader";
 
@@ -44,6 +50,16 @@ function text(value: unknown): string {
   return typeof value === "string" && value !== "" ? value : "unknown";
 }
 
+/** A source revision, shortened (the full one on hover), or "unknown". */
+function Revision({ value }: { value: string | null | undefined }) {
+  if (!isKnownCommit(value)) return <>unknown</>;
+  return (
+    <span className="font-mono" title={value}>
+      {shortCommit(value)}
+    </span>
+  );
+}
+
 export function AboutPage() {
   const api = useApiClient();
   const user = useUser();
@@ -56,29 +72,37 @@ export function AboutPage() {
     retry: false,
   });
   const data = about.data;
-  const server: string | undefined = user.server_version;
+  const release = shownVersion(user.server_version, FRONTEND_VERSION);
+  const builtAs = data?.backend_build_version;
+  const serverCommit = user.server_commit ?? data?.backend_commit;
   const build = (date: string | null | undefined) =>
     typeof date === "string" && date !== "" ? ` (built ${date})` : "";
   const started = typeof data?.started_at === "string" ? Date.parse(data.started_at) : NaN;
   return (
     <>
       <PageHeader title="About" />
-      {versionsMismatch(FRONTEND_VERSION, server) && server !== undefined && (
+      {commitsMismatch(FRONTEND_COMMIT, serverCommit) && isKnownCommit(serverCommit) && (
         <p
           role="alert"
           className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
         >
-          {MISMATCH_TEXT(FRONTEND_VERSION, server)}
+          {MISMATCH_TEXT(FRONTEND_COMMIT, serverCommit)}
         </p>
       )}
       <dl className="divide-y divide-line">
-        <Row name="Web app (frontend)">
-          {FRONTEND_VERSION}
-          {build(FRONTEND_BUILD_DATE)}
+        <Row name="Version">
+          {release}
+          {typeof builtAs === "string" && builtAs !== "" && builtAs !== release && (
+            <span className="text-muted"> · Built as {builtAs}</span>
+          )}
         </Row>
         <Row name="Server (backend)">
-          {text(server)}
+          <Revision value={serverCommit} />
           {build(data?.backend_build_date)}
+        </Row>
+        <Row name="Web app (frontend)">
+          <Revision value={FRONTEND_COMMIT} />
+          {build(FRONTEND_BUILD_DATE)}
         </Row>
         <Row name="Database schema">{text(data?.schema_version)}</Row>
         <Row name="Prometheus">{text(data?.prometheus_version)}</Row>
@@ -88,7 +112,7 @@ export function AboutPage() {
             : `${formatDateTime(started)} (up ${uptime(now - started)})`}
         </Row>
         <Row name="Release notes">
-          <a href={changelogUrl(server)} target="_blank" rel="noreferrer" className={linkClass}>
+          <a href={changelogUrl(release)} target="_blank" rel="noreferrer" className={linkClass}>
             Changelog for this version
           </a>
           {" · "}

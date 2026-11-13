@@ -69,6 +69,36 @@ def test_any_other_change_since_the_rc_is_refused(changed: list[str]) -> None:
         promote.check_changes(changed, _standalone(), _standalone())
 
 
+def test_a_vantage_release_bump_with_the_tags_is_accepted() -> None:
+    """The final's commit may bump the standalone file's image tags and its
+    VANTAGE_RELEASE (the version the backend reports), and nothing else."""
+    bundle = promote._make_bundle()
+    at_rc = bundle.standalone_compose(_standalone(), "1.2.2")
+    at_final = bundle.standalone_compose(_standalone(), "1.2.3")
+    assert 'VANTAGE_RELEASE: "1.2.2"' in at_rc and 'VANTAGE_RELEASE: "1.2.3"' in at_final
+    promote.check_changes(["deploy/compose.standalone.yml"], at_rc, at_final)
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("VANTAGE_LOG_LEVEL: ${VANTAGE_LOG_LEVEL:-INFO}", "VANTAGE_LOG_LEVEL: DEBUG"),
+        ('      VANTAGE_RELEASE: "', '      VANTAGE_EXTRA: "1"\n      VANTAGE_RELEASE: "'),
+        ('      VANTAGE_RELEASE: "', '      # VANTAGE_RELEASE: "'),  # dropped
+    ],
+)
+def test_any_other_standalone_env_change_is_refused(old: str, new: str) -> None:
+    changed = _standalone().replace(old, new, 1)
+    assert changed != _standalone()
+    with pytest.raises(promote.PromoteError, match="deploy/compose.standalone.yml"):
+        promote.check_changes(["deploy/compose.standalone.yml"], _standalone(), changed)
+
+
+def test_the_source_compose_file_never_changes_between_rc_and_final() -> None:
+    with pytest.raises(promote.PromoteError, match=r"deploy/docker-compose\.yml"):
+        promote.check_changes(["deploy/docker-compose.yml"], _standalone(), _standalone())
+
+
 def test_a_standalone_compose_change_beyond_the_tags_is_refused() -> None:
     changed = _standalone().replace("restart: unless-stopped", "restart: always", 1)
     assert changed != _standalone()
@@ -239,3 +269,17 @@ def test_every_action_is_pinned_to_a_commit(jobs: dict[str, Any]) -> None:
         for step in job["steps"]:
             if "uses" in step:
                 assert re.fullmatch(r"[\w./-]+@[0-9a-f]{40}", step["uses"]), (name, step)
+
+
+def test_rc_images_carry_their_version_and_source_revision(jobs: dict[str, Any]) -> None:
+    """The build arg and the OCI revision label come from the same step output, so what
+    the backend reports and the image label agree."""
+    steps = {s.get("id"): s for s in jobs["image"]["steps"]}
+    assert "rev-parse HEAD" in steps["version"]["run"]
+    build_args = steps["build"]["with"]["build-args"]
+    revision = "${{ steps.version.outputs.revision }}"
+    assert f"VANTAGE_COMMIT={revision}" in build_args
+    assert "VANTAGE_VERSION=${{ steps.version.outputs.value }}" in build_args
+    assert f"org.opencontainers.image.revision={revision}" in steps["meta"]["with"]["labels"]
+    order = [s.get("id") for s in jobs["image"]["steps"]]
+    assert order.index("version") < order.index("meta") < order.index("build")

@@ -39,6 +39,7 @@ export function exampleMe(role: Role = "admin", username = role): Me {
     role,
     csrf_token: EXAMPLE_CSRF,
     server_version: "dev",
+    server_commit: null,
   };
 }
 

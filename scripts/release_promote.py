@@ -11,7 +11,8 @@ runs the registry and cosign commands around it::
     python3 scripts/release_promote.py check-source v1.2.3-rc.2 v1.2.3
         the final tag's commit is the rc's commit, or a descendant whose only changes are
         release metadata (README.md, CHANGELOG.md, and deploy/compose.standalone.yml with
-        nothing but its Vantage image tags changed); prints the rc's commit
+        nothing but its Vantage image tags and the backend's VANTAGE_RELEASE changed);
+        prints the rc's commit
 
     python3 scripts/release_promote.py digest < inspect.json
         the manifest digest from `docker buildx imagetools inspect --format '{{json .Manifest}}'`
@@ -47,7 +48,10 @@ STANDALONE = "deploy/compose.standalone.yml"
 # Files that may change between the tested rc and the final tag: none of them is in an
 # image (the build contexts are backend/, frontend/, LICENSE and NOTICE) or in the
 # install bundle, and the standalone compose file is rewritten to the release's version
-# by make_bundle.py anyway.
+# by make_bundle.py anyway. In the standalone file only the image tags and VANTAGE_RELEASE
+# may change (the version the promoted images report, bumped with the tags).
+# deploy/docker-compose.yml is not listed: it names no version (the bundle gets its
+# image tags and VANTAGE_RELEASE from make_bundle.py), so it never needs a change.
 RELEASE_METADATA = ("README.md", "CHANGELOG.md", STANDALONE)
 
 
@@ -102,7 +106,8 @@ def check_changes(changed: list[str], standalone_at_rc: str, standalone_at_final
             raise PromoteError(f"{STANDALONE}: {exc}") from exc
         if not same:
             raise PromoteError(
-                f"{STANDALONE} changes more than its Vantage image tags since the rc. "
+                f"{STANDALONE} changes more than its Vantage image tags and VANTAGE_RELEASE "
+                "since the rc. "
                 "Tag a new rc from this commit and test that instead."
             )
 

@@ -4,8 +4,9 @@ All notable changes, newest first. Versions follow [semantic versioning](https:/
 
 ## 0.1.1 (unreleased)
 
-- The version is shown in the UI: "Vantage <version>" in the sidebar footer and a new **Settings → About** page (open to viewers too) with the web app and server versions, build dates, database schema, Prometheus version and uptime. A warning appears when the web app and the server differ. New read-only `GET /api/v1/about`; `GET /api/v1/me` gains `server_version`.
-- Upgrading needs no action: pull both images and recreate the stack. No migration, no new settings.
+- The version is shown in the UI: "Vantage <version>" in the sidebar footer and a new **Settings → About** page (open to viewers too) with the release version ("Built as 0.1.1-rc.1" next to it when the images were built as a release candidate), the server's and the web app's source commits and build dates, database schema, Prometheus version and uptime. A warning appears when the web app and the server come from different builds (a stale browser tab or a half-pulled upgrade). New read-only `GET /api/v1/about`; `GET /api/v1/me` gains `server_version` and `server_commit`.
+- Final releases ship the exact images of their tested release candidate (promoted by digest, not rebuilt). Both compose files therefore tell the backend which release it is: the backend's new `VANTAGE_RELEASE` setting, next to the image tags in the standalone `compose.yml`, and generated from the image version in the setup.sh bundle (it follows `VANTAGE_VERSION` in `.env`). Images now carry their source commit (`org.opencontainers.image.revision`).
+- Upgrading needs no action: pull both images and recreate the stack. No migration. With a compose file from 0.1.0 (no `VANTAGE_RELEASE`), Settings → About shows the version the images were built as (`0.1.1-rc.N`) instead of 0.1.1; take this release's compose file (standalone `compose.yml`, or the bundle with `./setup.sh`, see [OPERATIONS.md](docs/OPERATIONS.md#upgrading)) to see 0.1.1.
 
 ## 0.1.0 (2026-11-12)
 
