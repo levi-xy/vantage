@@ -97,6 +97,22 @@ def test_listed_origin_is_accepted_when_the_proxy_rewrote_host(engine: Engine, d
                 pass
 
 
+def test_origin_listing_matches_scheme_host_and_port_exactly(engine: Engine, db_url: str) -> None:
+    with make_client(db_url, public_hosts=("testserver", "10.0.0.5")) as c:
+        do_setup(c)
+        host = {"host": "10.0.0.5:8443"}
+        with connect(c, origin="https://10.0.0.5", **host):
+            pass
+        for origin in ("http://10.0.0.5:3000", "https://10.0.0.5:9443"):
+            with pytest.raises(WebSocketDisconnect):
+                with connect(c, origin=origin, **host):
+                    pass
+    with make_client(db_url, public_hosts=("testserver", "10.0.0.5:8443", "10.0.0.9")) as c:
+        do_setup(c)
+        with connect(c, origin="https://10.0.0.5:8443", host="10.0.0.9:8443"):
+            pass
+
+
 def test_refusal_logs_a_rate_limited_warning_without_the_cookie(
     client: TestClient, caplog: pytest.LogCaptureFixture
 ) -> None:

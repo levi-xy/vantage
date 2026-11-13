@@ -22,7 +22,7 @@ from starlette.concurrency import run_in_threadpool
 from app.api.deps import cookie_name
 from app.collectors.hub import EventHub, Subscriber
 from app.core.auth import session_id
-from app.core.config import host_allowed
+from app.core.config import _split_host
 from app.core.db import utcnow
 from app.models import UserSession
 
@@ -64,12 +64,32 @@ def _warn_refused(reason: str, ws: WebSocket) -> None:
     )
 
 
+def _origin_listed(origin: str, public_hosts: tuple[str, ...]) -> bool:
+    try:
+        parts = urlsplit(origin)
+        hostname, port = parts.hostname, parts.port
+    except ValueError:
+        return False
+    default = {"https": 443, "http": 80}.get(parts.scheme)
+    if not hostname or default is None:
+        return False
+    host = f"[{hostname}]" if ":" in hostname else hostname
+    effective = str(port or default)
+    for entry in public_hosts:
+        want_host, want_port = _split_host(entry)
+        if host == want_host and (want_port or str(default)) == effective:
+            return True
+    return False
+
+
 def origin_refusal(ws: WebSocket, public_hosts: tuple[str, ...] = ()) -> str | None:
     """Why the Origin is refused, or None when it is fine.
 
     Browsers always send Origin on WebSocket handshakes; no Origin means not a browser.
-    Accepted: the Origin's host is the Host the browser used, or is listed in
-    ``VANTAGE_PUBLIC_HOSTS`` (same host / host:port rules as ``PublicHostGuard``).
+    Accepted: the Origin's host[:port] is the Host the browser used, or the Origin matches
+    a ``VANTAGE_PUBLIC_HOSTS`` entry exactly (host and port; an entry without a port means
+    the Origin scheme's default port, 443 or 80, so another app on the same host at another
+    port is refused).
     """
     origin = ws.headers.get("origin")
     host = ws.headers.get("host")
@@ -80,7 +100,7 @@ def origin_refusal(ws: WebSocket, public_hosts: tuple[str, ...] = ()) -> str | N
     netloc = urlsplit(origin).netloc.lower()
     if netloc == host.lower():
         return None
-    if public_hosts and host_allowed(netloc, public_hosts):
+    if public_hosts and _origin_listed(origin, public_hosts):
         return None
     return "Origin doesn't match Host and isn't listed in VANTAGE_PUBLIC_HOSTS"
 

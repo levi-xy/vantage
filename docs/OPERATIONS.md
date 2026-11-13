@@ -24,27 +24,27 @@ Vantage's web container (`frontend`) serves the dashboard on port 8443, HTTPS wi
 2. Keep the **original `Host` header** (the name the browser used). Vantage compares it with the WebSocket's `Origin`, and `VANTAGE_PUBLIC_HOSTS` checks it too.
 3. Send `X-Forwarded-*` headers if you like; Vantage ignores them unless the proxy's address is in `VANTAGE_TRUSTED_PROXIES`.
 
-Upstream address in the examples below: `https://10.0.0.5:8443` (the Docker host). The certificate is self-signed, so tell the proxy not to verify it for this hop, or set `VANTAGE_HTTPS=false` and use `http://10.0.0.5:8443`. Keep `VANTAGE_BIND_ADDRESS` so that only the proxy can reach port 8443.
+Upstream address in the examples below: `https://10.0.0.5:8443` (the Docker host). The certificate is self-signed, so tell the proxy not to verify it for this hop, or set `VANTAGE_HTTPS=false` and use `http://10.0.0.5:8443`. If the proxy runs on the same host, set `VANTAGE_BIND_ADDRESS=127.0.0.1` so that only it can reach port 8443 (then don't list an `ip:8443` entry below, since nobody opens that address).
 
 ### VANTAGE_PUBLIC_HOSTS
 
-Set it in `.env` (then `docker compose up -d`) to every name **and** `host:port` the browser uses to open Vantage, comma-separated, including the server's IP if you also open it directly:
+Set it in `.env` (then `docker compose up -d`) to every name **and** `host:port` the browser uses to open Vantage, comma-separated, including the server's IP if you also open it directly (only if port 8443 is reachable from your machines):
 
 ```
 VANTAGE_PUBLIC_HOSTS=vantage.example.com,10.0.0.5:8443
 ```
 
-An entry without a port allows any port. The backend answers 400 to API requests whose `Host` isn't listed. If the proxy rewrites `Host` (to the upstream's address), list that address too: a WebSocket whose `Origin` is a listed name is accepted even then. Unset, any `Host` is accepted, and the `Origin` must equal the `Host`.
+Each address the browser uses, port included, must be listed. In the API's `Host` check an entry without a port allows any port; for the live connection's `Origin` it means the default port of the page's scheme (443 for https, 80 for http), so another web app on the same host at another port is refused. The backend answers 400 to API requests whose `Host` isn't listed. If the proxy rewrites `Host` (to the upstream's address), list that address too: a WebSocket whose `Origin` is a listed name is accepted even then. Unset, any `Host` is accepted, and the `Origin` must equal the `Host`.
 
 ### Nginx Proxy Manager
 
-Edit the proxy host: Scheme `https`, Forward Hostname/IP `10.0.0.5`, Forward Port `8443`, switch on **Websockets Support**. NPM passes the `Host` header by default. Under **Advanced** (custom Nginx configuration) add `proxy_ssl_verify off;` for the self-signed upstream. Don't add `proxy_set_header Host` overrides.
+Edit the proxy host: Scheme `https`, Forward Hostname/IP `10.0.0.5`, Forward Port `8443`, switch on **Websockets Support**. NPM passes the `Host` header by default. NPM doesn't verify the upstream certificate by default. Don't add `proxy_set_header Host` overrides.
 
 ### Traefik
 
 ```yaml
 services:
-  vantage-frontend:
+  frontend:
     labels:
       - traefik.enable=true
       - traefik.http.routers.vantage.rule=Host(`vantage.example.com`)
@@ -55,7 +55,7 @@ services:
       - traefik.http.services.vantage.loadbalancer.serversTransport=vantage-insecure@file
 ```
 
-Traefik passes `Host` unchanged (`passHostHeader` defaults to true) and upgrades WebSockets by itself. The `serversTransport` is a file-provider entry with `insecureSkipVerify: true` for the self-signed certificate; with `VANTAGE_HTTPS=false` use scheme `http` and drop it.
+Traefik must share a Docker network with the `frontend` service (put both on one network and set `traefik.docker.network`). Traefik passes `Host` unchanged (`passHostHeader` defaults to true) and upgrades WebSockets by itself. The `serversTransport` is a file-provider entry with `insecureSkipVerify: true` for the self-signed certificate (better: `rootCAs` in the serversTransport, pinning Vantage's `certs/tls.crt`); with `VANTAGE_HTTPS=false` use scheme `http` and drop it.
 
 ### Caddy
 
@@ -69,7 +69,7 @@ vantage.example.com {
 }
 ```
 
-Caddy passes `Host` and upgrades WebSockets by default. With `VANTAGE_HTTPS=false`, use `reverse_proxy 10.0.0.5:8443` and no transport block.
+Caddy passes `Host` and upgrades WebSockets by default. Better than skipping verification: `tls_trusted_ca_certs /path/to/tls.crt` (Vantage's certificate) in the transport block. With `VANTAGE_HTTPS=false`, use `reverse_proxy 10.0.0.5:8443` and no transport block.
 
 ### Plain nginx
 
@@ -85,10 +85,9 @@ server {
     # ssl_certificate / ssl_certificate_key: your certificate
 
     location / {
-        proxy_pass https://10.0.0.5:8443;
-        proxy_ssl_verify off;
+        proxy_pass https://10.0.0.5:8443;  # nginx doesn't verify the upstream certificate by default
         proxy_http_version 1.1;
-        proxy_set_header Host $host;
+        proxy_set_header Host $http_host;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
         proxy_set_header X-Real-IP $remote_addr;
@@ -99,7 +98,7 @@ server {
 }
 ```
 
-With a non-standard public port use `proxy_set_header Host $http_host;` so the port stays in the header.
+`$http_host` keeps the port the browser used in the header.
 
 ### Still "Live connection lost"?
 
