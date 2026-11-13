@@ -6,12 +6,7 @@ LABEL org.opencontainers.image.title="Vantage backend" \
       org.opencontainers.image.source="https://github.com/levi-xy/vantage" \
       org.opencontainers.image.licenses="MIT"
 
-# The release version, passed by the release workflow ("dev" for local and CI builds).
-ARG VANTAGE_VERSION=dev
-ARG VANTAGE_BUILD_DATE=
-ENV VANTAGE_VERSION=${VANTAGE_VERSION} \
-    VANTAGE_BUILD_DATE=${VANTAGE_BUILD_DATE} \
-    PYTHONDONTWRITEBYTECODE=1 \
+ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -29,6 +24,13 @@ COPY --from=license LICENSE NOTICE /usr/share/doc/vantage/
 RUN pip install ".[postgres]" && groupadd --system --gid 10001 vantage \
     && useradd --system --uid 10001 --gid 10001 --no-create-home vantage \
     && mkdir /data && chown vantage /data
+
+# The release version, passed by the release workflow ("dev" for local and CI builds).
+# After the install layers, so a new version doesn't rebuild the dependencies.
+ARG VANTAGE_VERSION=dev
+ARG VANTAGE_BUILD_DATE=
+ENV VANTAGE_VERSION=${VANTAGE_VERSION} \
+    VANTAGE_BUILD_DATE=${VANTAGE_BUILD_DATE}
 
 USER vantage
 EXPOSE 8000
