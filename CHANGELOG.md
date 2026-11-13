@@ -2,6 +2,11 @@
 
 All notable changes, newest first. Versions follow [semantic versioning](https://semver.org/); before 1.0, a minor version (0.2) may change behaviour, and its notes say how to upgrade.
 
+## 0.1.1 (unreleased)
+
+- The version is shown in the UI: "Vantage <version>" in the sidebar footer and a new **Settings → About** page (open to viewers too) with the web app and server versions, build dates, database schema, Prometheus version and uptime. A warning appears when the web app and the server differ. New read-only `GET /api/v1/about`; `GET /api/v1/me` gains `server_version`.
+- Upgrading needs no action: pull both images and recreate the stack. No migration, no new settings.
+
 ## 0.1.0 (2026-11-12)
 
 The first release.

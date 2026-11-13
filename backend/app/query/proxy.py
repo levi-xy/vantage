@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import math
+import time
 from typing import Any, Literal
 
 import httpcore
@@ -34,6 +35,8 @@ DEFAULT_POINTS = 300  # used to pick a step when a range query gives none
 MAX_SERIES = 500  # series in one result
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024  # Prometheus' JSON answer
 QUERY_TIMEOUT_SECONDS = 10  # Prometheus' own evaluation timeout
+VERSION_TIMEOUT_SECONDS = 3.0  # the About page must not hang on Prometheus
+VERSION_CACHE_SECONDS = 60.0
 TOTAL_TIMEOUT_SECONDS = 15.0  # the whole call to Prometheus
 MAX_WARNINGS = 10
 MAX_WARNING_LENGTH = 300
@@ -165,6 +168,7 @@ class PrometheusClient:
 
     def __init__(self, client: httpx.AsyncClient) -> None:
         self._client = client
+        self._version_cache: tuple[float, str | None] | None = None
 
     @classmethod
     def guarded(
@@ -186,6 +190,28 @@ class PrometheusClient:
 
     async def aclose(self) -> None:
         await self._client.aclose()
+
+    async def version(self) -> str | None:
+        """Prometheus' own version (``/api/v1/status/buildinfo``, a read), cached for
+        60 s, or None when it can't be had. Never raises, never returns error text."""
+        now = time.monotonic()
+        cached = self._version_cache
+        if cached is not None and now - cached[0] < VERSION_CACHE_SECONDS:
+            return cached[1]
+        found: str | None = None
+        try:
+            async with asyncio.timeout(VERSION_TIMEOUT_SECONDS):
+                async with self._client.stream("GET", "/api/v1/status/buildinfo") as response:
+                    body = await response.aread()
+                    if response.status_code == 200 and len(body) <= 64 * 1024:
+                        data: Any = json.loads(body)
+                        raw = data["data"]["version"]
+                        if isinstance(raw, str) and 0 < len(raw) <= 32:
+                            found = raw
+        except Exception as exc:  # any failure just means "unknown"
+            log.debug("Prometheus version unknown: %s", type(exc).__name__)
+        self._version_cache = (now, found)
+        return found
 
     async def query(self, req: QueryRequest, *, max_series: int = MAX_SERIES) -> QueryResult:
         """Run ``req`` within the budget. ``max_series`` may be raised for the backend's

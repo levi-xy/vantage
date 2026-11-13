@@ -2,7 +2,7 @@
 
 A task-by-task guide to the web UI. Installing and running Vantage (network access, certificates, upgrades, backups) is in [OPERATIONS.md](OPERATIONS.md); setting up each device type is in [docs/integrations](integrations).
 
-The main tabs are **Dashboard**, **Devices**, **Alerts** and **Map**. Admins also get **Settings**. **My account** is in the account menu (under **More** on a phone).
+The main tabs are **Dashboard**, **Devices**, **Alerts** and **Map**. Admins also get **Settings**. **My account** and **About** are in the account menu (under **More** on a phone). The foot of the sidebar shows the version ("Vantage 0.1.1").
 
 Contents:
 
@@ -344,6 +344,12 @@ The bot token is stored encrypted and never shown again; the edit form only says
 
 ## Users and settings
 
+### Which version is running?
+
+The sidebar footer shows "Vantage <version>" (click it for the details); on a phone, open **More → About**. **Settings → About** is open to every user and shows the web app's and the server's version with their build dates, the database schema version, the Prometheus version, when the server last started, and a link to the release notes for this version. A value Vantage can't find shows as "unknown"; a development build shows "dev".
+
+If the web app and the server are different versions, a warning appears on the About page and a ⚠ in the footer. Reload the page; if it persists, pull both images again (see [OPERATIONS.md](OPERATIONS.md)).
+
 ### What can admins and viewers do?
 
 | | Viewer | Admin |
@@ -355,6 +361,7 @@ The bot token is stored encrypted and never shown again; the edit form only says
 | Create and edit maps | | yes |
 | Manage alert rules, close alerts | | yes |
 | **Settings**: time, users, audit log, notification channels | | yes |
+| **Settings → About** (versions, what is running) | yes | yes |
 
 ### How do I add a user?
 

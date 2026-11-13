@@ -6,7 +6,12 @@ LABEL org.opencontainers.image.title="Vantage backend" \
       org.opencontainers.image.source="https://github.com/levi-xy/vantage" \
       org.opencontainers.image.licenses="MIT"
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
+# The release version, passed by the release workflow ("dev" for local and CI builds).
+ARG VANTAGE_VERSION=dev
+ARG VANTAGE_BUILD_DATE=
+ENV VANTAGE_VERSION=${VANTAGE_VERSION} \
+    VANTAGE_BUILD_DATE=${VANTAGE_BUILD_DATE} \
+    PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1

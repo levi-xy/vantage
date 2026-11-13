@@ -59,7 +59,15 @@ export const SETUP_ALREADY_DONE = "Setup has already been completed. Log in inst
 const SessionContext = createContext<SessionContextValue | null>(null);
 
 function authenticated(me: Me): SessionState {
-  return { status: "authenticated", user: { id: me.id, username: me.username, role: me.role } };
+  return {
+    status: "authenticated",
+    user: {
+      id: me.id,
+      username: me.username,
+      role: me.role,
+      server_version: me.server_version,
+    },
+  };
 }
 
 function unreachable(error: unknown): SessionState {

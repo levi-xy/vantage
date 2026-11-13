@@ -25,6 +25,18 @@ export interface Me {
   role: Role;
   /** Sent back in the X-CSRF-Token header. Held in memory only, never in storage. */
   csrf_token: string;
+  /** The backend's version ("dev" for an unstamped build). */
+  server_version: string;
+}
+
+/** `GET /about` (any role). Null = not known. */
+export interface About {
+  backend_version: string;
+  backend_build_date: string | null;
+  schema_version: string | null;
+  prometheus_version: string | null;
+  /** The backend's last start, UTC ISO 8601. */
+  started_at: string;
 }
 
 /** `GET /settings/time` (any role) and the response of `PUT` (admin). */

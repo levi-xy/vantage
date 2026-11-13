@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from app.api import (
+    about,
     alerts,
     audit,
     auth,
@@ -18,6 +19,7 @@ from app.api import (
 )
 
 api_router = APIRouter(prefix="/api/v1")
+api_router.include_router(about.router)
 api_router.include_router(alerts.router)
 api_router.include_router(auth.router)
 api_router.include_router(audit.router)
