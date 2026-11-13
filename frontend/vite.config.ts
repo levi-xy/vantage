@@ -12,6 +12,8 @@ const version = process.env.VANTAGE_VERSION?.trim() || "dev";
 export default defineConfig({
   define: {
     __VANTAGE_VERSION__: JSON.stringify(version),
+    // The changelog section anchor, computed by the release workflow (empty = none).
+    __CHANGELOG_ANCHOR__: JSON.stringify(process.env.VANTAGE_CHANGELOG_ANCHOR?.trim() || ""),
     __VANTAGE_BUILD_DATE__: JSON.stringify(process.env.VANTAGE_BUILD_DATE?.trim() || ""),
   },
   plugins: [react(), tailwindcss()],

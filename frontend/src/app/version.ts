@@ -4,6 +4,8 @@
 
 export const FRONTEND_VERSION: string = __VANTAGE_VERSION__;
 export const FRONTEND_BUILD_DATE: string = __VANTAGE_BUILD_DATE__;
+/** This build's section of CHANGELOG.md, computed by the release workflow ("" = none). */
+export const CHANGELOG_ANCHOR: string = __CHANGELOG_ANCHOR__;
 
 export const RELEASES_URL = "https://github.com/levi-xy/vantage/releases";
 
@@ -21,11 +23,15 @@ export const MISMATCH_TEXT = (web: string, server: string) =>
   `The web app (${web}) and the server (${server}) are different versions. Reload the page; if it persists, pull both images again.`;
 
 /**
- * This version's changelog, at its release tag. The headings carry a date
- * ("## 0.1.1 (2026-11-14)") that the browser can't know, so there is no section anchor:
- * the newest version is at the top of the file. Dev or unknown builds: the releases list.
+ * This version's changelog, at its release tag. The section anchor (the headings carry a
+ * date the browser can't know) is computed at release time and only fits this web app's own
+ * version. Dev or unknown builds: the releases list.
  */
 export function changelogUrl(version: string | undefined): string {
   if (!isKnownVersion(version) || !/^[0-9A-Za-z.+-]+$/.test(version)) return RELEASES_URL;
-  return `https://github.com/levi-xy/vantage/blob/v${version}/CHANGELOG.md`;
+  const anchor =
+    version === FRONTEND_VERSION && /^[a-z0-9_-]+$/.test(CHANGELOG_ANCHOR)
+      ? `#${CHANGELOG_ANCHOR}`
+      : "";
+  return `https://github.com/levi-xy/vantage/blob/v${version}/CHANGELOG.md${anchor}`;
 }
