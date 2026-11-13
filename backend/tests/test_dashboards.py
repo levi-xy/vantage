@@ -11,7 +11,7 @@ from app.api.dashboards import MAX_DASHBOARDS
 from app.api.deps import CSRF_HEADER
 from app.core.db import make_session_factory
 from app.models import AuditLog, Dashboard, Role, User
-from tests.test_auth import add_user, do_setup, login, make_client
+from tests.test_auth import ADMIN, add_user, do_setup, login, make_client
 
 API = "/api/v1"
 CARD = {
@@ -53,18 +53,35 @@ def test_default_dashboard_is_created_on_first_get(admin: TestClient) -> None:
     assert admin.get(f"{API}/dashboards/2").status_code == 404
 
 
-def test_any_user_saves_layout_and_csrf_is_required(admin: TestClient, db: Session) -> None:
+def test_admin_saves_layout_and_csrf_is_required(admin: TestClient, db: Session) -> None:
     body = {"layout": {"cards": [CARD]}}
     assert admin.put(f"{API}/dashboards/1", json=body).status_code == 404  # no GET yet
     admin.get(f"{API}/dashboards/1")
-    viewer = viewer_client(admin, db)
     no_csrf = {CSRF_HEADER: ""}
-    assert viewer.put(f"{API}/dashboards/1", json=body, headers=no_csrf).status_code == 403
-    assert viewer.put(f"{API}/dashboards/1", json=body).status_code == 200
+    assert admin.put(f"{API}/dashboards/1", json=body, headers=no_csrf).status_code == 403
+    assert admin.put(f"{API}/dashboards/1", json=body).status_code == 200
     assert admin.get(f"{API}/dashboards/1").json()["layout"]["cards"] == [CARD]
 
     # Layout saves are not audited (too noisy).
     assert db.scalars(select(AuditLog).where(AuditLog.target_type == "dashboard")).all() == []
+
+
+def test_viewer_reads_but_cannot_write(admin: TestClient, db: Session) -> None:
+    viewer = viewer_client(admin, db)
+    # A viewer loading first still bootstraps "Default" (a server-side step, not an edit).
+    assert summaries(viewer) == [(1, "Default", 0)]
+    assert viewer.get(f"{API}/dashboards/1").status_code == 200
+    admin.put(f"{API}/dashboards/1", json={"layout": {"cards": [CARD]}})
+
+    assert viewer.post(f"{API}/dashboards", json={"name": "Rack"}).status_code == 403
+    r = viewer.put(f"{API}/dashboards/1", json={"layout": {"cards": []}})
+    assert r.status_code == 403
+    assert viewer.patch(f"{API}/dashboards/1", json={"name": "X"}).status_code == 403
+    assert viewer.delete(f"{API}/dashboards/1").status_code == 403
+
+    assert summaries(admin) == [(1, "Default", 0)]
+    assert admin.get(f"{API}/dashboards/1").json()["layout"]["cards"] == [CARD]
+    assert dashboard_audit(db) == []
 
 
 def test_dashboard_wide_cards_have_no_instance(admin: TestClient) -> None:
@@ -87,47 +104,47 @@ def dashboard_audit(db: Session) -> list[tuple[str, int | None, object]]:
     return [(r.action, r.user_id, r.changes) for r in rows]
 
 
-def test_viewer_creates_copies_moves_renames_and_deletes(admin: TestClient, db: Session) -> None:
+def test_admin_creates_copies_moves_renames_and_deletes(admin: TestClient, db: Session) -> None:
     assert summaries(admin) == [(1, "Default", 0)]  # the list creates "Default" too
     admin.put(f"{API}/dashboards/1", json={"layout": {"version": 2, "cards": [CARD]}})
-    viewer = viewer_client(admin, db)
-    viewer_id = db.scalars(select(User.id).where(User.username == "viewer1")).one()
 
-    r = viewer.post(f"{API}/dashboards", json={"name": "  Rack  "})
+    admin_id = db.scalars(select(User.id).where(User.username == ADMIN)).one()
+
+    r = admin.post(f"{API}/dashboards", json={"name": "  Rack  "})
     assert r.status_code == 201
     assert r.json() == {"id": 2, "name": "Rack", "layout": {"version": 1, "cards": []}}
-    r = viewer.post(f"{API}/dashboards", json={"name": "Rack", "copy_from": 1})
+    r = admin.post(f"{API}/dashboards", json={"name": "Rack", "copy_from": 1})
     assert r.status_code == 201  # duplicate names are fine
     assert r.json()["layout"] == {"version": 2, "cards": [CARD]}
     assert summaries(admin) == [(1, "Default", 0), (2, "Rack", 1), (3, "Rack", 2)]
 
-    assert viewer.patch(f"{API}/dashboards/3", json={"position": 0}).status_code == 200
+    assert admin.patch(f"{API}/dashboards/3", json={"position": 0}).status_code == 200
     assert summaries(admin) == [(3, "Rack", 0), (1, "Default", 1), (2, "Rack", 2)]
-    r = viewer.patch(f"{API}/dashboards/2", json={"name": "Lab", "position": 99})
+    r = admin.patch(f"{API}/dashboards/2", json={"name": "Lab", "position": 99})
     assert r.json() == {"id": 2, "name": "Lab", "position": 2}
 
     # Deleting the main one makes the next one main; positions stay dense.
-    assert viewer.delete(f"{API}/dashboards/3").status_code == 204
+    assert admin.delete(f"{API}/dashboards/3").status_code == 204
     assert summaries(admin) == [(1, "Default", 0), (2, "Lab", 1)]
-    assert viewer.delete(f"{API}/dashboards/3").status_code == 404
+    assert admin.delete(f"{API}/dashboards/3").status_code == 404
     # Dashboard 1 isn't recreated once other dashboards exist.
-    assert viewer.delete(f"{API}/dashboards/1").status_code == 204
+    assert admin.delete(f"{API}/dashboards/1").status_code == 204
     assert admin.get(f"{API}/dashboards/1").status_code == 404
-    assert viewer.delete(f"{API}/dashboards/2").status_code == 409  # the last one stays
+    assert admin.delete(f"{API}/dashboards/2").status_code == 409  # the last one stays
     assert summaries(admin) == [(2, "Lab", 0)]
     # Deleted ids are never reused: a tab still open on /d/3 can't reach a new dashboard.
-    assert viewer.post(f"{API}/dashboards", json={"name": "New"}).json()["id"] == 4
-    viewer.delete(f"{API}/dashboards/4")
+    assert admin.post(f"{API}/dashboards", json={"name": "New"}).json()["id"] == 4
+    admin.delete(f"{API}/dashboards/4")
 
     assert dashboard_audit(db) == [
-        ("create", viewer_id, {"name": "Rack"}),
-        ("create", viewer_id, {"name": "Rack", "copy_from": 1}),
-        ("update", viewer_id, {"position": {"old": 2, "new": 0}}),
-        ("update", viewer_id, {"name": {"old": "Rack", "new": "Lab"}}),
-        ("delete", viewer_id, {"name": "Rack"}),
-        ("delete", viewer_id, {"name": "Default"}),
-        ("create", viewer_id, {"name": "New"}),
-        ("delete", viewer_id, {"name": "New"}),
+        ("create", admin_id, {"name": "Rack"}),
+        ("create", admin_id, {"name": "Rack", "copy_from": 1}),
+        ("update", admin_id, {"position": {"old": 2, "new": 0}}),
+        ("update", admin_id, {"name": {"old": "Rack", "new": "Lab"}}),
+        ("delete", admin_id, {"name": "Rack"}),
+        ("delete", admin_id, {"name": "Default"}),
+        ("create", admin_id, {"name": "New"}),
+        ("delete", admin_id, {"name": "New"}),
     ]
 
 

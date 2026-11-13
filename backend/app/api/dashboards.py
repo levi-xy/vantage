@@ -4,8 +4,9 @@ A dashboard stores its card layout as JSON: a bounded list of cards, each placed
 12-column grid. A card belongs to an instance, or to no instance (``instance_id`` null:
 a dashboard-wide card such as "Devices healthy").
 
-Dashboards are global: no owner, no sharing. Any logged-in user may list, create,
-rename, move, edit and delete them (CSRF is enforced by the session dependency). The
+Dashboards are global: no owner, no sharing. Any logged-in user may read them; creating,
+renaming, moving, editing and deleting are admin only (maintainer-approved 2026-11-13;
+CSRF is enforced by the session dependency). The
 first dashboard by ``(position, id)`` is the main one; positions stay dense from 0.
 Create, rename/move and delete are audited with the name; layout saves are not
 (maintainer decision, 2026-10-30: too noisy for a cosmetic change). When no dashboard
@@ -20,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import AuthDep, DbDep
+from app.api.deps import AdminDep, AuthDep, DbDep
 from app.core import audit
 from app.models import Dashboard
 
@@ -146,7 +147,7 @@ def list_dashboards(_auth: AuthDep, db: DbDep) -> list[DashboardSummary]:
 
 
 @router.post("/dashboards", status_code=status.HTTP_201_CREATED)
-def create_dashboard(body: DashboardCreate, auth: AuthDep, db: DbDep) -> DashboardOut:
+def create_dashboard(body: DashboardCreate, auth: AdminDep, db: DbDep) -> DashboardOut:
     rows = _ordered(db)
     if len(rows) >= MAX_DASHBOARDS:
         raise HTTPException(
@@ -177,7 +178,9 @@ def get_dashboard(dashboard_id: int, _auth: AuthDep, db: DbDep) -> DashboardOut:
 
 
 @router.put("/dashboards/{dashboard_id}")
-def put_dashboard(dashboard_id: int, body: DashboardPut, _auth: AuthDep, db: DbDep) -> DashboardOut:
+def put_dashboard(
+    dashboard_id: int, body: DashboardPut, _auth: AdminDep, db: DbDep
+) -> DashboardOut:
     layout = body.layout.model_dump(mode="json")
     if len(json.dumps(layout)) > MAX_LAYOUT_BYTES:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "layout is too large")
@@ -189,7 +192,7 @@ def put_dashboard(dashboard_id: int, body: DashboardPut, _auth: AuthDep, db: DbD
 
 @router.patch("/dashboards/{dashboard_id}")
 def patch_dashboard(
-    dashboard_id: int, body: DashboardPatch, auth: AuthDep, db: DbDep
+    dashboard_id: int, body: DashboardPatch, auth: AdminDep, db: DbDep
 ) -> DashboardSummary:
     row = _get(db, dashboard_id)
     before = {"name": row.name, "position": row.position}
@@ -207,7 +210,7 @@ def patch_dashboard(
 
 
 @router.delete("/dashboards/{dashboard_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_dashboard(dashboard_id: int, auth: AuthDep, db: DbDep) -> Response:
+def delete_dashboard(dashboard_id: int, auth: AdminDep, db: DbDep) -> Response:
     row = _get(db, dashboard_id)
     rows = _ordered(db)
     if len(rows) <= 1:

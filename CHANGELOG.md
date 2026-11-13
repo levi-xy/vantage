@@ -2,6 +2,10 @@
 
 All notable changes, newest first. Versions follow [semantic versioning](https://semver.org/); before 1.0, a minor version (0.2) may change behaviour, and its notes say how to upgrade.
 
+## Unreleased (0.1.1)
+
+**Behaviour change:** viewers can no longer arrange dashboards. Dashboards are shared by everyone, so a viewer moving a card moved it for all users. Creating, renaming, moving, editing and deleting dashboards is now admin only (the API answers 403 to viewers, and the UI hides the buttons); viewers still see every dashboard. No migration; on upgrade, existing viewers just lose the edit buttons.
+
 ## 0.1.0 (2026-11-12)
 
 The first release.
