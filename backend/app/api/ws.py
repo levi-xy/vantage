@@ -2,11 +2,14 @@
 
 Authenticated by the same session cookie as the HTTP API (same expiry and idle rules,
 re-checked while the socket is open). The Origin header must match the Host the browser
-used, which stops cross-site WebSocket hijacking. The client can only send ``ping``.
+used, or be a host the admin listed in ``VANTAGE_PUBLIC_HOSTS`` (a reverse proxy may
+rewrite Host); this stops cross-site WebSocket hijacking. A refused handshake logs one
+WARNING per reason per minute. The client can only send ``ping``.
 """
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable
 from datetime import timedelta
 from urllib.parse import urlsplit
@@ -19,6 +22,7 @@ from starlette.concurrency import run_in_threadpool
 from app.api.deps import cookie_name
 from app.collectors.hub import EventHub, Subscriber
 from app.core.auth import session_id
+from app.core.config import _split_host
 from app.core.db import utcnow
 from app.models import UserSession
 
@@ -34,13 +38,71 @@ CLOSE_TRY_AGAIN = 1013
 CLOSE_SESSION_ENDED = 4401  # app-defined: the session ended or expired
 
 
-def origin_allowed(ws: WebSocket) -> bool:
-    """Browsers always send Origin on WebSocket handshakes; no Origin means not a browser."""
+_WARN_EVERY_SECONDS = 60.0
+_last_warned: dict[str, float] = {}
+
+
+def _warn_refused(reason: str, ws: WebSocket) -> None:
+    """One WARNING per reason per minute, so a reconnecting browser can't flood the log.
+
+    Logs the Origin and Host values (host names, not secrets), never the cookie.
+    """
+    now = time.monotonic()
+    last = _last_warned.get(reason)
+    if last is not None and now - last < _WARN_EVERY_SECONDS:
+        return
+    _last_warned[reason] = now
+    origin = urlsplit(ws.headers.get("origin") or "").netloc[:255]
+    host = (ws.headers.get("host") or "")[:255]
+    log.warning(
+        "WebSocket handshake refused: %s (Origin host %r, Host header %r). Behind a reverse "
+        "proxy, pass the original Host header and WebSocket upgrades, and list the name in "
+        "VANTAGE_PUBLIC_HOSTS; see docs/OPERATIONS.md, Reverse proxy",
+        reason,
+        origin,
+        host,
+    )
+
+
+def _origin_listed(origin: str, public_hosts: tuple[str, ...]) -> bool:
+    try:
+        parts = urlsplit(origin)
+        hostname, port = parts.hostname, parts.port
+    except ValueError:
+        return False
+    default = {"https": 443, "http": 80}.get(parts.scheme)
+    if not hostname or default is None:
+        return False
+    host = f"[{hostname}]" if ":" in hostname else hostname
+    effective = str(port or default)
+    for entry in public_hosts:
+        want_host, want_port = _split_host(entry)
+        if host == want_host and (want_port or str(default)) == effective:
+            return True
+    return False
+
+
+def origin_refusal(ws: WebSocket, public_hosts: tuple[str, ...] = ()) -> str | None:
+    """Why the Origin is refused, or None when it is fine.
+
+    Browsers always send Origin on WebSocket handshakes; no Origin means not a browser.
+    Accepted: the Origin's host[:port] is the Host the browser used, or the Origin matches
+    a ``VANTAGE_PUBLIC_HOSTS`` entry exactly (host and port; an entry without a port means
+    the Origin scheme's default port, 443 or 80, so another app on the same host at another
+    port is refused).
+    """
     origin = ws.headers.get("origin")
     host = ws.headers.get("host")
-    if not origin or not host:
-        return False
-    return urlsplit(origin).netloc.lower() == host.lower()
+    if not origin:
+        return "no Origin header"
+    if not host:
+        return "no Host header"
+    netloc = urlsplit(origin).netloc.lower()
+    if netloc == host.lower():
+        return None
+    if public_hosts and _origin_listed(origin, public_hosts):
+        return None
+    return "Origin doesn't match Host and isn't listed in VANTAGE_PUBLIC_HOSTS"
 
 
 def session_valid(factory: sessionmaker[Session], token: str, idle_minutes: int) -> bool:
@@ -91,12 +153,19 @@ async def live(ws: WebSocket) -> None:
     settings = ws.app.state.settings
     hub: EventHub = ws.app.state.event_hub
     token = ws.cookies.get(cookie_name(settings))
-    if not origin_allowed(ws) or not token or len(token) > _MAX_TOKEN_LENGTH:
+    reason = origin_refusal(ws, settings.public_hosts)
+    if reason is None and not token:
+        reason = "no session cookie"
+    if reason is None and token and len(token) > _MAX_TOKEN_LENGTH:
+        reason = "oversized session cookie"
+    if reason is not None or not token:
+        _warn_refused(reason or "no session cookie", ws)
         await ws.close(CLOSE_POLICY)  # before accept: the handshake answers 403
         return
     if not await run_in_threadpool(
         session_valid, ws.app.state.session_factory, token, settings.session_idle_minutes
     ):
+        _warn_refused("invalid or expired session", ws)
         await ws.close(CLOSE_POLICY)
         return
     await ws.accept()
