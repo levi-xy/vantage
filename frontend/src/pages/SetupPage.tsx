@@ -191,9 +191,17 @@ export function SetupPage() {
             without it.
           </p>
           <p className="mt-1">
-            It is the file <code>secrets/master.key</code> that setup.sh created (on the standalone
-            compose install: the <code>master-key</code> volume). Keep a copy somewhere safe,
-            outside this server. docs/OPERATIONS.md shows how.
+            It is the file <code>secrets/master.key</code> in the folder where you ran setup.sh (on
+            the standalone compose install: the <code>master-key</code> volume). Keep a copy
+            somewhere safe, outside this server.{" "}
+            <a
+              className="underline"
+              href="https://github.com/levi-xy/vantage/blob/main/docs/OPERATIONS.md#back-up-the-master-key"
+              target="_blank"
+              rel="noreferrer"
+            >
+              How to back it up
+            </a>
           </p>
           <label className="mt-2 flex items-start gap-2 font-medium">
             <input
