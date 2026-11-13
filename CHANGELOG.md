@@ -2,6 +2,12 @@
 
 All notable changes, newest first. Versions follow [semantic versioning](https://semver.org/); before 1.0, a minor version (0.2) may change behaviour, and its notes say how to upgrade.
 
+## Unreleased (0.1.1)
+
+- Behind a reverse proxy, the live connection is also accepted when the browser's `Origin` host is listed in `VANTAGE_PUBLIC_HOSTS`, even if the proxy rewrote `Host`. A missing `Origin` is still refused. Nothing to change on upgrade.
+- The backend logs a WARNING (at most once a minute per reason) saying why a live-connection handshake was refused, with the Origin and Host values.
+- The "Live connection lost" banner says live updates are paused and points to the new Reverse proxy section in `docs/OPERATIONS.md` (Nginx Proxy Manager, Traefik, Caddy, nginx).
+
 ## 0.1.0 (2026-11-12)
 
 The first release.

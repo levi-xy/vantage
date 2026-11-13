@@ -79,6 +79,42 @@ def test_refused_without_session_or_with_wrong_origin(client: TestClient) -> Non
             pass
 
 
+def test_listed_origin_is_accepted_when_the_proxy_rewrote_host(engine: Engine, db_url: str) -> None:
+    with make_client(
+        db_url, public_hosts=("testserver", "vantage.example.com", "10.0.0.5:8443")
+    ) as c:
+        do_setup(c)
+        headers = {"origin": "https://vantage.example.com", "host": "10.0.0.5:8443"}
+        with connect(c, **headers) as sock:
+            sock.send_text("ping")
+            assert sock.receive_json() == {"type": "pong"}
+        with pytest.raises(WebSocketDisconnect):  # an unlisted Origin is still refused
+            with connect(c, **{**headers, "origin": "https://evil.example"}):
+                pass
+        with pytest.raises(WebSocketDisconnect):  # and so is a missing one
+            cookie = "; ".join(f"{k.name}={k.value}" for k in c.cookies.jar)
+            with c.websocket_connect(URL, headers={"cookie": cookie, "host": "10.0.0.5:8443"}):
+                pass
+
+
+def test_refusal_logs_a_rate_limited_warning_without_the_cookie(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    ws_module._last_warned.clear()
+    cookie = "; ".join(f"{c.name}={c.value}" for c in client.cookies.jar)
+    secret = client.cookies.jar.__iter__().__next__().value
+    assert secret
+    for _ in range(3):
+        with caplog.at_level("WARNING", logger="app.api.ws"):
+            with pytest.raises(WebSocketDisconnect):
+                with connect(client, origin="https://evil.example"):
+                    pass
+    lines = [r.getMessage() for r in caplog.records if "handshake refused" in r.getMessage()]
+    assert len(lines) == 1  # once per reason per minute
+    assert "evil.example" in lines[0] and "testserver" in lines[0]
+    assert secret not in lines[0] and cookie not in lines[0]
+
+
 def test_client_messages_other_than_ping_close_the_socket(client: TestClient) -> None:
     with connect(client) as sock:
         sock.send_text('{"subscribe": "everything"}')
