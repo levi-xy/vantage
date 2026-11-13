@@ -128,6 +128,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0 # every tag, and the history between the rc and the final tag
+          persist-credentials: false # later steps only read the local clone
 
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
@@ -177,15 +178,36 @@ jobs:
           done
 
       # The tags a build used to get: X.Y.Z, X.Y and latest. A single source is copied as
-      # it is, so they point at the rc's digest (with its SBOM and provenance); checked
-      # right after.
-      - name: Add the final tags
+      # it is, so they point at the rc's digest (with its SBOM and provenance). The dry
+      # run proves that before any tag moves; the last step checks it again.
+      - name: The copy keeps the rc's digests (dry run)
+        run: |
+          for name in $IMAGES; do
+            image="${REGISTRY}/${name}"
+            digest=$(cat "$RUNNER_TEMP/${name}")
+            docker buildx imagetools create --dry-run --tag "${image}:dry-run" "${image}@${digest}" \
+              > "$RUNNER_TEMP/dry-run-${name}.json"
+            python3 scripts/release_promote.py check-dry-run "$digest" \
+              < "$RUNNER_TEMP/dry-run-${name}.json"
+          done
+
+      # X.Y.Z on both images first, X.Y and latest on both last: a failure halfway never
+      # leaves latest on a backend and frontend from different releases.
+      - name: Add the version tags
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          for name in $IMAGES; do
+            image="${REGISTRY}/${name}"
+            docker buildx imagetools create --tag "${image}:${version}" \
+              "${image}@$(cat "$RUNNER_TEMP/${name}")"
+          done
+
+      - name: Move the X.Y and latest tags
         run: |
           version="${GITHUB_REF_NAME#v}"
           for name in $IMAGES; do
             image="${REGISTRY}/${name}"
             docker buildx imagetools create \
-              --tag "${image}:${version}" \
               --tag "${image}:${version%.*}" \
               --tag "${image}:latest" \
               "${image}@$(cat "$RUNNER_TEMP/${name}")"

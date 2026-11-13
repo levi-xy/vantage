@@ -14,7 +14,7 @@ What the promotion checks before it tags anything (`scripts/release_promote.py`,
 - the final tag's commit is the rc's commit, or a descendant whose only changes since the rc are release metadata: `README.md`, `CHANGELOG.md`, and `deploy/compose.standalone.yml` with nothing but its three Vantage image tags changed. None of those is in an image or in the setup.sh bundle, so the install files of the final release are the ones you tested too (apart from the version they name). Anything else (a fix, a docs page, a workflow change) is refused: tag a new rc;
 - each rc image's digest carries a cosign signature from this workflow, run for that exact rc tag (`release.yml@refs/tags/vX.Y.Z-rc.N`), started at the rc's commit.
 
-Then it adds a second signature from the final tag's run (so `release.yml@refs/tags/vX.Y.Z` verifies too), adds the tags and checks that every new tag resolves to the rc's digest. Both images are checked before either is signed or tagged. The SBOM and provenance are part of the image index, so they come along unchanged.
+Then it adds a second signature from the final tag's run (so `release.yml@refs/tags/vX.Y.Z` verifies too), makes sure (with a dry run) that copying the tags keeps the rc's digest, adds `X.Y.Z` to both images and only then moves `X.Y` and `latest`, and checks that every new tag resolves to the rc's digest. Both images are checked before either is signed or tagged, and a failure halfway never leaves `latest` on a backend and frontend from different releases. The SBOM and provenance are part of the image index, so they come along unchanged.
 
 You need `git`, `gh`, `docker` and [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) on your machine. The examples use 0.1.1; replace it with the version you release.
 
@@ -86,6 +86,8 @@ A PR that changes only:
 - the date of the version's `CHANGELOG.md` entry.
 
 Merge it **with nothing else merged since the rc tag**: anything else between the rc and the final tag makes the promotion refuse (and you'd need a new rc). The README shows the new version from this merge on, so tag the final right after.
+
+**Re-read the README before you tag the final.** The promotion lets `README.md` change between the rc and the final without a new rc, because it isn't in an image or in the install bundle. That also means nothing tests it: the install commands, the standalone compose copy and the links people paste come from this version of the README. Check them by eye (the version in the compose copy, the download and cosign commands), and if the README changed beyond the version bump since the rc, read those parts closely.
 
 (You may also make this PR before tagging the rc: then the rc and the final tag are on the same commit. The README then names 0.1.1 for the whole test phase, while its image doesn't exist yet, so people copying it get a pull error. The order above avoids that.)
 

@@ -16,6 +16,10 @@ runs the registry and cosign commands around it::
     python3 scripts/release_promote.py digest < inspect.json
         the manifest digest from `docker buildx imagetools inspect --format '{{json .Manifest}}'`
 
+    python3 scripts/release_promote.py check-dry-run sha256:... < dry-run.json
+        `docker buildx imagetools create --dry-run` output is that exact manifest, so
+        the tags it would add point at the rc's digest
+
     python3 scripts/release_promote.py check-signature cosign.json sha256:... v1.2.3-rc.2
         `cosign verify --output json` holds a signature on that digest made by the
         release workflow run for that rc tag at the rc's commit
@@ -25,6 +29,7 @@ Standard library only (plus deploy/make_bundle.py from this repository).
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import re
@@ -100,6 +105,20 @@ def check_changes(changed: list[str], standalone_at_rc: str, standalone_at_final
                 f"{STANDALONE} changes more than its Vantage image tags since the rc. "
                 "Tag a new rc from this commit and test that instead."
             )
+
+
+def check_dry_run(manifest: bytes, digest: str) -> None:
+    """Refuse unless `imagetools create --dry-run` would push the source manifest as is.
+
+    The dry run prints the manifest it would push followed by one newline; its digest
+    is the SHA-256 of those bytes.
+    """
+    body = manifest.removesuffix(b"\n")
+    got = "sha256:" + hashlib.sha256(body).hexdigest()
+    if not body or got != digest:
+        raise PromoteError(
+            f"imagetools create would push {got}, not the rc's {digest}: nothing was tagged"
+        )
 
 
 def parse_digest(inspect_json: str) -> str:
@@ -191,6 +210,9 @@ def main(argv: list[str]) -> None:
             print(check_source(rc_tag, final_tag))
         case ["digest"]:
             print(parse_digest(sys.stdin.read()))
+        case ["check-dry-run", digest]:
+            check_dry_run(sys.stdin.buffer.read(), digest)
+            print(f"ok: the copy keeps {digest}")
         case ["check-signature", path, digest, rc_tag]:
             accepted = {
                 _commit(rc_tag),

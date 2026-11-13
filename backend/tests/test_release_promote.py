@@ -1,5 +1,6 @@
 """scripts/release_promote.py and release.yml: a final release promotes a tested rc's images."""
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -81,6 +82,19 @@ def test_digest_from_imagetools() -> None:
     for bad in ("", "[]", json.dumps({"digest": "sha256:abc"}), json.dumps({"digest": 1})):
         with pytest.raises(promote.PromoteError):
             promote.parse_digest(bad)
+
+
+MANIFEST = b'{"schemaVersion":2,"manifests":[]}'
+
+
+def test_a_dry_run_that_keeps_the_manifest_is_accepted() -> None:
+    promote.check_dry_run(MANIFEST + b"\n", "sha256:" + hashlib.sha256(MANIFEST).hexdigest())
+
+
+@pytest.mark.parametrize("output", [b"", b"\n", b'{"schemaVersion": 2, "manifests": []}\n'])
+def test_a_dry_run_that_would_change_the_manifest_is_refused(output: bytes) -> None:
+    with pytest.raises(promote.PromoteError, match="nothing was tagged"):
+        promote.check_dry_run(output, "sha256:" + hashlib.sha256(MANIFEST).hexdigest())
 
 
 def _signature(digest: str, sha: str, *, key: str = "githubWorkflowSha") -> dict[str, Any]:
@@ -204,14 +218,20 @@ def test_promote_checks_before_it_signs_and_tags(jobs: dict[str, Any]) -> None:
         "cosign verify",
         "release_promote.py check-signature",
         "cosign sign",
-        "imagetools create",
+        "imagetools create --dry-run",
+        "release_promote.py check-dry-run",
+        '--tag "${image}:${version}"',  # X.Y.Z on both images
+        '--tag "${image}:latest"',  # then X.Y and latest
+        "for tag in",  # the post-check
     ]
     positions = [runs.index(needle) for needle in order]
     assert positions == sorted(positions)
     # Verified against the rc run's exact identity, never a pattern.
     assert "--certificate-identity-regexp" not in runs
     assert "release.yml@refs/tags/${RC_TAG}" in runs
-    assert jobs["promote"]["steps"][0]["with"]["fetch-depth"] == 0
+    checkout = jobs["promote"]["steps"][0]["with"]
+    assert checkout["fetch-depth"] == 0
+    assert checkout["persist-credentials"] is False
 
 
 def test_every_action_is_pinned_to_a_commit(jobs: dict[str, Any]) -> None:
