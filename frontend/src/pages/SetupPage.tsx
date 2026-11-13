@@ -72,6 +72,8 @@ export function SetupPage() {
   const [errors, setErrors] = useState<FieldErrors>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Client-side only: the backend doesn't need it and never receives it.
+  const [keyBackedUp, setKeyBackedUp] = useState(false);
 
   const update = (name: keyof Fields) => (e: ChangeEvent<HTMLInputElement>) =>
     setFields((f) => ({ ...f, [name]: e.target.value }));
@@ -176,7 +178,34 @@ export function SetupPage() {
           autoComplete: "new-password",
           maxLength: MAX_PASSWORD_LENGTH,
         })}
-        <button type="submit" disabled={busy} className={`${buttonPrimary} w-full`}>
+        <section
+          aria-labelledby="setup-key-heading"
+          className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100"
+        >
+          <h2 id="setup-key-heading" className="font-semibold">
+            Back up your master key
+          </h2>
+          <p className="mt-1">
+            The master key encrypts every device credential and channel token Vantage stores. If you
+            lose it, you have to enter all of them again; a backup of the database is useless
+            without it.
+          </p>
+          <p className="mt-1">
+            It is the file <code>secrets/master.key</code> that setup.sh created (on the standalone
+            compose install: the <code>master-key</code> volume). Keep a copy somewhere safe,
+            outside this server. docs/OPERATIONS.md shows how.
+          </p>
+          <label className="mt-2 flex items-start gap-2 font-medium">
+            <input
+              type="checkbox"
+              checked={keyBackedUp}
+              onChange={(e) => setKeyBackedUp(e.target.checked)}
+              className="mt-0.5"
+            />
+            I have backed up my master key
+          </label>
+        </section>
+        <button type="submit" disabled={busy || !keyBackedUp} className={`${buttonPrimary} w-full`}>
           {busy ? "Creating account…" : "Create admin account"}
         </button>
       </form>

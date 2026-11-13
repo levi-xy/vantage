@@ -62,6 +62,8 @@ Open the address `setup.sh` printed. The **Welcome to Vantage** page asks for:
 - **Admin username**: 1 to 64 characters, letters, digits, dot, dash or underscore, starting with a letter or digit.
 - **Password** and **Confirm password**: at least 12 characters.
 
+- **Back up your master key**: a short note on the master key (it encrypts every stored device credential and channel token; without it you enter them all again, and a database backup can't help) and where it is (`secrets/master.key`, or the `master-key` volume on the standalone install; see [OPERATIONS.md](OPERATIONS.md#back-up-the-master-key)). Copy it somewhere safe outside the server, then tick **I have backed up my master key**. **Create admin account** stays disabled until you do. The tick is only a browser-side reminder: nothing is sent or stored, and nothing reminds you again later.
+
 Press **Create admin account**. You are logged in and land on the dashboard. This page only exists while there is no user; more accounts are added under **Settings → Users** (see [Users and settings](#users-and-settings)).
 
 If the page says the code is wrong or was already used, get a new one with the command above. After too many wrong codes it asks you to wait a few minutes.

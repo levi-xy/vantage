@@ -2,6 +2,10 @@
 
 All notable changes, newest first. Versions follow [semantic versioning](https://semver.org/); before 1.0, a minor version (0.2) may change behaviour, and its notes say how to upgrade.
 
+## Unreleased (0.1.1)
+
+- First-run setup explains the master key (what it protects, where it is, that it needs a copy outside the server) and asks you to tick "I have backed up my master key" before the admin account can be created. The tick is only a reminder in the browser; nothing is stored.
+
 ## 0.1.0 (2026-11-12)
 
 The first release.
