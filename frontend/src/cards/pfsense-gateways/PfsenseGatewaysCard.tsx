@@ -1,3 +1,4 @@
+import { useCanEditDashboards } from "../../app/session";
 import { useUnits } from "../../app/units";
 import type { CardProps, CardSettingsProps } from "../registry";
 import { cardFreshness, FRESH, NO_RECENT_DATA } from "../metrics/freshness";
@@ -42,6 +43,7 @@ function useInterfaceNames(instanceId: string, instance: CardProps["instance"]) 
 export function PfsenseGatewaysCard({ instanceId, title, instance, settings }: CardProps) {
   const { formatRate } = useUnits();
   const tier = useCardTier();
+  const canEdit = useCanEditDashboards();
   const chosen = interfacesFromSettings(settings);
   const present = usePresent(instanceId);
   // Same query text as the Interfaces card, so the two share one cached result.
@@ -79,7 +81,11 @@ export function PfsenseGatewaysCard({ instanceId, title, instance, settings }: C
       ) : (
         <div className="flex flex-col gap-1">
           <p className="text-sm">No interfaces chosen.</p>
-          <p className="text-xs text-muted">Edit dashboard, then ⚙ on this card.</p>
+          <p className="text-xs text-muted">
+            {canEdit
+              ? "Edit dashboard, then ⚙ on this card."
+              : "Ask an admin to choose interfaces."}
+          </p>
         </div>
       );
   } else if (tier === "small" && first) {

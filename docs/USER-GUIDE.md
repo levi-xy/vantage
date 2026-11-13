@@ -162,6 +162,8 @@ Dashboards are shared: everyone sees the same dashboards, and only admins can ed
 
 ### How do I rearrange the dashboard?
 
+Only admins can do this; viewers see the dashboard as it is.
+
 1. Press **Edit dashboard**.
 2. Drag a card by its body to move it. Drag its bottom-right corner to resize it. Cards float up into free space.
 3. Press **Done** to save, or **Cancel** to throw the changes away.

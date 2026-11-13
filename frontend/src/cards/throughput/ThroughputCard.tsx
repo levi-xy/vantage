@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useContext, useEffect, useState } from "react";
 import { LIVE_RATE_KEY } from "../../app/live";
+import { useCanEditDashboards } from "../../app/session";
 import type { LiveRate } from "../../app/live";
 import { useUnits } from "../../app/units";
 import { MainDashboardContext } from "../mainDashboard";
@@ -115,6 +116,7 @@ function Current({ label, value, tone }: { label: string; value: string; tone: "
  */
 export function ThroughputCard({ instances, settings }: WidgetProps) {
   const tier = useCardTier();
+  const canEdit = useCanEditDashboards();
   const { formatRate, unit } = useUnits();
   const ports = portsFromSettings(settings);
   const chosen = ports.length > 0;
@@ -162,7 +164,7 @@ export function ThroughputCard({ instances, settings }: WidgetProps) {
         <span className="text-xs text-slate-500 dark:text-slate-400">Throughput</span>
         <span className="text-sm">No port chosen.</span>
         <span className="text-xs text-slate-500 dark:text-slate-400">
-          Edit dashboard, then ⚙ on this card.
+          {canEdit ? "Edit dashboard, then ⚙ on this card." : "Ask an admin to choose a port."}
         </span>
       </div>
     );
