@@ -295,6 +295,7 @@ Keep the dashboard off the internet: a monitoring VLAN with access from your adm
 - [Security](docs/SECURITY.md): threat model, controls, recovery procedures
 - [Architecture](docs/ARCHITECTURE.md): components and data flow
 - [Integrations](docs/INTEGRATIONS.md): the plugin interface, and [per-integration setup guides](docs/integrations)
+- [Releasing](docs/RELEASING.md): how a release is tested and promoted (maintainer)
 - [Changelog](CHANGELOG.md)
 
 ## Development
