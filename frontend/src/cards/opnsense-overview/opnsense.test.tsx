@@ -7,7 +7,10 @@ import { OpnsenseServicesCard } from "../opnsense-services/OpnsenseServicesCard"
 import { OpnsenseOverviewCard } from "./OpnsenseOverviewCard";
 
 const client = new ApiClient({ fetch: vi.fn() });
-vi.mock("../../app/session", () => ({ useApiClient: () => client }));
+vi.mock("../../app/session", () => ({
+  useApiClient: () => client,
+  useCanEditDashboards: () => true,
+}));
 
 const opnsense = { ...testInstance, type_id: "opnsense" };
 const gw = (gateway: string) => ({ gateway });

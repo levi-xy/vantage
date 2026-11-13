@@ -5,7 +5,10 @@ import { ProxmoxGuestsCard } from "../proxmox-guests/ProxmoxGuestsCard";
 import { ProxmoxNodeCard } from "./ProxmoxNodeCard";
 
 const client = new ApiClient({ fetch: vi.fn() });
-vi.mock("../../app/session", () => ({ useApiClient: () => client }));
+vi.mock("../../app/session", () => ({
+  useApiClient: () => client,
+  useCanEditDashboards: () => true,
+}));
 
 const node = { node: "pve1" };
 const guest = (vmid: string) => ({ node: "pve1", vmid, guest_type: "qemu" });
