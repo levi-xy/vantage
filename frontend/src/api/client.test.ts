@@ -1,7 +1,13 @@
 import { ApiClient, ApiError, API_BASE, CSRF_HEADER, MAX_QUERIES_IN_FLIGHT } from "./client";
 import type { Me } from "./types";
 
-const ME: Me = { id: 1, username: "admin", role: "admin", csrf_token: "example-csrf-token" };
+const ME: Me = {
+  id: 1,
+  username: "admin",
+  role: "admin",
+  csrf_token: "example-csrf-token",
+  server_version: "dev",
+};
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {

@@ -131,6 +131,8 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.settings = settings
+    # Reported by GET /about as the backend's last start (UTC).
+    app.state.started_at = datetime.now(UTC)
     app.state.secret_box = secret_box
     app.state.engine = engine
     app.state.session_factory = make_session_factory(engine)

@@ -25,6 +25,13 @@ RUN pip install ".[postgres]" && groupadd --system --gid 10001 vantage \
     && useradd --system --uid 10001 --gid 10001 --no-create-home vantage \
     && mkdir /data && chown vantage /data
 
+# The release version, passed by the release workflow ("dev" for local and CI builds).
+# After the install layers, so a new version doesn't rebuild the dependencies.
+ARG VANTAGE_VERSION=dev
+ARG VANTAGE_BUILD_DATE=
+ENV VANTAGE_VERSION=${VANTAGE_VERSION} \
+    VANTAGE_BUILD_DATE=${VANTAGE_BUILD_DATE}
+
 USER vantage
 EXPOSE 8000
 # First the startup gate (P0-6): it exits 1, so nothing is migrated or started, while an

@@ -1,25 +1,29 @@
-// Settings area (admin only): a section nav next to the section's own page. A column on
+// Settings area (admin pages, plus About for every user): a section nav next to the section's own page. A column on
 // desktop, a select on phones.
 
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
+import { useUser } from "../../app/session";
 import { input } from "../../components/styles";
 
 const SECTIONS = [
-  { to: "/settings/time", label: "Time" },
-  { to: "/settings/users", label: "Users" },
-  { to: "/settings/audit", label: "Audit log" },
-  { to: "/settings/channels", label: "Notification channels" },
+  { to: "/settings/time", label: "Time", admin: true },
+  { to: "/settings/users", label: "Users", admin: true },
+  { to: "/settings/audit", label: "Audit log", admin: true },
+  { to: "/settings/channels", label: "Notification channels", admin: true },
+  { to: "/settings/about", label: "About", admin: false },
 ] as const;
 
 export function SettingsShell() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const current = SECTIONS.find((s) => pathname === s.to)?.to ?? "";
+  const isAdmin = useUser().role === "admin";
+  const sections = SECTIONS.filter((s) => isAdmin || !s.admin);
+  const current = sections.find((s) => pathname === s.to)?.to ?? "";
   return (
     <div className="md:grid md:grid-cols-[14rem_minmax(0,1fr)] md:gap-8">
       <nav aria-label="Settings sections" className="hidden md:block">
         <ul className="space-y-1">
-          {SECTIONS.map((s) => (
+          {sections.map((s) => (
             <li key={s.to}>
               <NavLink
                 to={s.to}
@@ -46,7 +50,7 @@ export function SettingsShell() {
           onChange={(e) => void navigate(e.target.value)}
         >
           {current === "" && <option value="">Settings</option>}
-          {SECTIONS.map((s) => (
+          {sections.map((s) => (
             <option key={s.to} value={s.to}>
               {s.label}
             </option>

@@ -9,6 +9,13 @@ COPY . .
 # The map editor's icon library (dashboard-icons, Apache-2.0), pinned and checksummed by
 # icons.manifest.json; served by this image, never fetched by the browser from a CDN.
 RUN node scripts/fetch-icons.mjs
+# The release version shown in the UI, passed by the release workflow ("dev" otherwise).
+# After npm ci and the icon fetch, so a new version only redoes the build.
+ARG VANTAGE_VERSION=dev
+ARG VANTAGE_BUILD_DATE=
+ARG VANTAGE_CHANGELOG_ANCHOR=
+ENV VANTAGE_VERSION=${VANTAGE_VERSION} VANTAGE_BUILD_DATE=${VANTAGE_BUILD_DATE} \
+    VANTAGE_CHANGELOG_ANCHOR=${VANTAGE_CHANGELOG_ANCHOR}
 RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine

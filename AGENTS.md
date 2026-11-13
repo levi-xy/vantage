@@ -192,7 +192,8 @@ All routes under `/api/v1`, JSON, session auth, CSRF token on state-changing req
 | GET | `/setup/status` | none | Is first-run setup needed |
 | POST | `/setup` | none, only when no users exist | Create the first admin: `{username, password, setup_code}`. 409 once setup is done (checked first); a missing or wrong `setup_code`, or none stored, is 403 `{"detail", "reason": "setup_code_invalid"}` and creates nothing; wrong codes count on the per-client login limit (429). The code is never echoed, logged or audited (maintainer-approved 2026-11-10) |
 | POST | `/auth/login`, `/auth/logout` | none / any | Session |
-| GET | `/me` | any | Current user |
+| GET | `/me` | any | Current user: `{id, username, role, csrf_token, server_version}`; `server_version` = the backend's release version, `"dev"` for an unstamped build, set by the image build's `VANTAGE_VERSION` (maintainer-approved 2026-11-13). Unauthenticated routes (`/setup/status`, `/healthz`) never show a version |
+| GET | `/about` | any | What is running: `{backend_version, backend_build_date, schema_version, prometheus_version, started_at}`; `backend_build_date` from the image build's `VANTAGE_BUILD_DATE`, `schema_version` = the current Alembic revision, `prometheus_version` from Prometheus' `/api/v1/status/buildinfo` through the query proxy's client (3 s timeout, cached 60 s), `started_at` = the backend's last start (UTC). Any value that can't be known is null; never an address or error text. Read-only; 401 without a session (maintainer-approved 2026-11-13) |
 | POST | `/me/password` | any | Change your own password: `{current_password, new_password}`; ends your other sessions |
 | GET/POST | `/users` | admin | List users / create one: `{username, password, role}` (no response carries a password or hash) |
 | PATCH/DELETE | `/users/{id}` | admin | Change the role (`{role}`) / delete |

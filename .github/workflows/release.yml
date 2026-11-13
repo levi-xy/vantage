@@ -68,12 +68,25 @@ jobs:
           labels: |
             org.opencontainers.image.licenses=MIT
 
+      # The tag without its leading "v" (0.1.1, 0.1.1-rc.1), stamped into both images.
+      - id: version
+        run: |
+          echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+          # The About page's link to this version's CHANGELOG.md section (the frontend's
+          # build context can't see the file, so the anchor is computed here).
+          echo "anchor=$(node frontend/scripts/changelog-anchor.mjs CHANGELOG.md "${GITHUB_REF_NAME#v}")" >> "$GITHUB_OUTPUT"
+
       - id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ${{ matrix.image }}
           # LICENSE and NOTICE from the repository root (its .dockerignore sends only those).
           build-contexts: license=.
+          build-args: |
+            VANTAGE_VERSION=${{ steps.version.outputs.value }}
+            VANTAGE_BUILD_DATE=${{ steps.version.outputs.date }}
+            VANTAGE_CHANGELOG_ANCHOR=${{ steps.version.outputs.anchor }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
