@@ -135,3 +135,6 @@ jobs:
         run: python3 deploy/make_bundle.py 0.0.0-ci dist
       - name: Start it from scratch and check it
         run: scripts/standalone_smoke.sh dist/compose.yml
+      - name: Docker daemon log (on failure)
+        if: failure()
+        run: sudo journalctl -u docker --no-pager | tail -50
