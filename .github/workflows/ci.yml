@@ -110,3 +110,64 @@ jobs:
         run: python3 deploy/make_bundle.py 0.0.0-ci dist
       - name: Start it from scratch and check it
         run: scripts/standalone_smoke.sh dist/compose.yml
+
+  # An upgrade, the way docs/OPERATIONS.md tells standalone users to do it: the latest final
+  # release (its own compose.yml and published images) gets real data through the API, then
+  # the stack is redeployed with a compose file for images built from this commit, keeping
+  # the volumes. Nothing may be lost, secrets still decrypt, the audit log is intact.
+  upgrade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PROJECT: vantage-upgrade
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Build the images from this commit
+        run: |
+          docker build -t ghcr.io/levi-xy/vantage-backend:0.0.0-ci --build-context license=. backend
+          docker build -t ghcr.io/levi-xy/vantage-frontend:0.0.0-ci --build-context license=. frontend
+      - name: Write the compose files (previous release and this build)
+        run: |
+          mkdir -p upgrade-run
+          # /releases/latest is the newest final release (a pre-release is never "latest").
+          curl -sSfL --retry 6 --retry-delay 10 --retry-all-errors -o upgrade-run/old.yml \
+            https://github.com/levi-xy/vantage/releases/latest/download/compose.yml
+          prev=$(sed -n 's/^ *VANTAGE_RELEASE: "\(.*\)"$/\1/p' upgrade-run/old.yml)
+          echo "Previous release: ${prev:-unknown}"
+          grep -q 'ghcr.io/levi-xy/vantage-backend:' upgrade-run/old.yml
+          python3 deploy/make_bundle.py 0.0.0-ci dist
+          cp dist/compose.yml upgrade-run/new.yml
+      - name: Start the previous release and create data
+        run: |
+          cd upgrade-run
+          docker compose -p "$PROJECT" -f old.yml up -d
+          i=0
+          until curl -fsk -o /dev/null https://127.0.0.1:8443/healthz/live; do
+            i=$((i + 1)); [ "$i" -lt 60 ] || { echo "the old stack didn't start"; exit 1; }
+            sleep 3
+          done
+          code=$(docker compose -p "$PROJECT" -f old.yml exec -T backend \
+            python -m app.cli setup-code --quiet | tail -n 1 | tr -d '\r')
+          python3 ../scripts/upgrade_check.py seed --setup-code "$code" --state state.json
+      - name: Back up, then upgrade the documented way (new compose file, same volumes)
+        run: |
+          cd upgrade-run
+          docker compose -p "$PROJECT" -f old.yml exec -T backend \
+            python -m app.cli backup - > backup.json.gz
+          [ -s backup.json.gz ] || { echo "the backup is empty"; exit 1; }
+          docker compose -p "$PROJECT" -f new.yml up -d --pull never
+          docker compose -p "$PROJECT" -f new.yml ps
+      - name: Check that nothing was lost
+        run: |
+          python3 scripts/upgrade_check.py verify --state upgrade-run/state.json --release 0.0.0-ci
+      - name: Container logs
+        if: failure()
+        run: |
+          cd upgrade-run
+          docker compose -p "$PROJECT" -f new.yml ps -a || true
+          docker compose -p "$PROJECT" -f new.yml logs --no-color || true
+      - name: Remove the stack
+        if: always()
+        run: |
+          cd upgrade-run
+          docker compose -p "$PROJECT" -f new.yml down -v --remove-orphans || true
