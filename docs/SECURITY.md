@@ -789,7 +789,11 @@ Known and deliberately accepted; listed so nobody rediscovers them as bugs.
   `VANTAGE_PUBLIC_HOSTS`) compare against the `Host` header the backend receives. A
   proxy in front of Vantage must keep it: nginx `proxy_set_header Host $http_host`,
   Apache `ProxyPreserveHost On`, Traefik `passHostHeader: true` (its default).
-  Otherwise live updates are refused.
+  Otherwise live updates are refused, unless the `Origin`'s host is listed in
+  `VANTAGE_PUBLIC_HOSTS` (an admin-set allowlist, so a foreign page can't use it; the
+  session cookie is still required). A missing `Origin` is always refused. Each refusal
+  logs one WARNING per reason per minute with the Origin and Host values. See
+  [OPERATIONS.md](OPERATIONS.md#reverse-proxy).
 - **One backend worker only.** Rate limits, the query and WebSocket caps, instance
   status and the alert evaluator live in one process's memory. Several workers or
   replicas would multiply the limits and duplicate alerts; the image runs one.

@@ -180,7 +180,8 @@ export function computeHealth(input: HealthInput): Health {
       level: "warning",
       tag: "OFFLINE",
       title: "Live connection lost",
-      detail: "reconnecting to the backend",
+      detail:
+        "live updates are paused and the page still works; reconnecting. Behind a reverse proxy this usually means WebSocket upgrades or the Host header aren't passed through (see Reverse proxy in docs/OPERATIONS.md)",
       since: null,
       href: null,
     });

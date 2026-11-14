@@ -16,6 +16,94 @@ An install from before 0.1.0-rc.4 has `VANTAGE_BIND_ADDRESS=127.0.0.1` in its `.
 
 Never publish the dashboard to the internet. Recommended: a dedicated monitoring VLAN, outbound internet blocked except the cloud API hosts you use, and dashboard access only from admin machines or your VPN.
 
+## Reverse proxy
+
+Vantage's web container (`frontend`) serves the dashboard on port 8443, HTTPS with a self-signed certificate by default (plain HTTP on the same port with `VANTAGE_HTTPS=false`). A proxy in front of it must do three things:
+
+1. Pass **WebSocket upgrades** on `/api/v1/ws`. Without them the page works but shows **Live connection lost** and gets no live updates.
+2. Keep the **original `Host` header** (the name the browser used). Vantage compares it with the WebSocket's `Origin`, and `VANTAGE_PUBLIC_HOSTS` checks it too.
+3. Send `X-Forwarded-*` headers if you like; Vantage ignores them unless the proxy's address is in `VANTAGE_TRUSTED_PROXIES`.
+
+Upstream address in the examples below: `https://10.0.0.5:8443` (the Docker host). The certificate is self-signed, so tell the proxy not to verify it for this hop, or set `VANTAGE_HTTPS=false` and use `http://10.0.0.5:8443`. If the proxy runs on the same host, set `VANTAGE_BIND_ADDRESS=127.0.0.1` so that only it can reach port 8443 (then don't list an `ip:8443` entry below, since nobody opens that address).
+
+### VANTAGE_PUBLIC_HOSTS
+
+Set it in `.env` (then `docker compose up -d`) to every name **and** `host:port` the browser uses to open Vantage, comma-separated, including the server's IP if you also open it directly (only if port 8443 is reachable from your machines):
+
+```
+VANTAGE_PUBLIC_HOSTS=vantage.example.com,10.0.0.5:8443
+```
+
+Each address the browser uses, port included, must be listed. In the API's `Host` check an entry without a port allows any port; for the live connection's `Origin` it means the default port of the page's scheme (443 for https, 80 for http), so another web app on the same host at another port is refused. The backend answers 400 to API requests whose `Host` isn't listed. If the proxy rewrites `Host` (to the upstream's address), list that address too: a WebSocket whose `Origin` is a listed name is accepted even then. Unset, any `Host` is accepted, and the `Origin` must equal the `Host`.
+
+### Nginx Proxy Manager
+
+Edit the proxy host: Scheme `https`, Forward Hostname/IP `10.0.0.5`, Forward Port `8443`, switch on **Websockets Support**. NPM passes the `Host` header by default. NPM doesn't verify the upstream certificate by default. Don't add `proxy_set_header Host` overrides.
+
+### Traefik
+
+```yaml
+services:
+  frontend:
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.vantage.rule=Host(`vantage.example.com`)
+      - traefik.http.routers.vantage.entrypoints=websecure
+      - traefik.http.routers.vantage.tls=true
+      - traefik.http.services.vantage.loadbalancer.server.port=8443
+      - traefik.http.services.vantage.loadbalancer.server.scheme=https
+      - traefik.http.services.vantage.loadbalancer.serversTransport=vantage-insecure@file
+```
+
+Traefik must share a Docker network with the `frontend` service (put both on one network and set `traefik.docker.network`). Traefik passes `Host` unchanged (`passHostHeader` defaults to true) and upgrades WebSockets by itself. The `serversTransport` is a file-provider entry with `insecureSkipVerify: true` for the self-signed certificate (better: `rootCAs` in the serversTransport, pinning Vantage's `certs/tls.crt`); with `VANTAGE_HTTPS=false` use scheme `http` and drop it.
+
+### Caddy
+
+```
+vantage.example.com {
+    reverse_proxy https://10.0.0.5:8443 {
+        transport http {
+            tls_insecure_skip_verify
+        }
+    }
+}
+```
+
+Caddy passes `Host` and upgrades WebSockets by default. Better than skipping verification: `tls_trusted_ca_certs /path/to/tls.crt` (Vantage's certificate) in the transport block. With `VANTAGE_HTTPS=false`, use `reverse_proxy 10.0.0.5:8443` and no transport block.
+
+### Plain nginx
+
+```
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ""      close;
+}
+
+server {
+    listen 443 ssl;
+    server_name vantage.example.com;
+    # ssl_certificate / ssl_certificate_key: your certificate
+
+    location / {
+        proxy_pass https://10.0.0.5:8443;  # nginx doesn't verify the upstream certificate by default
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 1h;
+    }
+}
+```
+
+`$http_host` keeps the port the browser used in the header.
+
+### Still "Live connection lost"?
+
+The backend logs one WARNING per minute and reason when it refuses the live connection (`docker compose logs backend`). It names the `Origin` host and the `Host` header it received, never the cookie. Typical causes: the `Host` seen differs from the browser's name (proxy rewriting it) and neither is the same as the `Origin` nor listed in `VANTAGE_PUBLIC_HOSTS`; the proxy drops the `Upgrade` headers; "no session cookie" (log in again).
+
 ## Standalone install
 
 For Portainer, Dockge and other stack managers: a single compose file that needs no files on the host. It is shown in the [README](../README.md#portainer--dockge) and attached to every release as `compose.yml`. `setup.sh` stays the other way to install; the two don't share files, so pick one per server.

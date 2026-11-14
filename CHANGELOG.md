@@ -4,6 +4,9 @@ All notable changes, newest first. Versions follow [semantic versioning](https:/
 
 ## Unreleased (0.1.1)
 
+- Behind a reverse proxy, the live connection is also accepted when the browser's `Origin` host is listed in `VANTAGE_PUBLIC_HOSTS`, even if the proxy rewrote `Host`. A missing `Origin` is still refused. Nothing to change on upgrade.
+- The backend logs a WARNING (at most once a minute per reason) saying why a live-connection handshake was refused, with the Origin and Host values.
+- The "Live connection lost" banner says live updates are paused and points to the new Reverse proxy section in `docs/OPERATIONS.md` (Nginx Proxy Manager, Traefik, Caddy, nginx).
 - First-run setup explains the master key (what it protects, where it is, that it needs a copy outside the server) and asks you to tick "I have backed up my master key" before the admin account can be created. The tick is only a reminder in the browser; nothing is stored.
 
 ## 0.1.0 (2026-11-12)
