@@ -48,6 +48,13 @@ check_stat frontend /run/secrets/tls_cert "644 0 0"
 check_stat prometheus /etc/vantage/prometheus.yml "644 0 0"
 echo "ok: owners and modes"
 
+# The ping sysctl the compose file sets is what the backend's network namespace has.
+want=$(sed -n 's/.*net\.ipv4\.ping_group_range: *"\([0-9 ]*\)".*/\1/p' compose.yml | head -n 1)
+[ -n "$want" ] || fail "no ping_group_range in the compose file"
+got=$(dc exec -T backend cat /proc/sys/net/ipv4/ping_group_range | tr -d '\r' | tr -s '[:space:]' ' ' | sed 's/ $//')
+[ "$got" = "$want" ] || fail "ping_group_range in backend is '$got', want '$want'"
+echo "ok: ping_group_range is $got"
+
 # The volumes are read-only for the services.
 if dc exec -T backend sh -c ': > /run/vantage/key/x' 2>/dev/null; then
     fail "the backend can write to the key volume"

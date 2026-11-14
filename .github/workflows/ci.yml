@@ -111,6 +111,34 @@ jobs:
       - name: Start it from scratch and check it
         run: scripts/standalone_smoke.sh dist/compose.yml
 
+  # The same smoke under Docker user-namespace remapping, as in an unprivileged LXC:
+  # root in a container maps to a high host UID. Catches sysctl, GID and volume
+  # ownership bugs that the plain runner can't show. Remapping is switched on before
+  # the images are built, because the remapped daemon has its own image store.
+  standalone-userns:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Turn on user-namespace remapping in dockerd
+        run: |
+          echo '{"userns-remap": "default"}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+          docker info --format '{{.SecurityOptions}}' | tee /dev/stderr | grep -q 'name=userns' \
+            || { echo "userns-remap is not active" >&2; exit 1; }
+          grep dockremap /etc/subuid
+      - name: Build the images
+        run: |
+          docker build -t ghcr.io/levi-xy/vantage-backend:0.0.0-ci --build-context license=. backend
+          docker build -t ghcr.io/levi-xy/vantage-frontend:0.0.0-ci --build-context license=. frontend
+      - name: Write the standalone compose file for these images
+        run: python3 deploy/make_bundle.py 0.0.0-ci dist
+      - name: Start it from scratch and check it
+        run: scripts/standalone_smoke.sh dist/compose.yml
+      - name: Docker daemon log (on failure)
+        if: failure()
+        run: sudo journalctl -u docker --no-pager | tail -50
+
   # An upgrade, the way docs/OPERATIONS.md tells standalone users to do it: the latest final
   # release (its own compose.yml and published images) gets real data through the API, then
   # the stack is redeployed with a compose file for images built from this commit, keeping
