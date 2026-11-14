@@ -13,7 +13,7 @@ x-hardening: &hardening
 services:
   init:
     <<: *hardening
-    image: ghcr.io/levi-xy/vantage-backend:0.1.0
+    image: ghcr.io/levi-xy/vantage-backend:0.1.1
     command: ["python", "-m", "app.cli", "standalone-init"]
     # Root with only the two capabilities needed to give each file its owner and mode.
     user: "0:0"
@@ -35,14 +35,14 @@ services:
 
   backend:
     <<: *hardening
-    image: ghcr.io/levi-xy/vantage-backend:0.1.0
+    image: ghcr.io/levi-xy/vantage-backend:0.1.1
     depends_on:
       init:
         condition: service_completed_successfully
     stop_grace_period: 20s
     environment:
       # The release these images are, shown in the UI. Change it with the image tags.
-      VANTAGE_RELEASE: "0.1.0"
+      VANTAGE_RELEASE: "0.1.1"
       VANTAGE_DATABASE_URL: ${VANTAGE_DATABASE_URL:-sqlite:////data/vantage.db}
       VANTAGE_MASTER_KEY_FILE: /run/vantage/key/master_key
       VANTAGE_PROMETHEUS_TOKEN_FILE: /run/secrets/prometheus_token
@@ -67,7 +67,7 @@ services:
 
   frontend:
     <<: *hardening
-    image: ghcr.io/levi-xy/vantage-frontend:0.1.0
+    image: ghcr.io/levi-xy/vantage-frontend:0.1.1
     depends_on:
       init:
         condition: service_completed_successfully
