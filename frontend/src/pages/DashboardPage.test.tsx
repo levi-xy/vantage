@@ -157,14 +157,12 @@ describe("dashboard page", () => {
     }
   });
 
-  it("lets a viewer edit too (dashboards are shared by everyone)", async () => {
+  it("gives a viewer no edit button, and an empty dashboard no add button", async () => {
     const backend = backendWith({ version: 2, cards: [PING] }, "viewer");
     renderApp("/", backend);
     expect(await screen.findByTestId("card")).toHaveTextContent("nas-1");
-    fireEvent.click(screen.getByRole("button", { name: "Edit dashboard" }));
-    fireEvent.click(screen.getByRole("button", { name: "Remove Ping" }));
-    fireEvent.click(screen.getByRole("button", { name: "Done" }));
-    await waitFor(() => expect(puts(backend)).toHaveLength(1));
+    expect(screen.queryByRole("button", { name: "Edit dashboard" })).not.toBeInTheDocument();
+    expect(puts(backend)).toHaveLength(0);
   });
 
   it("shows an error when the dashboard can't be loaded", async () => {

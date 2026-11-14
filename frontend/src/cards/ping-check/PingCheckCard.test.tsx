@@ -6,7 +6,10 @@ import { json } from "../../test-utils";
 import { PingCheckCard } from "./PingCheckCard";
 
 const client = new ApiClient({ fetch: vi.fn() });
-vi.mock("../../app/session", () => ({ useApiClient: () => client }));
+vi.mock("../../app/session", () => ({
+  useApiClient: () => client,
+  useCanEditDashboards: () => true,
+}));
 
 const instance = {
   id: "inst-1",

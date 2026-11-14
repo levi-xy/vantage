@@ -61,6 +61,7 @@ Open the address `setup.sh` printed. The **Welcome to Vantage** page asks for:
 - **Setup code**: the code from `setup.sh`.
 - **Admin username**: 1 to 64 characters, letters, digits, dot, dash or underscore, starting with a letter or digit.
 - **Password** and **Confirm password**: at least 12 characters.
+- **Back up your master key**: a short note on the master key (it encrypts every stored device credential and channel token; without it you enter them all again, and a database backup can't help) and where it is (`secrets/master.key` in the folder where you ran `setup.sh`, or the `master-key` volume on the standalone install; see [OPERATIONS.md](OPERATIONS.md#back-up-the-master-key)). Copy it somewhere safe outside the server, then tick **I have backed up my master key**. **Create admin account** stays disabled until you do. The tick is only a browser-side reminder: nothing is sent or stored, and nothing reminds you again later.
 
 Press **Create admin account**. You are logged in and land on the dashboard. This page only exists while there is no user; more accounts are added under **Settings → Users** (see [Users and settings](#users-and-settings)).
 
@@ -158,9 +159,11 @@ Each device has a colour, so its cards are easy to spot: every card of the devic
 
 ## Dashboards
 
-Dashboards are shared: everyone sees the same dashboards, and every role can edit them. Editing works on desktop widths only; a phone shows the cards in one column.
+Dashboards are shared: everyone sees the same dashboards, and only admins can edit them (viewers see no **Edit dashboard** button or **+** tab). Editing works on desktop widths only; a phone shows the cards in one column.
 
 ### How do I rearrange the dashboard?
+
+Only admins can do this; viewers see the dashboard as it is.
 
 1. Press **Edit dashboard**.
 2. Drag a card by its body to move it. Drag its bottom-right corner to resize it. Cards float up into free space.
@@ -361,7 +364,7 @@ If the web app and the server come from different builds (different commits), a 
 | | Viewer | Admin |
 |---|---|---|
 | See dashboards, devices, device pages, maps, alerts | yes | yes |
-| Arrange dashboards (cards, tabs) | yes | yes |
+| Arrange dashboards (cards, tabs) | | yes |
 | Change own password and display settings (**My account**) | yes | yes |
 | Add, test, edit, disable, delete devices | | yes |
 | Create and edit maps | | yes |

@@ -11,7 +11,7 @@ const LIST = [
 ];
 const empty = (id: number, name: string) => json({ id, name, layout: { version: 2, cards: [] } });
 
-function backend(role: "admin" | "viewer" = "viewer") {
+function backend(role: "admin" | "viewer" = "admin") {
   return fakeBackend({
     session: exampleMe(role),
     routes: {
@@ -97,6 +97,13 @@ describe("dashboard tabs", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/"));
     expect(b.requests().map((r) => r.route)).toContain("DELETE /dashboards/5");
     confirm.mockRestore();
+  });
+
+  it("gives a viewer the tabs but no way to add, rename, move or delete", async () => {
+    renderApp("/d/5", backend("viewer"));
+    expect(await screen.findByRole("link", { name: "Rack" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New dashboard" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit dashboard" })).not.toBeInTheDocument();
   });
 
   it("on a phone: a select of the dashboards", async () => {

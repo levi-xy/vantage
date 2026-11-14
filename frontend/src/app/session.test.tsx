@@ -94,6 +94,7 @@ describe("first-run setup", () => {
     fill("Admin username", "-bad name");
     fill(/^Password/, "short");
     fill("Confirm password", "other");
+    fireEvent.click(screen.getByLabelText("I have backed up my master key"));
     fireEvent.click(screen.getByRole("button", { name: "Create admin account" }));
 
     expect(screen.getByLabelText("Admin username")).toHaveAttribute("aria-invalid", "true");
@@ -115,6 +116,7 @@ describe("first-run setup", () => {
     fill("Admin username", "example-admin");
     fill(/^Password/, "a-long-example-password");
     fill("Confirm password", "a-long-example-password");
+    fireEvent.click(screen.getByLabelText("I have backed up my master key"));
     fireEvent.click(screen.getByRole("button", { name: "Create admin account" }));
 
     await mainNav();
@@ -146,6 +148,7 @@ describe("first-run setup", () => {
     fill("Admin username", "admin");
     fill(/^Password/, "a-long-example-password");
     fill("Confirm password", "a-long-example-password");
+    fireEvent.click(screen.getByLabelText("I have backed up my master key"));
     fireEvent.click(screen.getByRole("button", { name: "Create admin account" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("String too short");
   });
@@ -159,6 +162,7 @@ describe("first-run setup", () => {
     fill("Admin username", "admin");
     fill(/^Password/, "a-long-example-password");
     fill("Confirm password", "a-long-example-password");
+    fireEvent.click(screen.getByLabelText("I have backed up my master key"));
     fireEvent.click(screen.getByRole("button", { name: "Create admin account" }));
 
     expect(await screen.findByRole("heading", { level: 1, name: "Log in" })).toBeInTheDocument();

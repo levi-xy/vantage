@@ -214,6 +214,16 @@ export function useUser(): SessionUser {
   return state.user;
 }
 
+/**
+ * Whether the user may arrange dashboards (admins only). Only a hint for the UI: the backend
+ * enforces it. Safe outside a session (a card rendered on its own), where it answers yes.
+ */
+// eslint-disable-next-line react-refresh/only-export-components
+export function useCanEditDashboards(): boolean {
+  const state = useContext(SessionContext)?.state;
+  return !(state?.status === "authenticated" && state.user.role === "viewer");
+}
+
 /** The API client pages fetch through, so their requests share the session's CSRF token. */
 // eslint-disable-next-line react-refresh/only-export-components
 export function useApiClient(): ApiClient {

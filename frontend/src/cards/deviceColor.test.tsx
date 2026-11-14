@@ -10,7 +10,7 @@ import { PingCheckCard } from "./ping-check/PingCheckCard";
 import { renderCard, testInstance, vector } from "./testRender";
 
 const client = new ApiClient({ fetch: vi.fn() });
-vi.mock("../app/session", () => ({ useApiClient: () => client }));
+vi.mock("../app/session", () => ({ useApiClient: () => client, useCanEditDashboards: () => true }));
 
 const device: Instance = { ...testInstance, enabled: true, color: "violet" };
 
