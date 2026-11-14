@@ -169,6 +169,10 @@ def test_settings_match_the_bundle_compose_file(
     # Only the key's path differs (a volume folder instead of a compose secret).
     assert backend_env.pop("VANTAGE_MASTER_KEY_FILE") == "/run/vantage/key/master_key"
     assert bundle_env.pop("VANTAGE_MASTER_KEY_FILE") == "/run/secrets/master_key"
+    # The release the UI shows: pinned here with the image tags; the source compose file
+    # builds from source and leaves it to the bundle (deploy/make_bundle.py).
+    assert backend_env.pop("VANTAGE_RELEASE") == ours["backend"]["image"].rsplit(":", 1)[1]
+    assert "VANTAGE_RELEASE" not in bundle_env
     assert backend_env == bundle_env
     assert ours["frontend"]["environment"] == theirs["frontend"]["environment"]
     assert ours["frontend"]["networks"] == theirs["frontend"]["networks"]

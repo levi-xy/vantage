@@ -2,6 +2,10 @@ name: Release images
 
 # Publishes the backend and frontend images to GitHub Container Registry, only when a
 # version tag (v0.1.0, v0.1.0-rc.1) is pushed. Nothing here runs on pull requests or main.
+# A release candidate tag (v0.1.1-rc.1) builds, signs and pushes the images. A final tag
+# (v0.1.1) builds nothing: it promotes the images of the newest rc of that version, the
+# ones the maintainer tested, by adding the final tags to the same digests. The steps
+# are in docs/RELEASING.md.
 # Actions are pinned to commit SHAs (the job can push and sign images); the comment names
 # the major version each SHA was taken from.
 on:
@@ -16,19 +20,34 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Before anything is built or pushed: a final release tag must match the image version
-  # in deploy/compose.standalone.yml, the file the README shows, so the copy people paste
-  # never names an old release. Pre-release tags pass.
+  # Before anything is built or pushed: a final release tag must match the version in
+  # deploy/compose.standalone.yml (its image tags and the backend's VANTAGE_RELEASE, which
+  # must agree), the file the README shows, so the copy people paste never names an old
+  # release and the UI shows the release, not the rc the images were built as. Any tag
+  # also needs a deploy/docker-compose.yml the bundle can stamp (no VANTAGE_RELEASE of its
+  # own: make_bundle.py writes it next to the image tag). Pre-release tags skip the match.
   version:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      final: ${{ steps.kind.outputs.final }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: The tag matches the standalone compose file
         run: python3 deploy/make_bundle.py --check "$GITHUB_REF_NAME"
+      - id: kind
+        name: Release candidate or final release
+        run: |
+          case "$GITHUB_REF_NAME" in
+            *-*) echo "final=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "final=true" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+  # Release candidates (any tag with a pre-release part) are built from source.
 
   image:
     needs: version
+    if: needs.version.outputs.final == 'false'
     runs-on: ubuntu-latest
     # arm64 builds run under QEMU; a stuck build must not hold the runner for 6 hours.
     timeout-minutes: 60
@@ -54,8 +73,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Stamped into both images: the tag without its leading "v" (0.1.1-rc.1), the build
+      # date and the checked-out source revision. A promoted final release keeps them all
+      # (the backend reports the release from the compose file's VANTAGE_RELEASE); the web
+      # app compares the two images' revisions, equal for an rc and its final release.
+      - id: version
+        run: |
+          echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       # Tags: the full version (0.1.0), major.minor (0.1) for releases only, and "latest"
       # for releases only (a pre-release like 0.1.0-rc.1 gets just its own tag).
+      # metadata-action sets org.opencontainers.image.revision to github.sha by default;
+      # it is set here to the same revision as the VANTAGE_COMMIT build arg (the Dockerfiles
+      # label it too), so the label and what the backend reports can't differ.
       - id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
@@ -67,6 +99,7 @@ jobs:
             latest=auto
           labels: |
             org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.revision=${{ steps.version.outputs.revision }}
 
       - id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
@@ -74,6 +107,10 @@ jobs:
           context: ${{ matrix.image }}
           # LICENSE and NOTICE from the repository root (its .dockerignore sends only those).
           build-contexts: license=.
+          build-args: |
+            VANTAGE_VERSION=${{ steps.version.outputs.value }}
+            VANTAGE_BUILD_DATE=${{ steps.version.outputs.date }}
+            VANTAGE_COMMIT=${{ steps.version.outputs.revision }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
@@ -90,14 +127,147 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: cosign sign --yes "${IMAGE}@${DIGEST}"
 
+  # A final release ships the exact images of its newest release candidate: no rebuild.
+  # scripts/release_promote.py picks the rc and checks it. Nothing is tagged unless the
+  # rc's commit is the final tag's commit (or an ancestor that differs only in release
+  # metadata: README.md, CHANGELOG.md, the standalone compose file's image tags and
+  # VANTAGE_RELEASE) and both
+  # images carry the rc run's cosign signature for that commit. Both images are checked
+  # before either is signed or tagged, so a refused promotion changes nothing.
+  promote:
+    needs: version
+    if: needs.version.outputs.final == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write # add tags on ghcr.io
+      id-token: write # keyless cosign signing (Sigstore OIDC)
+    env:
+      REGISTRY: ghcr.io/${{ github.repository_owner }}
+      IMAGES: vantage-backend vantage-frontend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0 # every tag, and the history between the rc and the final tag
+          persist-credentials: false # later steps only read the local clone
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+
+      - name: Pick the release candidate and check its commit
+        run: |
+          rc=$(python3 scripts/release_promote.py rc-tag "$GITHUB_REF_NAME")
+          commit=$(python3 scripts/release_promote.py check-source "$rc" "$GITHUB_REF_NAME")
+          echo "Promoting $rc (commit $commit) to $GITHUB_REF_NAME"
+          echo "RC_TAG=$rc" >> "$GITHUB_ENV"
+
+      # The digest behind each rc tag, and the signature the rc run made on it: this
+      # workflow, at the rc tag, from the rc's commit. Digests go to $RUNNER_TEMP/<image>.
+      - name: Resolve and verify the rc images
+        run: |
+          for name in $IMAGES; do
+            image="${REGISTRY}/${name}"
+            digest=$(docker buildx imagetools inspect "${image}:${RC_TAG#v}" \
+              --format '{{json .Manifest}}' | python3 scripts/release_promote.py digest)
+            cosign verify "${image}@${digest}" \
+              --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/${RC_TAG}" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              --certificate-github-workflow-repository "$GITHUB_REPOSITORY" \
+              --certificate-github-workflow-trigger push \
+              --output json > "$RUNNER_TEMP/cosign-${name}.json"
+            python3 scripts/release_promote.py check-signature \
+              "$RUNNER_TEMP/cosign-${name}.json" "$digest" "$RC_TAG"
+            echo "$digest" > "$RUNNER_TEMP/${name}"
+            echo "ok: ${image}:${RC_TAG#v} = ${digest}"
+          done
+
+      # A second signature on the same digest, from this run, so the final tag's own
+      # workflow identity (release.yml@refs/tags/vX.Y.Z) verifies too. Before tagging:
+      # the final tags never point at an image without it.
+      - name: Sign the images for the final release
+        run: |
+          for name in $IMAGES; do
+            cosign sign --yes -a "promoted-from=${RC_TAG}" \
+              "${REGISTRY}/${name}@$(cat "$RUNNER_TEMP/${name}")"
+          done
+
+      # The tags a build used to get: X.Y.Z, X.Y and latest. A single source is copied as
+      # it is, so they point at the rc's digest (with its SBOM and provenance). The dry
+      # run proves that before any tag moves; the last step checks it again.
+      - name: The copy keeps the rc's digests (dry run)
+        run: |
+          for name in $IMAGES; do
+            image="${REGISTRY}/${name}"
+            digest=$(cat "$RUNNER_TEMP/${name}")
+            docker buildx imagetools create --dry-run --tag "${image}:dry-run" "${image}@${digest}" \
+              > "$RUNNER_TEMP/dry-run-${name}.json"
+            python3 scripts/release_promote.py check-dry-run "$digest" \
+              < "$RUNNER_TEMP/dry-run-${name}.json"
+          done
+
+      # X.Y.Z on both images first, X.Y and latest on both last: a failure halfway never
+      # leaves latest on a backend and frontend from different releases.
+      - name: Add the version tags
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          for name in $IMAGES; do
+            image="${REGISTRY}/${name}"
+            docker buildx imagetools create --tag "${image}:${version}" \
+              "${image}@$(cat "$RUNNER_TEMP/${name}")"
+          done
+
+      - name: Move the X.Y and latest tags
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          for name in $IMAGES; do
+            image="${REGISTRY}/${name}"
+            docker buildx imagetools create \
+              --tag "${image}:${version%.*}" \
+              --tag "${image}:latest" \
+              "${image}@$(cat "$RUNNER_TEMP/${name}")"
+          done
+
+      - name: The final tags point at the rc's digests
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          {
+            echo "Promoted ${RC_TAG} to ${GITHUB_REF_NAME}:"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+          for name in $IMAGES; do
+            image="${REGISTRY}/${name}"
+            want=$(cat "$RUNNER_TEMP/${name}")
+            for tag in "$version" "${version%.*}" latest; do
+              got=$(docker buildx imagetools inspect "${image}:${tag}" \
+                --format '{{json .Manifest}}' | python3 scripts/release_promote.py digest)
+              if [ "$got" != "$want" ]; then
+                echo "::error::${image}:${tag} is ${got}, want ${want}"
+                exit 1
+              fi
+            done
+            echo "- \`${image}:${version}\` = \`${want}\`" >> "$GITHUB_STEP_SUMMARY"
+          done
+
   # The install files and their checksums, attached to a DRAFT release: the owner reviews
   # the notes and publishes. vantage-deploy-<version>.tar.gz (deploy/ with a compose file
-  # that pulls the images just pushed), the same bundle as vantage-deploy.tar.gz, and
-  # compose.yml (the standalone compose file with this version's images). The version-free
-  # names are what README's /releases/latest/download/ links fetch; GitHub's "latest"
+  # that pulls this version's images: just built for an rc, promoted for a final), the
+  # same bundle as vantage-deploy.tar.gz, and compose.yml (the standalone compose file
+  # with this version's images). The version-free names are what README's /releases/latest/download/ links fetch; GitHub's "latest"
   # skips pre-releases, so those links follow the newest full release only.
   bundle:
-    needs: image
+    needs: [image, promote]
+    # One of the two ran (the other is skipped) and nothing failed.
+    if: >-
+      !cancelled() && !failure() &&
+      (needs.image.result == 'success' || needs.promote.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

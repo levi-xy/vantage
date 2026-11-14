@@ -11,6 +11,7 @@ import { HealthStatus } from "./HealthStatus";
 import { useLastDataUpdate, useLiveUpdates } from "./live";
 import { useNavOrder } from "./navOrder";
 import { useApiClient, useSession, useUser } from "./session";
+import { commitsMismatch, FRONTEND_COMMIT, FRONTEND_VERSION, shownVersion } from "./version";
 import { setTimeZone } from "./time";
 import { TIME_KEY } from "./timeSettings";
 
@@ -195,7 +196,10 @@ interface MenuItem {
   role?: Role;
 }
 
-const MENU: readonly MenuItem[] = [{ to: "/account", label: "My account" }];
+const MENU: readonly MenuItem[] = [
+  { to: "/account", label: "My account" },
+  { to: "/settings/about", label: "About" },
+];
 
 /** The Dashboard tab also stands for every other dashboard (`/d/<id>`). */
 function useOnOtherDashboard(): boolean {
@@ -445,6 +449,27 @@ function AccountMenu({
   );
 }
 
+/** "Vantage <release>" at the foot of the sidebar; a marker while web app and server are different builds. */
+function VersionFooter() {
+  const user = useUser();
+  const mismatch = commitsMismatch(FRONTEND_COMMIT, user.server_commit);
+  return (
+    <Link
+      to="/settings/about"
+      className={`hidden truncate px-1 text-center text-xs text-muted hover:text-ink md:block ${focusRing}`}
+    >
+      Vantage {shownVersion(user.server_version, FRONTEND_VERSION)}
+      {mismatch && (
+        <span className="text-crit-text" title="The web app and the server are different builds">
+          {" "}
+          <span aria-hidden="true">⚠</span>
+          <span className="sr-only"> (version mismatch, see About)</span>
+        </span>
+      )}
+    </Link>
+  );
+}
+
 /** Navigation around every page: a left sidebar on desktop; a top bar and bottom tab bar on phones. */
 export function Layout() {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -587,6 +612,7 @@ export function Layout() {
               </svg>
             </button>
           </div>
+          {!collapsed && <VersionFooter />}
           {menuOpen && <AccountMenu onClose={() => setMenuOpen(false)} panelRef={panelRef} />}
         </div>
       </header>

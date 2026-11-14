@@ -29,6 +29,7 @@ import type {
   InstanceTest,
   InstanceUpdate,
   IntegrationInfo,
+  About,
   Me,
   PasswordChange,
   QueryRequest,
@@ -208,6 +209,11 @@ export class ApiClient {
   /** Any role. Needs the current password; ends the user's other sessions (this one stays). */
   changeMyPassword(body: PasswordChange): Promise<void> {
     return this.request("POST", "/me/password", body);
+  }
+
+  /** Any role: what is running (versions, schema, uptime). */
+  about(): Promise<About> {
+    return this.request("GET", "/about");
   }
 
   /** Any role: the one timezone everyone sees times in, and the server's clock. */

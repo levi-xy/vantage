@@ -1,3 +1,1 @@
-"""Vantage backend."""
-
-__version__ = "0.0.0"
+"""Vantage backend. Its version, build and commit are in app.version."""

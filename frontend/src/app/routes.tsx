@@ -15,8 +15,19 @@ import { SettingsShell } from "../pages/settings/SettingsShell";
 import { TimePage } from "../pages/TimePage";
 import { SetupPage } from "../pages/SetupPage";
 import { UsersPage } from "../pages/UsersPage";
+import type { ReactNode } from "react";
+import { AboutPage } from "../pages/AboutPage";
+import { useUser } from "./session";
 import { RequireRole, SessionGate } from "./gates";
 import { Layout } from "./Layout";
+
+const admin = (page: ReactNode) => <RequireRole role="admin">{page}</RequireRole>;
+
+/** Admins start at Time; viewers only have About. */
+function SettingsIndex() {
+  const user = useUser();
+  return <Navigate to={user.role === "admin" ? "/settings/time" : "/settings/about"} replace />;
+}
 
 /** Shared by the browser router (main.tsx) and the memory routers used in tests. */
 export const routes: RouteObject[] = [
@@ -71,17 +82,15 @@ export const routes: RouteObject[] = [
       },
       {
         path: "settings",
-        element: (
-          <RequireRole role="admin">
-            <SettingsShell />
-          </RequireRole>
-        ),
+        // Every user reaches the shell (About is for everyone); each admin page checks the role.
+        element: <SettingsShell />,
         children: [
-          { index: true, element: <Navigate to="/settings/time" replace /> },
-          { path: "time", element: <TimePage /> },
-          { path: "users", element: <UsersPage /> },
-          { path: "audit", element: <AuditPage /> },
-          { path: "channels", element: <ChannelsPage /> },
+          { index: true, element: <SettingsIndex /> },
+          { path: "time", element: admin(<TimePage />) },
+          { path: "users", element: admin(<UsersPage />) },
+          { path: "audit", element: admin(<AuditPage />) },
+          { path: "channels", element: admin(<ChannelsPage />) },
+          { path: "about", element: <AboutPage /> },
         ],
       },
       { path: "users", element: <Navigate to="/settings/users" replace /> },

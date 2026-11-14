@@ -33,7 +33,14 @@ export const EXAMPLE_SETUP_CODE = "ABCD-EFGH-JKMN-PQRS";
 export const EXAMPLE_CSRF = "example-csrf-token";
 
 export function exampleMe(role: Role = "admin", username = role): Me {
-  return { id: role === "admin" ? 1 : 2, username, role, csrf_token: EXAMPLE_CSRF };
+  return {
+    id: role === "admin" ? 1 : 2,
+    username,
+    role,
+    csrf_token: EXAMPLE_CSRF,
+    server_version: "dev",
+    server_commit: null,
+  };
 }
 
 export function json(body: unknown, status = 200): Response {

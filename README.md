@@ -110,6 +110,8 @@ services:
         condition: service_completed_successfully
     stop_grace_period: 20s
     environment:
+      # The release these images are, shown in the UI. Change it with the image tags.
+      VANTAGE_RELEASE: "0.1.0"
       VANTAGE_DATABASE_URL: ${VANTAGE_DATABASE_URL:-sqlite:////data/vantage.db}
       VANTAGE_MASTER_KEY_FILE: /run/vantage/key/master_key
       VANTAGE_PROMETHEUS_TOKEN_FILE: /run/secrets/prometheus_token
@@ -295,6 +297,7 @@ Keep the dashboard off the internet: a monitoring VLAN with access from your adm
 - [Security](docs/SECURITY.md): threat model, controls, recovery procedures
 - [Architecture](docs/ARCHITECTURE.md): components and data flow
 - [Integrations](docs/INTEGRATIONS.md): the plugin interface, and [per-integration setup guides](docs/integrations)
+- [Releasing](docs/RELEASING.md): how a release is tested and promoted (maintainer)
 - [Changelog](CHANGELOG.md)
 
 ## Development

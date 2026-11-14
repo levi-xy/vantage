@@ -14,7 +14,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from app import __version__
+from app import version
 from app.alerts.channels import default_client_factory
 from app.alerts.delivery import DeliveryCollector, DeliveryDispatcher
 from app.alerts.evaluator import AlertEvaluator
@@ -70,6 +70,11 @@ def create_app(
     # the URL path: keep both client libraries at WARNING whatever VANTAGE_LOG_LEVEL is.
     for name in ("httpx", "httpcore"):
         logging.getLogger(name).setLevel(logging.WARNING)
+    # Read once, after logging is set up: a bad VANTAGE_RELEASE logs its WARNING here.
+    info = version.current()
+    log.info(
+        "Vantage %s (built as %s, commit %s)", info.release, info.build, info.commit or "unknown"
+    )
     secret_box = secret_box or SecretBox(load_master_key())
     # None when not configured: the Prometheus-only endpoints then answer 503.
     prometheus_token = prometheus_token or load_prometheus_token()
@@ -124,13 +129,15 @@ def create_app(
     docs = settings.api_docs
     app = FastAPI(
         title="Vantage",
-        version=__version__,
+        version=info.release,
         docs_url="/docs" if docs else None,
         redoc_url="/redoc" if docs else None,
         openapi_url="/openapi.json" if docs else None,
         lifespan=lifespan,
     )
     app.state.settings = settings
+    # Reported by GET /about as the backend's last start (UTC).
+    app.state.started_at = datetime.now(UTC)
     app.state.secret_box = secret_box
     app.state.engine = engine
     app.state.session_factory = make_session_factory(engine)
