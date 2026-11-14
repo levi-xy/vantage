@@ -398,6 +398,10 @@ If the web app and the server come from different builds (different commits), a 
 
 A device only turns DOWN after several failed checks in a row; see [OPERATIONS.md](OPERATIONS.md#device-down-detection).
 
+### The health status says "Live connection lost"
+
+Live updates are paused; the page still works and reconnects by itself. Behind a reverse proxy this usually means WebSocket upgrades or the original `Host` header aren't passed through. See [Reverse proxy](OPERATIONS.md#reverse-proxy) for working settings.
+
 ### A card or alert says NO DATA
 
 The values shown are old, or none arrived. Common causes:
