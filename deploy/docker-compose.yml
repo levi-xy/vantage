@@ -44,7 +44,7 @@ services:
     # 0-65535, not the kernel's maximum: an unprivileged LXC (Proxmox) maps only those
     # group IDs and refuses a wider range. The backend's group is 10001 (backend/Dockerfile).
     sysctls:
-      net.ipv4.ping_group_range: "0 65535"
+      net.ipv4.ping_group_range: "0 2147483647"
 
   frontend:
     <<: *hardening

@@ -63,7 +63,7 @@ services:
     # ICMP ping without NET_RAW; this container only. 0-65535 so it also works in an
     # unprivileged LXC; covers the backend's group (10001).
     sysctls:
-      net.ipv4.ping_group_range: "0 65535"
+      net.ipv4.ping_group_range: "0 2147483647"
 
   frontend:
     <<: *hardening
