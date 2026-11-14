@@ -15,6 +15,7 @@ async function fillForm(code: string) {
   fill("Admin username", "example-admin");
   fill(/^Password/, "a-long-example-password");
   fill("Confirm password", "a-long-example-password");
+  fireEvent.click(screen.getByLabelText("I have backed up my master key"));
   fireEvent.click(screen.getByRole("button", { name: "Create admin account" }));
 }
 
@@ -44,5 +45,32 @@ describe("setup code", () => {
     await screen.findByRole("navigation", { name: "Main" });
     const sent = backend.fetch.mock.calls.find(([, init]) => init?.method === "POST");
     expect(JSON.parse(String(sent?.[1]?.body))).toMatchObject({ setup_code: EXAMPLE_SETUP_CODE });
+  });
+});
+
+describe("master key reminder", () => {
+  it("is shown, and the button stays disabled until the box is ticked", async () => {
+    renderApp("/setup", fakeBackend({ setupRequired: true }));
+    await screen.findByRole("heading", { level: 1, name: "Welcome to Vantage" });
+    expect(screen.getByRole("heading", { name: "Back up your master key" })).toBeInTheDocument();
+    const button = screen.getByRole("button", { name: "Create admin account" });
+    const box = screen.getByLabelText("I have backed up my master key");
+    expect(button).toBeDisabled();
+    fireEvent.click(box);
+    expect(button).toBeEnabled();
+    fireEvent.click(box);
+    expect(button).toBeDisabled();
+  });
+
+  it("is not sent to the backend", async () => {
+    const { backend } = renderApp("/setup", fakeBackend({ setupRequired: true }));
+    await fillForm(EXAMPLE_SETUP_CODE);
+    await screen.findByRole("navigation", { name: "Main" });
+    const sent = backend.fetch.mock.calls.find(([, init]) => init?.method === "POST");
+    expect(Object.keys(JSON.parse(String(sent?.[1]?.body))).sort()).toEqual([
+      "password",
+      "setup_code",
+      "username",
+    ]);
   });
 });
