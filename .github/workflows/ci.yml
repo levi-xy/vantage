@@ -130,32 +130,44 @@ jobs:
         run: |
           mkdir -p upgrade-run
           # /releases/latest is the newest final release (a pre-release is never "latest").
-          curl -sSfL --retry 6 --retry-delay 10 --retry-all-errors -o upgrade-run/old.yml \
+          curl -sSfL --retry 6 --retry-delay 10 --retry-all-errors -o upgrade-run/compose.yml \
             https://github.com/levi-xy/vantage/releases/latest/download/compose.yml
-          prev=$(sed -n 's|^ *image: ghcr.io/levi-xy/vantage-backend:\(.*\)$|\1|p' upgrade-run/old.yml | head -n 1)
+          prev=$(sed -n 's|^ *image: ghcr.io/levi-xy/vantage-backend:\(.*\)$|\1|p' upgrade-run/compose.yml | head -n 1)
           echo "Previous release: ${prev:?no Vantage backend image in the previous compose file}"
+          echo "PREVIOUS=$prev" >> "$GITHUB_ENV"
           python3 deploy/make_bundle.py 0.0.0-ci dist
           cp dist/compose.yml upgrade-run/new.yml
       - name: Start the previous release and create data
         run: |
           cd upgrade-run
-          docker compose -p "$PROJECT" -f old.yml up -d
+          docker compose -p "$PROJECT" -f compose.yml up -d
           i=0
           until curl -fsk -o /dev/null https://127.0.0.1:8443/healthz/live; do
             i=$((i + 1)); [ "$i" -lt 60 ] || { echo "the old stack didn't start"; exit 1; }
             sleep 3
           done
-          code=$(docker compose -p "$PROJECT" -f old.yml exec -T backend \
+          code=$(docker compose -p "$PROJECT" -f compose.yml exec -T backend \
             python -m app.cli setup-code --quiet | tail -n 1 | tr -d '\r')
           python3 ../scripts/upgrade_check.py seed --setup-code "$code" --state state.json
-      - name: Back up, then upgrade the documented way (new compose file, same volumes)
+          # The old release's /me may not report a version, so check the running image tags:
+          # the test must never pass with the new images on both sides.
+          img=$(docker compose -p "$PROJECT" -f compose.yml ps --format '{{.Image}}' backend frontend)
+          echo "$img"
+          [ "$(echo "$img" | grep -c ":$PREVIOUS\$")" = 2 ] || { echo "not running the previous release"; exit 1; }
+      - name: Back up, then upgrade as OPERATIONS.md says for the standalone install
         run: |
           cd upgrade-run
-          docker compose -p "$PROJECT" -f old.yml exec -T backend \
+          docker compose -p "$PROJECT" -f compose.yml exec -T backend \
             python -m app.cli backup - > backup.json.gz
           [ -s backup.json.gz ] || { echo "the backup is empty"; exit 1; }
-          docker compose -p "$PROJECT" -f new.yml up -d --pull never
-          docker compose -p "$PROJECT" -f new.yml ps
+          # Docs: replace the compose file with the new release's, then pull and up -d
+          # (no down: only needed when the compose network changes; it doesn't here).
+          cp new.yml compose.yml
+          # --pull never instead of pull: the new images only exist locally.
+          docker compose -p "$PROJECT" -f compose.yml up -d --pull never
+          img=$(docker compose -p "$PROJECT" -f compose.yml ps --format '{{.Image}}' backend frontend)
+          echo "$img"
+          [ "$(echo "$img" | grep -c ':0.0.0-ci$')" = 2 ] || { echo "not running the new build"; exit 1; }
       - name: Check that nothing was lost
         run: |
           python3 scripts/upgrade_check.py verify --state upgrade-run/state.json --release 0.0.0-ci
@@ -163,10 +175,10 @@ jobs:
         if: failure()
         run: |
           cd upgrade-run
-          docker compose -p "$PROJECT" -f new.yml ps -a || true
-          docker compose -p "$PROJECT" -f new.yml logs --no-color || true
+          docker compose -p "$PROJECT" -f compose.yml ps -a || true
+          docker compose -p "$PROJECT" -f compose.yml logs --no-color || true
       - name: Remove the stack
         if: always()
         run: |
           cd upgrade-run
-          docker compose -p "$PROJECT" -f new.yml down -v --remove-orphans || true
+          docker compose -p "$PROJECT" -f compose.yml down -v --remove-orphans || true
