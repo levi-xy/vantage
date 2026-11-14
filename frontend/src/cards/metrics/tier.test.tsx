@@ -9,7 +9,10 @@ import { cardFullSize, cardMinSize, cardTier, WIDGETS } from "../widgets";
 import { tierFor } from "./tier";
 
 const client = new ApiClient({ fetch: vi.fn() });
-vi.mock("../../app/session", () => ({ useApiClient: () => client }));
+vi.mock("../../app/session", () => ({
+  useApiClient: () => client,
+  useCanEditDashboards: () => true,
+}));
 
 describe("card tiers", () => {
   it("are full from the full size, medium from 3 x 2, small below", () => {

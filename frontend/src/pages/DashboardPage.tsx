@@ -3,7 +3,7 @@ import { useState, useSyncExternalStore } from "react";
 import { Link, useParams } from "react-router";
 import { ApiError } from "../api";
 import type { CardPlacement, Dashboard, Instance } from "../api";
-import { useApiClient } from "../app/session";
+import { useApiClient, useUser } from "../app/session";
 import { DashboardGrid } from "../cards/DashboardGrid";
 import { MainDashboardContext } from "../cards/mainDashboard";
 import {
@@ -214,6 +214,8 @@ function DashboardView({
   const api = useApiClient();
   const queryClient = useQueryClient();
   const isDesktop = useIsDesktop();
+  // Dashboards are shared, so only admins arrange them; the backend refuses viewers too.
+  const canEdit = useUser().role === "admin";
   const instances = useInstances();
   const queryKey = dashboardKey(dashboardId ?? 0);
   const dashboard = useQuery({
@@ -292,7 +294,7 @@ function DashboardView({
   };
 
   let actions = null;
-  if (isDesktop && saved) {
+  if (canEdit && isDesktop && saved) {
     actions = editing ? (
       <div className="flex gap-2">
         <button type="button" className={buttonSecondary} onClick={() => setAdding(!adding)}>
@@ -338,7 +340,7 @@ function DashboardView({
     body = (
       <EmptyState>
         <p>The dashboard is empty.</p>
-        {isDesktop && (
+        {canEdit && isDesktop && (
           <button
             type="button"
             className={`mt-3 ${buttonPrimary}`}

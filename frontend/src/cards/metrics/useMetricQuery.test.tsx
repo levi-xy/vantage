@@ -10,7 +10,10 @@ import { selectorFor } from "./promql";
 import { rangeWindow, useInstantQuery, useRangeQuery } from "./useMetricQuery";
 
 const client = new ApiClient({ fetch: vi.fn() });
-vi.mock("../../app/session", () => ({ useApiClient: () => client }));
+vi.mock("../../app/session", () => ({
+  useApiClient: () => client,
+  useCanEditDashboards: () => true,
+}));
 
 const EMPTY: QueryResult = { result_type: "vector", series: [], warnings: [] };
 const one = (value: string, t = 1_700_000_000): QueryResult => ({

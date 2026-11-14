@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useNavigate } from "react-router";
-import { useApiClient } from "../app/session";
+import { useApiClient, useUser } from "../app/session";
 import { alertError, buttonPrimary, buttonSecondary, input } from "../components/styles";
 import { DASHBOARDS_KEY, dashboardKey, dashboardPath, useDashboards } from "./dashboards";
 import { errorText } from "./devices/queries";
@@ -93,6 +93,7 @@ export function DashboardTabs({
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const dashboards = useDashboards();
+  const isAdmin = useUser().role === "admin";
   const [form, setForm] = useState<"new" | "rename" | null>(null);
   const list = dashboards.data ?? [];
   const index = list.findIndex((d) => d.id === current);
@@ -170,15 +171,17 @@ export function DashboardTabs({
             </select>
           </label>
         )}
-        <button
-          type="button"
-          aria-label="New dashboard"
-          title="New dashboard"
-          className={`${tabClass(false)} text-lg leading-none`}
-          onClick={() => setForm(form === "new" ? null : "new")}
-        >
-          +
-        </button>
+        {isAdmin && (
+          <button
+            type="button"
+            aria-label="New dashboard"
+            title="New dashboard"
+            className={`${tabClass(false)} text-lg leading-none`}
+            onClick={() => setForm(form === "new" ? null : "new")}
+          >
+            +
+          </button>
+        )}
         {editing && index >= 0 && (
           <div className="ml-auto flex gap-2 pb-2">
             <button type="button" className={buttonSecondary} onClick={() => setForm("rename")}>
@@ -211,7 +214,7 @@ export function DashboardTabs({
           </div>
         )}
       </div>
-      {form === "new" && (
+      {isAdmin && form === "new" && (
         <NameForm
           label="New dashboard"
           initial=""

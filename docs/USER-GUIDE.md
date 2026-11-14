@@ -158,9 +158,11 @@ Each device has a colour, so its cards are easy to spot: every card of the devic
 
 ## Dashboards
 
-Dashboards are shared: everyone sees the same dashboards, and every role can edit them. Editing works on desktop widths only; a phone shows the cards in one column.
+Dashboards are shared: everyone sees the same dashboards, and only admins can edit them (viewers see no **Edit dashboard** button or **+** tab). Editing works on desktop widths only; a phone shows the cards in one column.
 
 ### How do I rearrange the dashboard?
+
+Only admins can do this; viewers see the dashboard as it is.
 
 1. Press **Edit dashboard**.
 2. Drag a card by its body to move it. Drag its bottom-right corner to resize it. Cards float up into free space.
@@ -349,7 +351,7 @@ The bot token is stored encrypted and never shown again; the edit form only says
 | | Viewer | Admin |
 |---|---|---|
 | See dashboards, devices, device pages, maps, alerts | yes | yes |
-| Arrange dashboards (cards, tabs) | yes | yes |
+| Arrange dashboards (cards, tabs) | | yes |
 | Change own password and display settings (**My account**) | yes | yes |
 | Add, test, edit, disable, delete devices | | yes |
 | Create and edit maps | | yes |

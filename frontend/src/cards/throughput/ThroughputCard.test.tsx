@@ -12,7 +12,10 @@ import { ThroughputCard } from "./ThroughputCard";
 import { rateWindowFor } from "./ports";
 
 const client = new ApiClient({ fetch: vi.fn() });
-vi.mock("../../app/session", () => ({ useApiClient: () => client }));
+vi.mock("../../app/session", () => ({
+  useApiClient: () => client,
+  useCanEditDashboards: () => true,
+}));
 
 const settings = { port1: "pfsense:inst-1:igc0" };
 

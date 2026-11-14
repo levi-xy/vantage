@@ -15,7 +15,7 @@ import { CardTierContext } from "./metrics/tier";
 import type { CardTier } from "./metrics/tier";
 
 const client = new ApiClient({ fetch: vi.fn() });
-vi.mock("../app/session", () => ({ useApiClient: () => client }));
+vi.mock("../app/session", () => ({ useApiClient: () => client, useCanEditDashboards: () => true }));
 
 const instance = {
   id: "inst-1",

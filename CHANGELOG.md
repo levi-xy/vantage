@@ -8,6 +8,8 @@ All notable changes, newest first. Versions follow [semantic versioning](https:/
 - The backend logs a WARNING (at most once a minute per reason) saying why a live-connection handshake was refused, with the Origin and Host values.
 - The "Live connection lost" banner says live updates are paused and points to the new Reverse proxy section in `docs/OPERATIONS.md` (Nginx Proxy Manager, Traefik, Caddy, nginx).
 
+**Behaviour change:** viewers can no longer arrange dashboards. Dashboards are shared by everyone, so a viewer moving a card moved it for all users. Creating, renaming, moving, editing and deleting dashboards is now admin only (the API answers 403 to viewers, and the UI hides the buttons); viewers still see every dashboard. No migration; on upgrade, existing viewers just lose the edit buttons.
+
 ## 0.1.0 (2026-11-12)
 
 The first release.

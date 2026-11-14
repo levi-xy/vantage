@@ -11,7 +11,11 @@ import { PfsenseGatewaysCard, PfsenseGatewaysSettings } from "./PfsenseGatewaysC
 import { interfacesFromSettings, settingsWithInterfaces } from "./picked";
 
 const client = new ApiClient({ fetch: vi.fn() });
-vi.mock("../../app/session", () => ({ useApiClient: () => client }));
+let canEdit = true;
+vi.mock("../../app/session", () => ({
+  useApiClient: () => client,
+  useCanEditDashboards: () => canEdit,
+}));
 
 function answer(query: string) {
   if (query.includes("cpu_usage_idle")) return vector([[{}, "87.5"]]);
@@ -139,6 +143,17 @@ describe("pfSense cards", () => {
     renderCard(client, PfsenseGatewaysCard, answer, pfsense);
     expect(await screen.findByText("No interfaces chosen.")).toBeInTheDocument();
     expect(screen.getByText("Edit dashboard, then ⚙ on this card.")).toBeInTheDocument();
+  });
+
+  it("gateways: a viewer is told to ask an admin instead", async () => {
+    canEdit = false;
+    try {
+      renderCard(client, PfsenseGatewaysCard, answer, pfsense);
+      expect(await screen.findByText("Ask an admin to choose interfaces.")).toBeInTheDocument();
+      expect(screen.queryByText("Edit dashboard, then ⚙ on this card.")).not.toBeInTheDocument();
+    } finally {
+      canEdit = true;
+    }
   });
 
   it("small gateways: the first picked one, or the one without data", async () => {
