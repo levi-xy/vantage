@@ -155,6 +155,18 @@ def test_a_final_release_must_match_the_standalone_compose_version(tmp_path: Pat
     assert not list(tmp_path.iterdir())  # refused before writing anything
 
 
+def test_a_final_release_needs_its_changelog_anchor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    named = bundle.source_version()
+    changelog = (REPO / "CHANGELOG.md").read_text()
+    assert f'<a id="v{named}"></a>' in changelog  # the About page links to it
+    (tmp_path / "CHANGELOG.md").write_text(changelog.replace(f'<a id="v{named}"></a>', ""))
+    monkeypatch.setattr(bundle, "REPO", tmp_path)
+    with pytest.raises(ValueError, match=r"CHANGELOG\.md has no"):
+        bundle.check_release_version(named)
+
+
 def test_pre_releases_skip_the_version_check() -> None:
     bundle.check_release_version("99.0.0-rc.1")
 

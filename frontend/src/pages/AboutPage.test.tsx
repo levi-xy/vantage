@@ -77,7 +77,7 @@ describe("version in the UI", () => {
     expect(screen.queryByText(/version mismatch/)).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Changelog for this version" })).toHaveAttribute(
       "href",
-      "https://github.com/levi-xy/vantage/blob/v0.1.1/CHANGELOG.md",
+      "https://github.com/levi-xy/vantage/blob/v0.1.1/CHANGELOG.md#v0.1.1",
     );
   });
 

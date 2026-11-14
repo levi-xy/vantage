@@ -142,6 +142,12 @@ def check_release_version(version: str) -> None:
             f"the tag is {version} but deploy/compose.standalone.yml (and the README copy) "
             f"names {named}. Bump both to {version} in a PR, merge it, then tag that commit."
         )
+    # The About page links to CHANGELOG.md#v<version>; GitHub keeps the explicit anchor.
+    if f'<a id="v{version}"></a>' not in (REPO / "CHANGELOG.md").read_text():
+        raise ValueError(
+            f'CHANGELOG.md has no <a id="v{version}"></a> line above the {version} heading; '
+            "add it in the version bump PR."
+        )
 
 
 def _skip(info: tarfile.TarInfo) -> tarfile.TarInfo | None:

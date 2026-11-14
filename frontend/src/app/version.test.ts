@@ -28,7 +28,10 @@ describe("versions", () => {
 
   it("links the release tag's changelog", () => {
     expect(changelogUrl("0.1.1")).toBe(
-      "https://github.com/levi-xy/vantage/blob/v0.1.1/CHANGELOG.md",
+      "https://github.com/levi-xy/vantage/blob/v0.1.1/CHANGELOG.md#v0.1.1",
+    );
+    expect(changelogUrl("0.1.1-rc.2")).toBe(
+      "https://github.com/levi-xy/vantage/blob/v0.1.1-rc.2/CHANGELOG.md#v0.1.1",
     );
     expect(changelogUrl("dev")).toBe(RELEASES_URL);
     expect(changelogUrl("0.1.1/../x")).toBe(RELEASES_URL);

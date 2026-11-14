@@ -20,7 +20,7 @@ You need `git`, `gh`, `docker` and [cosign](https://docs.sigstore.dev/cosign/sys
 
 ## 1. Tag a release candidate
 
-The CHANGELOG entry for the version can land in any PR before this; date it in the bump PR (step 3).
+The CHANGELOG entry for the version can land in any PR before this, with a `<a id="vX.Y.Z"></a>` line (and a blank line) above its heading; date it in the bump PR (step 3).
 
 ```bash
 git switch main && git pull --ff-only
@@ -84,7 +84,7 @@ A PR that changes only:
 
 - the three `ghcr.io/levi-xy/vantage-…` image tags in `deploy/compose.standalone.yml` to `0.1.1`, and the backend's `VANTAGE_RELEASE: "0.1.1"` in the same file (the version the UI shows; the guard refuses a final tag when the two differ);
 - the copy of that file in `README.md` (a test keeps the two equal);
-- the date of the version's `CHANGELOG.md` entry (it stays the first `##` section: the About page links to `CHANGELOG.md` at the release tag, which then opens on it).
+- the date of the version's `CHANGELOG.md` entry, which keeps its `<a id="v0.1.1"></a>` line above the heading (the About page links to `CHANGELOG.md#v0.1.1` at the release tag; the guard refuses a final tag without it).
 
 `deploy/docker-compose.yml` needs no bump: it builds from source and names no version; the setup.sh bundle gets its image tags and `VANTAGE_RELEASE` from `make_bundle.py`.
 
@@ -163,6 +163,6 @@ Promotion doesn't change an image, so everything baked into it at build time kee
 - **The release version** is `VANTAGE_RELEASE` on the backend service. `deploy/compose.standalone.yml` pins it next to the image tags (bumped together in step 3; `make_bundle.py --check` refuses a final tag when they differ, and the promotion allows exactly this change besides the tags). The setup.sh bundle's compose file gets `VANTAGE_RELEASE: ${VANTAGE_VERSION:-X.Y.Z}`, generated with its image tags, so an `.env` that picks another release (`VANTAGE_VERSION`) moves both. `deploy/docker-compose.yml` in the repository builds from source and sets none.
 - **The backend** reports `VANTAGE_RELEASE` when it is a plain version (`X.Y.Z` or `X.Y.Z-pre`; anything else is ignored with a WARNING in the log), else its baked version: `server_version` on `/me`, `backend_version` on `/about`, plus `backend_build_version` (the baked one) and the commit (`server_commit`, `backend_commit`).
 - **The web app** shows the server's release version (its own baked one only when the server reports none: a backend older than 0.1.1). Settings → About adds "Built as 0.1.1-rc.N" when the build version differs. The "different builds" warning compares the web app's baked commit with the server's: equal for an rc and its promoted final, different after a half-pulled upgrade or in a stale browser tab. A missing, empty or `dev` commit on either side means unknown: no warning.
-- **Release notes link**: `https://github.com/levi-xy/vantage/blob/v<release>/CHANGELOG.md`, without a section anchor. CHANGELOG.md lists the newest version first, so the file at the release tag opens on that release; an anchor would depend on the heading's date, which no rc build can know.
+- **Release notes link**: `https://github.com/levi-xy/vantage/blob/v<release>/CHANGELOG.md#vX.Y.Z`, where X.Y.Z is the release without any `-rc.N`. The heading's own anchor would depend on its date, which no rc build can know, so every version has an explicit `<a id="vX.Y.Z"></a>` line above its heading; GitHub keeps it as a link target.
 
 Installs whose compose file has no `VANTAGE_RELEASE` (every 0.1.0 compose file) show the baked version: a promoted final shows its rc version until the user takes the new compose file. Nothing breaks.

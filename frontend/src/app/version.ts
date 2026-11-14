@@ -40,12 +40,13 @@ export const MISMATCH_TEXT = (web: string, server: string) =>
   `The web app (commit ${shortCommit(web)}) and the server (commit ${shortCommit(server)}) are different builds. Reload the page; if it persists, pull both images again.`;
 
 /**
- * The release's changelog: CHANGELOG.md at the release tag. It lists the newest version
- * first, so the file at tag vX.Y.Z opens on X.Y.Z's section; no anchor is needed (the
- * headings carry a release date no build can know in advance). Dev or unknown versions:
- * the releases list.
+ * The release's section of CHANGELOG.md at the release tag. Each version's heading has an
+ * explicit `<a id="vX.Y.Z"></a>` above it (the heading itself carries a date no build can
+ * know), so the anchor follows from the version alone; an rc links to its X.Y.Z section.
+ * Dev or unknown versions: the releases list.
  */
 export function changelogUrl(version: string | null | undefined): string {
   if (!isKnownVersion(version) || !/^[0-9A-Za-z.+-]+$/.test(version)) return RELEASES_URL;
-  return `https://github.com/levi-xy/vantage/blob/v${version}/CHANGELOG.md`;
+  const base = version.split(/[-+]/)[0];
+  return `https://github.com/levi-xy/vantage/blob/v${version}/CHANGELOG.md#v${base}`;
 }
