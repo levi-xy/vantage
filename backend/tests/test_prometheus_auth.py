@@ -95,7 +95,7 @@ def test_get_put_and_never_a_secret(
     assert admin.get(API).json() == {
         "url": admin.app.state.settings.prometheus_url,  # type: ignore[attr-defined]
         "mode": "bundled",
-        "auth": {"kind": "none", "username": None, "secret_set": False},
+        "auth": {"kind": "none", "username": None, "secret_set": False, "unreadable": False},
     }
     assert put(admin, kind="basic", secret=PASSWORD).status_code == 422  # no user name
     assert put(admin, kind="bearer").status_code == 422  # no secret stored yet
@@ -103,7 +103,12 @@ def test_get_put_and_never_a_secret(
     assert put(admin, kind="bearer", secret="bad\r\nX-Evil: 1").status_code == 422
 
     bodies = [put(admin, kind="basic", username=USER, secret=PASSWORD)]
-    assert bodies[0].json()["auth"] == {"kind": "basic", "username": USER, "secret_set": True}
+    assert bodies[0].json()["auth"] == {
+        "kind": "basic",
+        "username": USER,
+        "secret_set": True,
+        "unreadable": False,
+    }
     # An omitted secret keeps the stored one (the user name may change).
     bodies.append(put(admin, kind="basic", username="other-user"))
     assert bodies[1].json()["auth"]["username"] == "other-user"
@@ -130,6 +135,7 @@ def test_get_put_and_never_a_secret(
         "kind": "none",
         "username": None,
         "secret_set": False,
+        "unreadable": False,
     }
 
 
@@ -271,3 +277,30 @@ def test_restore_counts_the_secret(engine: Engine, db_url: str, tmp_path: Path) 
         stored = pa.parse_row(row.value)
         assert stored.blob is not None
         assert pa.open_secret(SecretBox(TEST_MASTER_KEY), stored.blob) == TOKEN
+
+
+def test_unreadable_stored_row_is_reported_and_not_reused(
+    admin: TestClient, engine: Engine
+) -> None:
+    # A secret sealed with another key while the key check still passes.
+    with make_session_factory(engine)() as db:
+        blob = pa.seal_secret(SecretBox(OTHER_KEY), PASSWORD)
+        db.add(Setting(key=pa.SETTING_KEY, value=pa.row_value("basic", USER, blob)))
+        db.commit()
+    got = admin.get(API).json()["auth"]
+    assert got == {"kind": "basic", "username": USER, "secret_set": True, "unreadable": True}
+    # Keeping the old secret isn't possible: 422, not a 500.
+    r = put(admin, kind="basic", username="other-user")
+    assert r.status_code == 422 and "re-enter" in r.text
+    fresh = put(admin, kind="basic", username=USER, secret=PASSWORD)
+    assert fresh.json()["auth"]["unreadable"] is False
+
+    # A malformed row reads as unreadable too, and saving None recovers.
+    with make_session_factory(engine)() as db:
+        row = db.get(Setting, pa.SETTING_KEY)
+        assert row is not None
+        row.value = {"kind": "mystery"}
+        db.commit()
+    got = admin.get(API).json()["auth"]
+    assert got["unreadable"] is True and got["kind"] == "none"
+    assert put(admin, kind="none").json()["auth"]["unreadable"] is False

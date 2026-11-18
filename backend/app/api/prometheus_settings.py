@@ -7,21 +7,26 @@ carries it, not even masked.
 """
 
 import logging
+import threading
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
-from app.api.deps import AdminDep, DbDep, SettingsDep
+from app.api.deps import AdminDep, Authenticated, DbDep, SettingsDep
 from app.api.instances import SecretBoxDep
 from app.core import audit, key_check
 from app.core.config import DEFAULT_PROMETHEUS_URL
+from app.core.crypto import SecretBox
 from app.models import Setting
 from app.query import auth as pa
 from app.query.auth import AuthKind, PrometheusAuth
 from app.query.proxy import PrometheusClient, QueryError, QueryRequest
 
 router = APIRouter()
+# Saves (transaction + holder update) run one at a time, so the holder always ends on the
+# last committed settings.
+_save_lock = threading.Lock()
 log = logging.getLogger(__name__)
 
 MAX_USERNAME = 255
@@ -72,6 +77,9 @@ class AuthOut(BaseModel):
     kind: AuthKind
     username: str | None
     secret_set: bool
+    # The stored row can't be read (damaged, or sealed with another key): every query is
+    # refused until an admin saves again or chooses None.
+    unreadable: bool = False
 
 
 class PrometheusView(BaseModel):
@@ -95,19 +103,38 @@ def _stored(db: DbDep) -> pa.StoredAuth:
         return pa.StoredAuth("none", None, None)  # a damaged row: the next PUT replaces it
 
 
-def _view(request: Request, stored: pa.StoredAuth) -> PrometheusView:
+def _unreadable(db: DbDep, box: SecretBox) -> bool:
+    """Whether the stored row exists but can't be turned into request headers."""
+    row = db.get(Setting, pa.SETTING_KEY)
+    if row is None:
+        return False
+    try:
+        pa.build_headers(pa.parse_row(row.value), box)
+    except pa.CredentialsUnreadable:
+        return True
+    return False
+
+
+def _view(request: Request, stored: pa.StoredAuth, unreadable: bool = False) -> PrometheusView:
     url = request.app.state.settings.prometheus_url
     return PrometheusView(
         url=url,
         # TODO(maintainer): read VANTAGE_PROMETHEUS_MODE once PR A/C add it.
         mode="bundled" if url == DEFAULT_PROMETHEUS_URL else "external",
-        auth=AuthOut(kind=stored.kind, username=stored.username, secret_set=stored.secret_set),
+        auth=AuthOut(
+            kind=stored.kind,
+            username=stored.username,
+            secret_set=stored.secret_set,
+            unreadable=unreadable,
+        ),
     )
 
 
 @router.get("/settings/prometheus")
-def get_prometheus(request: Request, _auth: AdminDep, db: DbDep) -> PrometheusView:
-    return _view(request, _stored(db))
+def get_prometheus(
+    request: Request, _auth: AdminDep, db: DbDep, box: SecretBoxDep
+) -> PrometheusView:
+    return _view(request, _stored(db), _unreadable(db, box))
 
 
 @router.put("/settings/prometheus")
@@ -118,6 +145,13 @@ def put_prometheus(
     db: DbDep,
     box: SecretBoxDep,
     _settings: SettingsDep,
+) -> PrometheusView:
+    with _save_lock:
+        return _save(body, request, auth, db, box)
+
+
+def _save(
+    body: PrometheusPut, request: Request, auth: Authenticated, db: DbDep, box: SecretBox
 ) -> PrometheusView:
     new = body.auth
     old = _stored(db)
@@ -167,7 +201,11 @@ def put_prometheus(
     )
     stored = pa.StoredAuth(kind, username, blob)
     # Build before committing: a header that can't be built must not be stored.
-    headers = pa.build_headers(stored, box)
+    try:
+        headers = pa.build_headers(stored, box)
+    except pa.CredentialsUnreadable:
+        # The kept secret doesn't open with this key: it can't be reused.
+        raise HTTPException(422, "re-enter the password or token") from None
     db.commit()
     holder: PrometheusAuth = request.app.state.prometheus_auth
     holder.set(headers)

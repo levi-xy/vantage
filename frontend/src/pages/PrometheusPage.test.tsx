@@ -67,6 +67,22 @@ describe("settings: prometheus", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/Settings → Prometheus/);
   });
 
+  it("says when the stored credentials can't be read", async () => {
+    const backend = fakeBackend({
+      session: exampleMe("admin"),
+      routes: {
+        "GET /settings/prometheus": () =>
+          json({
+            url: "https://192.0.2.10:9090",
+            mode: "external",
+            auth: { kind: "basic", username: "example-user", secret_set: true, unreadable: true },
+          }),
+      },
+    });
+    renderApp("/settings/prometheus", backend);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/can't be read/);
+  });
+
   it("is not in a viewer's settings", async () => {
     const backend = fakeBackend({ session: exampleMe("viewer") });
     renderApp("/settings/prometheus", backend);
