@@ -8,6 +8,8 @@ An alert is identified by (rule id, fingerprint). The fingerprint hashes the ser
 - ``vantage_instance``, ``vantage_site``, ``vantage_integration`` (renaming a device or
   moving it to another site must not split its alert; ``vantage_instance_id`` stays: it is
   the device identity);
+- ``vantage_install`` (the install's id; excluded so the fingerprints of alerts open before
+  the label existed don't change on upgrade, and it never shows in an alert's labels);
 - the display labels integrations attach to their info series (:data:`DISPLAY_LABELS`);
 - sensitive-looking label names (:func:`is_sensitive`), which are never hashed and are
   stored only as ``<redacted>``.
@@ -40,7 +42,14 @@ INSTANCE_ID_LABEL = "vantage_instance_id"
 INSTANCE_NAME_LABEL = "vantage_instance"
 
 EXCLUDED_LABELS = frozenset(
-    {"job", "instance", INSTANCE_NAME_LABEL, "vantage_site", "vantage_integration"}
+    {
+        "job",
+        "instance",
+        INSTANCE_NAME_LABEL,
+        "vantage_site",
+        "vantage_integration",
+        "vantage_install",
+    }
 )
 
 # Free-form text integrations put on their ``*_info`` series (INTEGRATIONS.md section 9):

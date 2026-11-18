@@ -19,7 +19,7 @@ from app.alerts.evaluator import (
     AlertEvaluator,
     clean,
 )
-from app.alerts.selfcheck import METRICS_QUERY
+from app.alerts.selfcheck import METRICS_QUERY, SEEN_QUERY
 from app.alerts.templates import TEMPLATES
 from app.api.deps import CSRF_HEADER
 from app.collectors.hub import EventHub, Subscriber
@@ -38,6 +38,7 @@ from app.models import (
     Role,
 )
 from app.query.proxy import PrometheusClient
+from tests.promfake import unscoped
 from tests.test_auth import ADMIN, add_user, do_setup, login, make_client
 
 API = "/api/v1"
@@ -69,7 +70,7 @@ class FakeProm:
 
     def client(self) -> PrometheusClient:
         def handler(request: httpx.Request) -> httpx.Response:
-            query = parse_qs(request.content.decode())["query"][0]
+            query = unscoped(parse_qs(request.content.decode())["query"][0])
             self.queries.append(query)
             if self.down:
                 raise httpx.ConnectError("connection refused")
@@ -82,6 +83,8 @@ class FakeProm:
                 rows = self.answers[query]
             elif query in (POLLED_QUERY, SCRAPED_QUERY):
                 rows = []
+            elif query == SEEN_QUERY:
+                rows = [({}, "1")]
             elif query == METRICS_QUERY:
                 rows = [({}, "5")]
             else:

@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from sqlalchemy import Engine
 
 from app.collectors.scheduler import polls
+from app.core import install
 from app.core.prometheus_auth import PrometheusToken
 from app.integrations import instance_config as ic
 from app.integrations.base import TestResult
@@ -341,6 +342,7 @@ def test_api_to_service_discovery(admin: TestClient, fake_net: FakeNetwork) -> N
                 "vantage_instance": "edge-fw",
                 "vantage_integration": "pfsense",
                 "vantage_site": "lab",
+                "vantage_install": install.current_id(),
             },
         }
     ]

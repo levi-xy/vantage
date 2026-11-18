@@ -37,7 +37,7 @@ backend/app/
 
 Background tasks, all in the one backend process:
 
-- **Poll collector:** for each enabled, polled instance, calls the integration's `poll()` every `poll_interval_seconds()`. A cycle is one attempt plus at most one quick retry; after N failed cycles in a row (default 3) the instance is `down`. The samples become Prometheus metrics on `/metrics`, with the four standard labels added.
+- **Poll collector:** for each enabled, polled instance, calls the integration's `poll()` every `poll_interval_seconds()`. A cycle is one attempt plus at most one quick retry; after N failed cycles in a row (default 3) the instance is `down`. The samples become Prometheus metrics on `/metrics`, with the four standard labels and `vantage_install` (the install's id) added.
 - **Alert evaluator:** every tick, a `vector(1)` probe, then each rule's query through the same proxy code, then the per-series state machine (pending, firing, no data, recovering, resolved). Changes are written together with their notification rows (the outbox) in one transaction.
 - **Dispatcher:** sends outbox rows to Telegram, oldest first per channel, with retries for 24 hours.
 - **Self-monitor and watchdog:** turn a failing probe, a missing self-scrape or a stalled evaluator into system alerts, and restart a stalled evaluator.

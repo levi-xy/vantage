@@ -52,6 +52,7 @@ from app.integrations.schema import config_json_schema
 from tests.conftest import TEST_MASTER_KEY
 from tests.integrations.netfake import fake_guards, make_ctx
 from tests.integrations.snmpfake import FakeSnmp, load_walk
+from tests.promfake import without_install_label
 from tests.test_auth import do_setup, make_client
 
 HOST = "snmp.example.internal"
@@ -1003,7 +1004,7 @@ async def test_collector_exposes_samples_with_standard_labels(
     store, spec = await collect(engine, v2c(), site=site)
     status = store.status(spec.instance_id)
     assert status is not None and status.state == "up", status
-    text = generate_latest(make_registry(store)).decode()
+    text = without_install_label(generate_latest(make_registry(store)).decode())
     std = (
         f'vantage_instance="sw-1",vantage_instance_id="{spec.instance_id}",'
         f'vantage_integration="snmp_device",vantage_site="{label}"'
@@ -1027,7 +1028,7 @@ async def test_collector_marks_silent_device_down(
     status = store.status(spec.instance_id)
     assert status is not None and status.state == "down"
     assert status.error == (await run_test(v2c())).message  # reads as test_connection does
-    text = generate_latest(make_registry(store)).decode()
+    text = without_install_label(generate_latest(make_registry(store)).decode())
     assert f"{PREFIX}_if_in_bytes" not in text
     assert_no_secret(status, text, caplog.text)
 

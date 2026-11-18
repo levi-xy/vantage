@@ -2,6 +2,14 @@
 
 All notable changes, newest first. Versions follow [semantic versioning](https://semver.org/); before 1.0, a minor version (0.2) may change behaviour, and its notes say how to upgrade.
 
+## Unreleased
+
+- Every install has an id (a new `settings` row `install_id`, made by migration 0015 and kept in backups; a restore takes the backup's). Every series Vantage exposes, and every scrape target it hands to Prometheus, now carries `vantage_install=<id>`, and a new `vantage_build_info{version, commit}` gauge reports the running version.
+- Every query Vantage sends to Prometheus (cards, maps, alert rules, the self-check) is scoped to its install id, so several installs, or other data, can share one Prometheus without mixing. A query the scoping can't place with confidence is refused (400 `query not supported`) instead of being sent unscoped.
+- The "Metrics not being collected" check no longer looks for a scrape job named `vantage-backend`: it reads this install's `vantage_build_info`, so the job can have any name. When it fires, it says why: `never_seen` (Prometheus never stored this install's metrics: the scrape job, the token or relabeling) or `stale` (it stopped), with a fix in the banner and in the Telegram message. `GET /alerts/delivery-status` gains this `reason`.
+- New `VANTAGE_PROMETHEUS_MODE` (`bundled`, the default, or `external`) for how queries are matched to the install. Nothing to set on upgrade.
+- Upgrading needs no action: pull both images and recreate the stack; migration 0015 adds the install id. With the bundled Prometheus the scoping also accepts series stored before the upgrade (they carry no `vantage_install`), so chart history stays visible, and the new label doesn't change any alert's fingerprint, so open alerts keep their identity. New series carry the label from the first scrape after the restart.
+
 <a id="v0.1.1"></a>
 
 ## 0.1.1 (2026-11-14)

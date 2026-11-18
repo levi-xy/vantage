@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field, SecretStr
 from sqlalchemy import Engine
 
+from app.core import install
 from app.core.crypto import SecretBox
 from app.core.db import make_session_factory
 from app.core.net_guard import NetGuard, NetPolicy
@@ -216,6 +217,21 @@ def test_empty_when_no_instances(client: TestClient) -> None:
     assert resp.json() == []
 
 
+def install_id() -> str:
+    found = install.current_id()
+    assert found is not None
+    return found
+
+
+def test_every_target_group_carries_the_install_label(client: TestClient, engine: Engine) -> None:
+    add(engine, "node-1", host="10.0.0.5")
+    add(engine, "node-2", host="10.0.0.6", metrics_path="/other")
+    groups = targets(client)
+    assert len(groups) == 2
+    # An integration's ScrapeTarget has no labels, and the label comes last in the group.
+    assert {g["labels"]["vantage_install"] for g in groups} == {install_id()}
+
+
 def test_http_sd_format_with_standard_labels(client: TestClient, engine: Engine) -> None:
     node = add(engine, "node-1", host="10.0.0.5", port=9100)
     https = add(
@@ -237,6 +253,7 @@ def test_http_sd_format_with_standard_labels(client: TestClient, engine: Engine)
                 "vantage_instance": "node-1",
                 "vantage_integration": "sd_exporter",
                 "vantage_site": "lab",
+                "vantage_install": install_id(),
             },
         },
         {
@@ -248,6 +265,7 @@ def test_http_sd_format_with_standard_labels(client: TestClient, engine: Engine)
                 "vantage_instance": "node-2",
                 "vantage_integration": "sd_exporter",
                 "vantage_site": "",
+                "vantage_install": install_id(),
             },
         },
     ]

@@ -14,6 +14,7 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import CSRF_HEADER
+from app.core import install
 from app.core.config import ConfigError, Settings, load_settings
 from app.core.crypto import SecretBox
 from app.core.net_guard import NetGuard, NetPolicy
@@ -29,6 +30,8 @@ from app.query.proxy import (
     QueryGate,
     QueryRequest,
 )
+from app.query.scope import QueryScope
+from tests.promfake import unscoped
 from tests.test_auth import add_user, do_setup, login, make_client
 
 QUERY = "/api/v1/query"
@@ -48,8 +51,14 @@ class FakePrometheus:
         self.requests.append(request)
         return self.handler(request)
 
-    def form(self, i: int = -1) -> dict[str, str]:
+    def raw_form(self, i: int = -1) -> dict[str, str]:
+        """The form as Prometheus received it: the query carries the install matcher."""
         return {k: v[0] for k, v in parse_qs(self.requests[i].content.decode()).items()}
+
+    def form(self, i: int = -1) -> dict[str, str]:
+        """The form with the query as the caller wrote it (the matcher taken off)."""
+        form = self.raw_form(i)
+        return {**form, "query": unscoped(form["query"])}
 
 
 def ok_matrix(n: int) -> httpx.Response:
@@ -97,6 +106,29 @@ def test_range_query(admin: TestClient, prom: FakePrometheus) -> None:
     assert float(form["step"]) == 60
     assert form["limit"] == str(MAX_SERIES + 1)
     assert form["timeout"] == "10s"
+
+
+def test_every_query_is_scoped_to_the_install(admin: TestClient, prom: FakePrometheus) -> None:
+    mine = install.current_id()
+    assert mine is not None
+    r = admin.post(QUERY, json={"query": 'sum by (a) (rate(x{b="c"}[5m]))'})
+    assert r.status_code == 200, r.text
+    sent = prom.raw_form()["query"]
+    assert sent == f'sum by (a) (rate(x{{b="c",vantage_install=~"{mine}|"}}[5m]))'
+    assert mine not in r.text  # responses don't change shape or name the install
+    # A matcher on the label in the query is replaced, never kept.
+    admin.post(QUERY, json={"query": 'x{vantage_install=~".*"}'})
+    assert prom.raw_form()["query"] == f'x{{vantage_install=~"{mine}|"}}'
+
+
+@pytest.mark.parametrize("query", ['x{"a"="b"}', "x[5m+1m]", "x by (a)", "x{a=}", "x ä"])
+def test_a_query_that_cannot_be_scoped_gets_400_and_is_not_sent(
+    admin: TestClient, prom: FakePrometheus, query: str
+) -> None:
+    r = admin.post(QUERY, json={"query": query})
+    assert (r.status_code, r.json()["detail"]) == (400, "query not supported")
+    assert prom.requests == []
+    assert str(install.current_id()) not in r.text
 
 
 def test_instant_query_any_user(admin: TestClient, session: Session, prom: FakePrometheus) -> None:
@@ -320,6 +352,19 @@ def test_prometheus_url_setting() -> None:
     assert "example-password" not in str(err.value)
     with pytest.raises(ConfigError):
         load_settings({"VANTAGE_PROMETHEUS_URL": "file:///etc/passwd"})
+
+
+def test_prometheus_mode_setting() -> None:
+    assert load_settings({}).prometheus_mode == "bundled"
+    assert load_settings({"VANTAGE_PROMETHEUS_MODE": " External "}).prometheus_mode == "external"
+    with pytest.raises(ConfigError, match="bundled or external"):
+        load_settings({"VANTAGE_PROMETHEUS_MODE": "lite"})
+
+
+def test_the_matcher_follows_the_mode() -> None:
+    mine = "33333333-3333-4333-8333-333333333333"
+    assert QueryScope(mine, "bundled").matcher == f'vantage_install=~"{mine}|"'
+    assert QueryScope(mine, "external").matcher == f'vantage_install="{mine}"'
 
 
 def test_alert_prometheus_client_can_be_injected(db_url: str) -> None:

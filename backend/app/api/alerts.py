@@ -504,6 +504,16 @@ def list_events(
     ]
 
 
+def _system_reason(monitor: SelfMonitor, kind: str | None) -> str | None:
+    """The fixed code the banner shows for a firing system alert (in memory; None when not
+    known or for the other kinds)."""
+    if kind == SystemKind.PROMETHEUS_UNREACHABLE:
+        return monitor.unreachable_reason
+    if kind == SystemKind.METRICS_NOT_COLLECTED:
+        return monitor.metrics_reason()
+    return None
+
+
 @router.get("/alerts/delivery-status")
 def delivery_status(_auth: AuthDep, db: DbDep, request: Request) -> DeliveryStatusOut:
     """For the banner: how many alert messages are stuck (a count only), and the firing
@@ -520,9 +530,7 @@ def delivery_status(_auth: AuthDep, db: DbDep, request: Request) -> DeliveryStat
             SystemAlertOut(
                 system_kind=e.system_kind or "",
                 since=e.started_at,
-                reason=monitor.unreachable_reason
-                if e.system_kind == SystemKind.PROMETHEUS_UNREACHABLE
-                else None,
+                reason=_system_reason(monitor, e.system_kind),
             )
             for e in system
         ],
