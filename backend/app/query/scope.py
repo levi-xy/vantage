@@ -75,10 +75,14 @@ _UNIT = r"(?:ms|s|m|h|d|w|y)"
 _DURATION = re.compile(rf"[0-9]+(?:\.[0-9]+)?{_UNIT}(?:[0-9]+{_UNIT})*(?![A-Za-z0-9_.])")
 _NUMBER = re.compile(r"(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
 _OPERATOR = re.compile(r"==|!=|>=|<=|=~|!~|[-+*/%^<>=,@(){}]")
-_BRACKET_BODY = re.compile(r"[0-9A-Za-z.:\s]*")
+_BRACKET_BODY = re.compile(r"[0-9A-Za-z.:\t\n ]*")
+# Prometheus' lexer also ends a comment at \r and treats \r as space; every other control
+# character is unexpected input. Only these are allowed, so the two lexers can't disagree.
+_WHITESPACE = " \t\n"
 
 _LABEL_KEYWORDS = frozenset({"by", "without", "on", "ignoring", "group_left", "group_right"})
 _SKIPPED_KEYWORDS = frozenset({"and", "or", "unless", "bool", "atan2"})
+_COMPARISONS = frozenset({"==", "!=", ">", "<", ">=", "<="})
 _AGGREGATORS = frozenset(
     {
         "sum", "min", "max", "avg", "group", "stddev", "stdvar", "count", "count_values",
@@ -89,11 +93,13 @@ _MATCH_OPS = frozenset({"=", "!=", "=~", "!~"})
 
 
 def _lex(query: str) -> list[_Tok]:
+    if any((ord(ch) < 32 and ch not in _WHITESPACE) or ord(ch) == 127 for ch in query):
+        raise Unsupported("control character")
     tokens: list[_Tok] = []
     i = 0
     while i < len(query):
         c = query[i]
-        if c.isspace():
+        if c in _WHITESPACE:
             i += 1
             continue
         if c == "#":  # a comment runs to the end of the line
@@ -197,15 +203,26 @@ def rewrite(query: str, scope: QueryScope) -> str:
             edits.append((found[-1][1].end, found[-1][1].end, "," + matcher))
         return i + 1
 
+    # Whether the previous token ends an operand (a selector, a number, a string, `)` ...):
+    # then a keyword is the operator it looks like; otherwise Prometheus' grammar would read
+    # `and`, `or`, `offset`, ... as a metric name, which isn't scoped here: refused.
+    operand = False
+    matching_end = -1  # index just after the label list of the latest on(...)/ignoring(...)
     i = 0
     while i < n:
         tok = toks[i]
         nxt = at(i + 1)
+        prev = at(i - 1)
+        if tok.kind in ("num", "dur", "str", "bracket"):
+            operand = True
+            i += 1
+            continue
         if tok.kind == "op":
             if tok.text == "{":  # a selector without a metric name
                 i = braces(i)
+                operand = True
                 continue
-            if tok.text in ("}",):
+            if tok.text == "}":
                 raise Unsupported("unbalanced braces")
             if tok.text == "@":
                 j = i + 1
@@ -221,29 +238,58 @@ def rewrite(query: str, scope: QueryScope) -> str:
                     i = j + 3
                 else:
                     raise Unsupported("unsupported @ modifier")
+                operand = True
                 continue
-            i += 1
-            continue
-        if tok.kind != "word":
+            operand = tok.text == ")"
             i += 1
             continue
 
         low = tok.text.lower()
         if low == "offset":
+            if not operand:
+                raise Unsupported("keyword where a selector may be")
             j = i + 1
             if _is(at(j), "op", "+", "-"):
                 j += 1
             if not (_is(at(j), "dur") or _is(at(j), "num")):
                 raise Unsupported("unsupported offset")
             i = j + 1
-        elif low in _LABEL_KEYWORDS:
-            if low in ("group_left", "group_right") and not _is(nxt, "op", "("):
-                i += 1
-            else:
-                i = label_list(i + 1)
-        elif low in _SKIPPED_KEYWORDS:
+        elif low in ("by", "without"):
+            # Only after an aggregation: `sum by (a) (x)` or `sum(x) by (a)`.
+            after_aggregator = (
+                prev is not None and prev.kind == "word" and (prev.text.lower() in _AGGREGATORS)
+            )
+            if not (_is(prev, "op", ")") or after_aggregator):
+                raise Unsupported("by/without outside an aggregation")
+            operand = _is(prev, "op", ")")
+            i = label_list(i + 1)
+        elif low in ("on", "ignoring"):
+            if operand or not (
+                (prev is not None and prev.kind == "op" and prev.text not in ("(", ","))
+                or _is(prev, "word", *_SKIPPED_KEYWORDS)
+            ):
+                raise Unsupported("matching keyword where a selector may be")
+            i = label_list(i + 1)
+            matching_end = i
+        elif low in ("group_left", "group_right"):
+            if i != matching_end:
+                raise Unsupported("keyword where a selector may be")
+            i = label_list(i + 1) if _is(nxt, "op", "(") else i + 1
+            operand = False
+        elif low in ("and", "or", "unless", "atan2"):
+            if not operand:
+                if low == "atan2" and _is(nxt, "op", "("):  # the function atan2(y, x)
+                    i += 1
+                    continue
+                raise Unsupported("keyword where a selector may be")
+            operand = False
+            i += 1
+        elif low == "bool":
+            if not (prev is not None and prev.kind == "op" and prev.text in _COMPARISONS):
+                raise Unsupported("keyword where a selector may be")
             i += 1
         elif low in ("inf", "nan") and not _is(nxt, "op", "{", "("):
+            operand = True
             i += 1
         elif _is(nxt, "op", "("):  # a function or an aggregation
             i += 1
@@ -253,8 +299,10 @@ def rewrite(query: str, scope: QueryScope) -> str:
             i += 1
         elif _is(nxt, "op", "{"):
             i = braces(i + 1)
+            operand = True
         else:  # a bare metric name
             edits.append((tok.end, tok.end, "{" + matcher + "}"))
+            operand = True
             i += 1
 
     out = query

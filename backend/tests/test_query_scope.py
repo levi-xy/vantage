@@ -137,6 +137,39 @@ def test_the_result_scopes_a_rewritten_query_again_to_itself() -> None:
         "x $ y",
         "x ! y",
         "x ; y",
+        # Prometheus ends a comment at \r too: a selector after it would be unscoped
+        '#x\r{__name__=~".+"}',
+        'x\r{a="b"}',
+        "x\x00",
+        "x\x0b+y",
+        "x" + chr(0xA0) + "+y",  # not whitespace for Prometheus
+        "x" + chr(0x2028) + "y",
+        # keywords are valid metric names for Prometheus; in operand position they are
+        # selectors we don't scope, so the query is refused
+        "and",
+        "or",
+        "unless",
+        "offset",
+        "by",
+        "sum(or)",
+        "rate(or[5m])",
+        "unless offset 5m",
+        "offset - 5",
+        "x + or",
+        "(and)",
+        "sum(x, or)",
+        "x and and",
+        "bool",
+        "x > bool bool",
+        "on",
+        "x + on",
+        "(on(a))",
+        "group_left",
+        "x + group_left",
+        "x / on(a) group_left group_left",
+        "sum(group_right)",
+        "x offset or",
+        "x or ignoring",
     ],
 )
 def test_what_cannot_be_placed_is_refused(query: str) -> None:
@@ -158,6 +191,31 @@ def test_nothing_hides_a_selector_from_the_rewriter() -> None:
     ):
         out = rewrite(query, BUNDLED)
         assert out.count(M) == 1, query
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "x and y",
+        "x or (y)",
+        "(x) unless y",
+        "x offset 5m",
+        "(x) offset 5m",
+        "rate(x[5m]) and on(a) y",
+        "x > bool 1",
+        "x == bool y",
+        "sum(x) by (a) and y",
+        "x / ignoring(a) group_right(b) y",
+        'x{a="b"} or y',
+        "x[5m] offset 1h",
+        "atan2(x, y)",
+        "x atan2 y",
+    ],
+)
+def test_a_keyword_is_an_operator_only_after_an_operand(query: str) -> None:
+    out = rewrite(query, BUNDLED)
+    assert M in out
+    assert rewrite(out, BUNDLED) == out
 
 
 def test_error_messages_never_name_the_install() -> None:

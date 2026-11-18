@@ -17,7 +17,7 @@ from app.collectors.store import InstallRegistry, _InstallLabels
 from app.core import install
 from app.models import Setting
 from app.query.proxy import PrometheusClient, QueryError, QueryRequest
-from app.query.scope import QueryScope, rewrite
+from app.query.scope import QueryScope, Unsupported, rewrite
 from tests import promfake
 from tests.promfake import OTHER_INSTALL_ID, TEST_INSTALL_ID, query_of, unscoped
 
@@ -45,6 +45,15 @@ def test_a_missing_or_unreadable_id_is_made_again(engine: Engine, session: Sessi
     session.commit()
     again = install.ensure(session)
     assert again != first and install.valid({"id": again}) == again
+
+
+def test_the_backend_refuses_to_start_when_the_install_id_cannot_be_loaded(db_url: str) -> None:
+    from tests.test_auth import make_client
+
+    # No migrated database (no settings table): not a state to run in.
+    with pytest.raises(Exception):  # noqa: B017 - the database driver's own error
+        with make_client(db_url):
+            pass
 
 
 def test_load_sets_the_id_and_mode(engine: Engine, session: Session) -> None:
@@ -184,6 +193,17 @@ def test_the_fake_prometheus_check_catches_an_unscoped_query() -> None:
     ):
         with pytest.raises(AssertionError, match="without the install scope"):
             promfake.check_request(unscoped_request(bad))
+    # A Prometheus behind a path prefix is checked too, and a query the rewriter refuses
+    # counts as a violation like any other (and is remembered even if the caller swallows it).
+    prefixed = httpx.Request(
+        "POST", "http://prom.test/prom/api/v1/query_range", data={"query": "up"}
+    )
+    with pytest.raises(AssertionError):
+        promfake.check_request(prefixed)
+    refused = httpx.Request("POST", "http://prom.test/api/v1/query", data={"query": 'x{"a"="b"}'})
+    with pytest.raises(Unsupported):
+        promfake.check_request(refused)
+    assert len(promfake.violations) == 6
     promfake.violations.clear()  # they were meant to happen
 
 

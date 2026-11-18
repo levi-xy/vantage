@@ -54,19 +54,23 @@ def check_request(request: httpx.Request) -> None:
     """Raise (and remember, so a swallowed error still fails the test) when ``request`` is a
     query whose vector selectors don't all carry the matcher of the loaded install (or of
     one of ``extra_ids``)."""
-    if request.url.path not in QUERY_PATHS:
+    # By suffix: a Prometheus behind a URL path prefix is checked too.
+    if not request.url.path.endswith(QUERY_PATHS):
         return
     query = query_of(request)
-    install_id = install.current_id()
-    assert install_id is not None, "a query was sent but no install id is loaded"
-    own = scope.QueryScope(install_id, install.current_mode())
-    if scope.rewrite(query, own) == query:
-        return
-    other = _own_scope(query)
-    if other is not None and scope.rewrite(query, other) == query:
-        return
-    violations.append(query)
-    raise AssertionError(f"a query reached Prometheus without the install scope: {query!r}")
+    try:
+        install_id = install.current_id()
+        assert install_id is not None, "a query was sent but no install id is loaded"
+        own = scope.QueryScope(install_id, install.current_mode())
+        if scope.rewrite(query, own) == query:
+            return
+        other = _own_scope(query)
+        if other is not None and scope.rewrite(query, other) == query:
+            return
+        raise AssertionError(f"a query reached Prometheus without the install scope: {query!r}")
+    except BaseException:  # also what the rewriter raises (Unsupported): all are violations
+        violations.append(query)
+        raise
 
 
 _INSTALL_LABEL = re.compile(r'vantage_install="[0-9a-f-]{36}",?')
