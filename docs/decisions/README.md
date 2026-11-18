@@ -8,7 +8,7 @@ When the maintainer approves a contract change:
 2. Add a bullet to `YYYY-MM-DD.md` for the approval date (create the file if needed): what was approved, where it lives in AGENTS.md, what it replaced, and the PR or task.
 3. Add the file to the list below.
 
-Approvals before 2026-10-28 (the first contract decisions, the audit fields, the net_guard ranges) were recorded straight into AGENTS.md and have no file here.
+Earlier approvals (the first contract decisions, the audit fields, the net_guard ranges) were recorded straight into AGENTS.md and have no file here.
 
 | Date | Topics |
 |---|---|
