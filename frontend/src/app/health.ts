@@ -77,6 +77,10 @@ const UNREACHABLE_CAUSE: Record<string, string> = {
     "Vantage can't connect to its address. Check that Prometheus is running (docker compose ps) and that VANTAGE_PROMETHEUS_URL is right.",
   timeout: "It doesn't answer in time; it may be starting up or overloaded.",
   server_error: "It answers with an error. Check its log: docker compose logs prometheus.",
+  auth_failed:
+    "Prometheus refuses Vantage's credentials. Check Settings → Prometheus (the user name and password or token).",
+  credentials_unreadable:
+    "The stored Prometheus credentials can't be read with this master key, so no query is sent. Fix the master key, or clear them under Settings → Prometheus.",
   connection_failed:
     "The connection fails (TLS or reset). Check VANTAGE_PROMETHEUS_URL and the Prometheus log.",
 };

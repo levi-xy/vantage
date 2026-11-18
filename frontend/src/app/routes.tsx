@@ -12,6 +12,7 @@ import { MapPage } from "../pages/MapPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
 import { ChannelsPage } from "../pages/ChannelsPage";
 import { SettingsShell } from "../pages/settings/SettingsShell";
+import { PrometheusPage } from "../pages/PrometheusPage";
 import { TimePage } from "../pages/TimePage";
 import { SetupPage } from "../pages/SetupPage";
 import { UsersPage } from "../pages/UsersPage";
@@ -87,6 +88,7 @@ export const routes: RouteObject[] = [
         children: [
           { index: true, element: <SettingsIndex /> },
           { path: "time", element: admin(<TimePage />) },
+          { path: "prometheus", element: admin(<PrometheusPage />) },
           { path: "users", element: admin(<UsersPage />) },
           { path: "audit", element: admin(<AuditPage />) },
           { path: "channels", element: admin(<ChannelsPage />) },

@@ -7,6 +7,7 @@ import { input } from "../../components/styles";
 
 const SECTIONS = [
   { to: "/settings/time", label: "Time", admin: true },
+  { to: "/settings/prometheus", label: "Prometheus", admin: true },
   { to: "/settings/users", label: "Users", admin: true },
   { to: "/settings/audit", label: "Audit log", admin: true },
   { to: "/settings/channels", label: "Notification channels", admin: true },

@@ -2,6 +2,10 @@
 
 All notable changes, newest first. Versions follow [semantic versioning](https://semver.org/); before 1.0, a minor version (0.2) may change behaviour, and its notes say how to upgrade.
 
+## Unreleased
+
+- **Settings → Prometheus** (admins): optional authentication from Vantage to your Prometheus, none (default), basic or bearer. The password or token is stored encrypted, never shown again, and backed up and rotated with the other secrets. Both of Vantage's connections to Prometheus use it at once, with no restart. The "Prometheus is unreachable" banner learns two causes: `auth_failed` (Prometheus answered 401 or 403) and `credentials_unreadable` (the stored secret can't be read with this master key). Nothing to change on upgrade: auth stays off until you set it.
+
 <a id="v0.1.1"></a>
 
 ## 0.1.1 (2026-11-14)
