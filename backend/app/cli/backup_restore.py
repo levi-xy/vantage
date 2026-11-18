@@ -66,6 +66,7 @@ from app.core.db import Base, UTCDateTime
 from app.core.key_check import KEY_CHECK_KEY
 from app.core.maintenance import RUNTIME_KEYS
 from app.models import Setting
+from app.query import auth as prometheus_auth
 
 FORMAT = "vantage-backup"
 FORMAT_VERSION = 1
@@ -419,6 +420,10 @@ def count_undecryptable(conn: Connection, box: SecretBox) -> tuple[int, int]:
                 box.decrypt(cast(bytes, blob), context=row_context(table.name, row_id))
             except DecryptionError:
                 bad += 1
+    # The secret in the settings row prometheus_auth is one more stored blob.
+    stored, good = key_check.blob_counts(conn, box).get(Setting.__tablename__, (0, 0))
+    total += stored
+    bad += stored - good
     return total, bad
 
 
@@ -563,6 +568,31 @@ def rotate_master_key(engine: Engine, old: SecretBox, new: SecretBox) -> dict[st
                 conn.execute(update(table).where(table.c.id == row_id).values(secrets=fresh))
                 done += 1
             counts[table.name] = done
+        # The Prometheus auth secret (settings row, its own context) moves with the rest.
+        prom_blob = key_check.prometheus_auth_blob(conn)
+        if prom_blob is not None:
+            try:
+                prom_secret = prometheus_auth.open_secret(old, prom_blob)
+            except prometheus_auth.CredentialsUnreadable:
+                raise BackupError(
+                    "the stored Prometheus credentials can't be decrypted with the current "
+                    "master key, so they can't be re-encrypted; nothing was changed"
+                ) from None
+            stored = prometheus_auth.parse_row(
+                conn.execute(
+                    select(Setting.value).where(Setting.key == prometheus_auth.SETTING_KEY)
+                ).scalar_one()
+            )
+            conn.execute(
+                update(Setting)
+                .where(Setting.key == prometheus_auth.SETTING_KEY)
+                .values(
+                    value=prometheus_auth.row_value(
+                        stored.kind, stored.username, prometheus_auth.seal_secret(new, prom_secret)
+                    )
+                )
+            )
+            counts["settings"] = 1
         # Read back what is about to be committed: every blob must open with the new key.
         total, bad = count_undecryptable(conn, new)
         if bad or total != sum(counts.values()):

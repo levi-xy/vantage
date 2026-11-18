@@ -9,6 +9,9 @@ import type {
   AlertTemplate,
   AuditEntry,
   AuditQuery,
+  PrometheusAuthUpdate,
+  PrometheusProbe,
+  PrometheusSettings,
   TimeSettings,
   CardSpec,
   NowPlaying,
@@ -224,6 +227,21 @@ export class ApiClient {
   /** Admin only. 422 for an unknown zone. */
   setTimeZone(timezone: string): Promise<TimeSettings> {
     return this.request("PUT", "/settings/time", { timezone });
+  }
+
+  /** Admin only: the Prometheus URL (server config) and the auth to it, never the secret. */
+  prometheusSettings(): Promise<PrometheusSettings> {
+    return this.request("GET", "/settings/prometheus");
+  }
+
+  /** Admin only. 422 for a missing user name or secret; 503 `key_mismatch` for a secret write. */
+  setPrometheusAuth(body: PrometheusAuthUpdate): Promise<PrometheusSettings> {
+    return this.request("PUT", "/settings/prometheus", body);
+  }
+
+  /** Admin only: a `vector(1)` probe with the saved settings. */
+  testPrometheus(): Promise<PrometheusProbe> {
+    return this.request("POST", "/settings/prometheus/test");
   }
 
   /** Admin only. */
