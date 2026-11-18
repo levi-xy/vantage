@@ -695,6 +695,21 @@ Prometheus' own error text is never passed on: the client sees `invalid PromQL q
 (400), `query could not be executed` (422), `query timed out` (504),
 `metrics backend unavailable` (503) or `metrics backend error` (502).
 
+### Authentication to Prometheus
+
+Settings → Prometheus can give the backend credentials for your Prometheus: none (the
+default), basic (user name and password) or a bearer token. The password or token is
+encrypted like every other secret: in the `settings` row `prometheus_auth`, under its own
+row context, so it moves with `rotate-master-key` and is checked by restore's key checks.
+It is write-only: no API response, log line, audit entry or error carries it, not even a
+masked part (the audit log says `<changed>`). Saving it is a secret write, so it is refused
+in key_mismatch mode; clearing it (`none`) is always allowed, so a credential that can no
+longer be read can be removed. If the stored secret can't be decrypted, Vantage sends no
+query at all (it never sends a half-configured request) and the "Prometheus is unreachable"
+banner says `credentials_unreadable`. A 401 or 403 from Prometheus shows as `auth_failed`.
+The address and the network guard are unchanged; basic auth over plain `http://` is allowed
+but the page warns about it.
+
 ## Alert channels (Telegram)
 
 Alert channels are managed at `/api/v1/channels` (admin only, CSRF checked; in the UI

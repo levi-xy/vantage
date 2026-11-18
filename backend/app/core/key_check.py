@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session
 
 from app.core.crypto import DecryptionError, SecretBox, row_context
 from app.models import Channel, Instance, Setting
+from app.query import auth as prometheus_auth
 
 log = logging.getLogger(__name__)
 
@@ -99,9 +100,27 @@ def opens(box: SecretBox, value: Any) -> bool:
         return False
 
 
+def prometheus_auth_blob(conn: Connection | Session) -> bytes | None:
+    """The encrypted secret in the ``settings`` row ``prometheus_auth`` (its own row
+    context), None when there is none. It counts as a stored secret everywhere a key
+    check, a restore or a rotation counts blobs."""
+    value = conn.execute(
+        select(Setting.value).where(Setting.key == prometheus_auth.SETTING_KEY)
+    ).scalar_one_or_none()
+    return None if value is None else prometheus_auth.stored_blob(value)
+
+
 def blob_counts(conn: Connection | Session, box: SecretBox) -> dict[str, tuple[int, int]]:
-    """``{table: (stored blobs, blobs that decrypt with box)}``."""
+    """``{table: (stored blobs, blobs that decrypt with box)}``. The Prometheus auth
+    secret is listed as ``settings`` when one is stored."""
     counts: dict[str, tuple[int, int]] = {}
+    prom_blob = prometheus_auth_blob(conn)
+    if prom_blob is not None:
+        try:
+            prometheus_auth.open_secret(box, prom_blob)
+            counts["settings"] = (1, 1)
+        except prometheus_auth.CredentialsUnreadable:
+            counts["settings"] = (1, 0)
     for table in encrypted_tables():
         query = select(table.c.id, table.c.secrets).where(table.c.secrets.is_not(None))
         total = good = 0

@@ -42,6 +42,7 @@ from app.heartbeat import Heartbeat
 from app.integrations.instance_config import NetGuardFactory, default_net_guard_factory
 from app.integrations.registry import Registry, builtin_registry
 from app.live.rates import LiveRates
+from app.query.auth import PrometheusAuth
 from app.query.proxy import PrometheusClient, QueryGate
 from app.sd.targets import router as sd_router
 
@@ -98,6 +99,8 @@ def create_app(
                 timezone.load(db)
         except Exception as exc:  # stays UTC until an admin saves a zone
             log.warning("timezone load failed (%s)", type(exc).__name__)
+        with app.state.session_factory() as db:
+            app.state.prometheus_auth.load(db, secret_box)
         try:
             await heartbeat.beat()
         except Exception as exc:  # retried on every beat
@@ -160,8 +163,11 @@ def create_app(
     app.state.prometheus_token = prometheus_token
     # PromQL proxy (M5.1): the URL comes from server config only, never from a request.
     # Through net_guard with the default policy, like every outbound connection.
+    # Optional auth to Prometheus (Settings -> Prometheus): one holder for both clients,
+    # loaded at startup, replaced on every save.
+    app.state.prometheus_auth = PrometheusAuth()
     app.state.prometheus = prometheus_client or PrometheusClient.guarded(
-        settings.prometheus_url, NetGuard(NetPolicy())
+        settings.prometheus_url, NetGuard(NetPolicy()), auth=app.state.prometheus_auth
     )
     # Browser queries run at most a few at a time (in total and per session); a full
     # slot answers 429 instead of queueing.
@@ -169,7 +175,7 @@ def create_app(
     # The alert evaluator gets its own client (own connection pool, no /query caps), so
     # browser queries can never starve alert evaluation. Tests may inject a fake one.
     app.state.alert_prometheus = alert_prometheus_client or PrometheusClient.guarded(
-        settings.prometheus_url, NetGuard(NetPolicy())
+        settings.prometheus_url, NetGuard(NetPolicy()), auth=app.state.prometheus_auth
     )
     # Poll collector (M2.4): results kept in memory, served on /metrics.
     app.state.metrics_store = MetricsStore(
@@ -249,6 +255,9 @@ def create_app(
         app.state.self_monitor.maintenance = active
         workers.maintenance = active
         if not active:
+            # A restore may have replaced the stored Prometheus credentials.
+            with app.state.session_factory() as db:
+                app.state.prometheus_auth.load(db, secret_box)
             # The offline command may have changed the key or the secrets: check before
             # anything that decrypts them resumes.
             try:
