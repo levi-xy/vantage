@@ -79,7 +79,7 @@ function AuthForm({ data }: { data: PrometheusSettings }) {
   });
   const probe = useMutation({ mutationFn: () => api.testPrometheus() });
 
-  const sameKindStored = data.auth.kind === kind && data.auth.secret_set;
+  const sameKindStored = data.auth.kind === kind && data.auth.secret_set && !data.auth.unreadable;
   const secretLabel = kind === "basic" ? "Password" : "Token";
   const plainHttp = data.url.startsWith("http://");
 
@@ -92,6 +92,11 @@ function AuthForm({ data }: { data: PrometheusSettings }) {
 
   return (
     <form onSubmit={onSubmit} className="space-y-4">
+      {data.auth.unreadable && (
+        <p role="alert" className={alertError}>
+          Stored credentials can&apos;t be read; save again or choose None.
+        </p>
+      )}
       <div>
         <label htmlFor="prom-kind" className={label}>
           Authentication
@@ -221,7 +226,7 @@ export function PrometheusPage() {
           </dl>
           <AuthForm
             // Saving replaces the data; remount so the form starts from what is stored.
-            key={`${settings.data.auth.kind}:${settings.data.auth.username ?? ""}:${String(settings.data.auth.secret_set)}`}
+            key={`${settings.data.auth.kind}:${settings.data.auth.username ?? ""}:${String(settings.data.auth.secret_set)}:${String(settings.data.auth.unreadable ?? false)}`}
             data={settings.data}
           />
         </section>

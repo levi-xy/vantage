@@ -62,7 +62,13 @@ export interface PrometheusSettings {
   /** Server config (`VANTAGE_PROMETHEUS_URL`), read-only. */
   url: string;
   mode: "bundled" | "external";
-  auth: { kind: PrometheusAuthKind; username: string | null; secret_set: boolean };
+  auth: {
+    kind: PrometheusAuthKind;
+    username: string | null;
+    secret_set: boolean;
+    /** The stored credentials can't be read; every query is refused until saved again. */
+    unreadable?: boolean;
+  };
 }
 
 export type PrometheusAuthKind = "none" | "basic" | "bearer";
