@@ -9,7 +9,8 @@ this install:
     foo{a="b"}             ->  foo{a="b",vantage_install=~"<id>|"}
     {__name__=~"x.*"}      ->  {__name__=~"x.*",vantage_install=~"<id>|"}
 
-The matcher depends on the mode (``VANTAGE_PROMETHEUS_MODE``):
+The matcher depends on the mode (``VANTAGE_PROMETHEUS_MODE``; unset, ``bundled`` only when
+``VANTAGE_PROMETHEUS_URL`` is unset or the bundled default, else ``external``):
 
 * ``external``: ``vantage_install="<id>"``, exact.
 * ``bundled``: ``vantage_install=~"<id>|"``. The bundled Prometheus holds only this
@@ -28,7 +29,9 @@ unscoped, and its messages never contain the install id.
 What is not a selector: function and aggregation names (followed by ``(``), keywords
 (``and or unless bool offset atan2 by without on ignoring group_left group_right``),
 ``inf`` / ``nan``, label lists, strings, durations (inside ``[...]`` and after ``offset``)
-and the ``start()`` / ``end()`` after ``@``. A query without any selector (``vector(1)``,
+and the ``start()`` / ``end()`` after ``@``. The function ``info()`` is refused: Prometheus
+joins ``target_info`` series inside it that no selector in the query names, so they can't
+be scoped. A query without any selector (``vector(1)``,
 ``time()``, numbers) is returned unchanged.
 """
 
@@ -292,6 +295,9 @@ def rewrite(query: str, scope: QueryScope) -> str:
             operand = True
             i += 1
         elif _is(nxt, "op", "("):  # a function or an aggregation
+            if low == "info":
+                # info() joins target_info series the query doesn't name: can't be scoped.
+                raise Unsupported("info() is not supported")
             i += 1
         elif _is(nxt, "word", "by", "without"):
             if low not in _AGGREGATORS:

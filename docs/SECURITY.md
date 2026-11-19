@@ -653,7 +653,11 @@ their witness and probe queries, the self-check, the startup seed) goes through
 `/sd/targets`) carries the label, so one Prometheus can hold several installs, or other
 data, and Vantage reads only its own. In the bundled Prometheus the matcher also accepts
 series without the label (`vantage_install=~"<id>|"`), so history stored before the label
-existed stays visible; with `VANTAGE_PROMETHEUS_MODE=external` the match is exact. A
+existed stays visible; with `VANTAGE_PROMETHEUS_MODE=external` the match is exact. Unset,
+the mode is `bundled` only when `VANTAGE_PROMETHEUS_URL` is unset or the bundled default
+(`http://prometheus:9090`); any other URL is `external`, so pointing Vantage at a shared
+Prometheus never falls back to the tolerant matcher by accident. `info()` is refused: it
+joins `target_info` series no selector names, which the rewriter can't scope. A
 `vantage_install` matcher in a query is replaced, never kept: a query can't widen its
 scope. The rewriter **fails closed**: a query it can't place with confidence (unknown
 characters, a quoted label name, an expression inside `[...]`, a `by` after a non-aggregation)

@@ -52,8 +52,9 @@ class Settings:
     # Where the /query proxy reaches Prometheus (VANTAGE_PROMETHEUS_URL). Server config only:
     # no request can change it.
     prometheus_url: str = DEFAULT_PROMETHEUS_URL
-    # ``bundled`` (default) or ``external`` (VANTAGE_PROMETHEUS_MODE): decides how queries
-    # are scoped to this install (app.query.scope). The lite install sets ``external``.
+    # ``bundled`` or ``external`` (VANTAGE_PROMETHEUS_MODE): decides how queries are scoped
+    # to this install (app.query.scope). Unset, it follows the URL: ``bundled`` only for the
+    # bundled default (http://prometheus:9090), any other URL is ``external``.
     prometheus_mode: Literal["bundled", "external"] = "bundled"
     # Host names (optionally host:port) the dashboard is reached by (VANTAGE_PUBLIC_HOSTS).
     # Empty = any Host. When set, /api/* and /ws requests with another Host are refused,
@@ -179,8 +180,21 @@ def _validate_retention(raw: str) -> str:
     return value
 
 
-def _validate_prometheus_mode(raw: str) -> Literal["bundled", "external"]:
-    value = raw.strip().lower() or "bundled"
+def _is_bundled_url(url: str) -> bool:
+    """Whether ``url`` (already validated) is the bundled Prometheus' default address."""
+    parts, default = urlsplit(url), urlsplit(DEFAULT_PROMETHEUS_URL)
+    return (
+        parts.scheme.lower() == default.scheme
+        and parts.hostname == default.hostname
+        and parts.port == default.port
+        and parts.path in ("", "/")
+    )
+
+
+def _validate_prometheus_mode(raw: str, url: str) -> Literal["bundled", "external"]:
+    """The explicit ``VANTAGE_PROMETHEUS_MODE``, else derived from the URL: anything but the
+    bundled default address is someone else's Prometheus, matched exactly."""
+    value = raw.strip().lower() or ("bundled" if _is_bundled_url(url) else "external")
     if value == "bundled":
         return "bundled"
     if value == "external":
@@ -215,7 +229,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     except TrustedProxiesError as exc:
         raise ConfigError(str(exc)) from None
     prometheus_url = _validate_prometheus_url(env.get("VANTAGE_PROMETHEUS_URL", ""))
-    prometheus_mode = _validate_prometheus_mode(env.get("VANTAGE_PROMETHEUS_MODE", ""))
+    prometheus_mode = _validate_prometheus_mode(
+        env.get("VANTAGE_PROMETHEUS_MODE", ""), prometheus_url
+    )
     public_hosts = _parse_public_hosts(env.get("VANTAGE_PUBLIC_HOSTS", ""))
     prometheus_retention = _validate_retention(env.get("VANTAGE_PROMETHEUS_RETENTION", ""))
     down_after_failed_cycles = _parse_int(

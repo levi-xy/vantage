@@ -355,10 +355,46 @@ def test_prometheus_url_setting() -> None:
 
 
 def test_prometheus_mode_setting() -> None:
-    assert load_settings({}).prometheus_mode == "bundled"
     assert load_settings({"VANTAGE_PROMETHEUS_MODE": " External "}).prometheus_mode == "external"
     with pytest.raises(ConfigError, match="bundled or external"):
         load_settings({"VANTAGE_PROMETHEUS_MODE": "lite"})
+
+
+def test_mode_is_bundled_when_the_url_is_unset() -> None:
+    assert load_settings({}).prometheus_mode == "bundled"
+    assert load_settings({"VANTAGE_PROMETHEUS_URL": "  "}).prometheus_mode == "bundled"
+
+
+@pytest.mark.parametrize(
+    "url", ["http://prometheus:9090", "http://prometheus:9090/", "http://PROMETHEUS:9090"]
+)
+def test_mode_is_bundled_for_the_bundled_default_url(url: str) -> None:
+    assert load_settings({"VANTAGE_PROMETHEUS_URL": url}).prometheus_mode == "bundled"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://10.0.0.5:9090",
+        "https://prometheus:9090",  # another scheme
+        "http://prometheus:9091",  # another port
+        "http://prometheus",  # no port: not the bundled address
+        "http://prometheus:9090/prom",  # behind a path prefix
+        "http://prometheus.example:9090",
+    ],
+)
+def test_mode_is_external_for_any_other_url(url: str) -> None:
+    assert load_settings({"VANTAGE_PROMETHEUS_URL": url}).prometheus_mode == "external"
+
+
+def test_an_explicit_mode_overrides_the_url() -> None:
+    assert (
+        load_settings(
+            {"VANTAGE_PROMETHEUS_URL": "http://10.0.0.5:9090", "VANTAGE_PROMETHEUS_MODE": "bundled"}
+        ).prometheus_mode
+        == "bundled"
+    )
+    assert load_settings({"VANTAGE_PROMETHEUS_MODE": "external"}).prometheus_mode == "external"
 
 
 def test_the_matcher_follows_the_mode() -> None:

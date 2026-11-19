@@ -218,6 +218,28 @@ def test_a_keyword_is_an_operator_only_after_an_operand(query: str) -> None:
     assert rewrite(out, BUNDLED) == out
 
 
+@pytest.mark.parametrize(
+    "query",
+    [
+        "info(up)",
+        "INFO (up)",
+        'info(rate(x[5m]), {k8s_cluster_name=~".+"})',
+        "sum(info(up))",
+        "x * info(up)",
+    ],
+)
+def test_info_is_refused_because_its_target_info_join_cant_be_scoped(query: str) -> None:
+    with pytest.raises(Unsupported, match="info"):
+        rewrite(query, EXTERNAL)
+    with pytest.raises(Unsupported, match="info"):
+        rewrite(query, BUNDLED)
+
+
+def test_a_metric_named_info_is_still_a_selector() -> None:
+    assert rewrite("info", BUNDLED) == "info{" + BUNDLED.matcher + "}"
+    assert rewrite('info{a="b"}', BUNDLED) == 'info{a="b",' + BUNDLED.matcher + "}"
+
+
 def test_error_messages_never_name_the_install() -> None:
     for query in ("x{", 'x{"a"="b"}', "x by (a)", "x[5m+1m]"):
         with pytest.raises(Unsupported) as exc:
