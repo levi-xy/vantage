@@ -27,6 +27,7 @@ from app.integrations.registry import Registry
 from app.query.proxy import PrometheusClient
 from tests.conftest import TEST_MASTER_KEY
 from tests.integrations.fake import FakeIntegration
+from tests.promfake import without_install_label
 
 INTERVAL = 60
 
@@ -112,7 +113,7 @@ def spec(store: MetricsStore) -> PollSpec:
 
 
 def exposition(store: MetricsStore) -> str:
-    return generate_latest(make_registry(store)).decode()
+    return without_install_label(generate_latest(make_registry(store)).decode())
 
 
 def metric(store: MetricsStore, name: str) -> float | None:

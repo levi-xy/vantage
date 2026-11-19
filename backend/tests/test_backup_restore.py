@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.cli import Console, main
 from app.cli.backup_restore import KEY_REMINDER, tables
+from app.core import install
 from app.core.auth import Passwords
 from app.core.config import Settings, normalize_database_url
 from app.core.crypto import DecryptionError, SecretBox, row_context
@@ -28,6 +29,7 @@ from app.models import (
     ChannelType,
     Instance,
     Role,
+    Setting,
     User,
     UserSession,
 )
@@ -159,7 +161,11 @@ def test_backup_restore_round_trip(engine: Engine, db_url: str, tmp_path: Path) 
     # Everything but the sessions comes back: everyone logs in again.
     assert len(before["sessions"]) == 1 and after.pop("sessions") == []
     # The backup predates the key check value (P0-6): restore created one for this key.
-    assert before["settings"] == [] and [k for k, _ in after.pop("settings")] == ["key_check"]
+    # ... and the install id came back with the backup, unchanged.
+    assert [k for k, _ in before["settings"]] == ["install_id"]
+    restored_settings = after.pop("settings")
+    assert [k for k, _ in restored_settings] == ["install_id", "key_check"]
+    assert restored_settings[0] == before["settings"][0]
     skipped = ("audit_log", "sessions", "settings")
     assert after == {k: v for k, v in before.items() if k not in skipped}
     assert "1 skipped" in restored.out
@@ -171,6 +177,55 @@ def test_backup_restore_round_trip(engine: Engine, db_url: str, tmp_path: Path) 
 
     # --overwrite replaces a non-empty database.
     assert run_cli(db_url, "restore", "--overwrite", str(target)).code == 0
+
+
+def install_row(engine: Engine) -> Any:
+    with Session(engine) as db:
+        row = db.get(Setting, "install_id")
+        return None if row is None else row.value
+
+
+def test_restore_takes_the_backups_install_id_or_keeps_its_own(
+    engine: Engine, db_url: str, tmp_path: Path
+) -> None:
+    seed(engine)
+    mine = install_row(engine)
+    assert install.valid(mine) is not None  # made by migration 0015
+    target = tmp_path / "with-id.json.gz"
+    assert run_cli(db_url, "backup", str(target)).code == 0
+    assert any(
+        row[0] == "install_id"
+        for row in json.loads(gzip.decompress(target.read_bytes()))["tables"]["settings"]["rows"]
+    )
+
+    # Disaster recovery onto another server: its own (new) id is replaced by the backup's,
+    # and a fresh database's id doesn't count as "not empty".
+    with Session(engine) as db:
+        other = db.get(Setting, "install_id")
+        assert other is not None
+        other.value = install.new_value()
+        db.commit()
+    with engine.begin() as conn:
+        for table in reversed(tables()):
+            if table.name != "settings":
+                conn.execute(table.delete())
+    assert run_cli(db_url, "restore", str(target)).code == 0
+    assert install_row(engine) == mine
+
+    # An older backup without the row keeps the database's current id: never missing.
+    doc = json.loads(gzip.decompress(target.read_bytes()))
+    settings = doc["tables"]["settings"]
+    settings["rows"] = [r for r in settings["rows"] if r[0] != "install_id"]
+    old = tmp_path / "old.json.gz"
+    old.write_bytes(gzip.compress(json.dumps(doc).encode()))
+    assert run_cli(db_url, "restore", "--overwrite", str(old)).code == 0
+    assert install_row(engine) == mine
+
+    # ... and a database that somehow has none gets a new one.
+    with engine.begin() as conn:
+        conn.execute(Setting.__table__.delete().where(Setting.key == "install_id"))  # type: ignore[attr-defined]
+    assert run_cli(db_url, "restore", "--overwrite", str(old)).code == 0
+    assert install.valid(install_row(engine)) is not None
 
 
 def test_restore_rejects_a_tampered_file(engine: Engine, db_url: str, tmp_path: Path) -> None:

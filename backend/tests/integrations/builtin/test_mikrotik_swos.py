@@ -39,6 +39,7 @@ from app.integrations.schema import config_json_schema
 from tests.conftest import TEST_MASTER_KEY
 from tests.integrations.netfake import fake_guards, make_ctx
 from tests.integrations.snmpfake import FakeSnmp, load_walk
+from tests.promfake import without_install_label
 from tests.test_auth import do_setup, make_client
 
 HOST = "snmp.example.internal"
@@ -477,7 +478,7 @@ async def test_collector_exposes_metrics(
     store, spec = await collect(engine, cfg())
     status = store.status(spec.instance_id)
     assert status is not None and status.state == "up", status
-    text = generate_latest(make_registry(store)).decode()
+    text = without_install_label(generate_latest(make_registry(store)).decode())
     std = (
         f'vantage_instance="sw-1",vantage_instance_id="{spec.instance_id}",'
         'vantage_integration="mikrotik_swos",vantage_site="lab"'
@@ -496,7 +497,11 @@ async def test_collector_marks_silent_switch_down(
     status = store.status(spec.instance_id)
     assert status is not None and status.state == "down"
     assert status.error is not None and status.error.startswith("no SNMP response from")
-    assert_no_secret(status.error, caplog.text, generate_latest(make_registry(store)).decode())
+    assert_no_secret(
+        status.error,
+        caplog.text,
+        without_install_label(generate_latest(make_registry(store)).decode()),
+    )
 
 
 # --- API -------------------------------------------------------------------------------

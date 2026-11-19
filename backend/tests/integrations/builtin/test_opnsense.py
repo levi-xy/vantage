@@ -48,6 +48,7 @@ from tests.integrations.netfake import (
     http_response,
     make_ctx,
 )
+from tests.promfake import without_install_label
 from tests.test_auth import do_setup, make_client
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -433,7 +434,7 @@ async def test_collector_exposes_samples_with_standard_labels(
     await scheduler.poll_once(spec, Opnsense(), next_start=0.0)
     status = store.status(spec.instance_id)
     assert status is not None and status.state == "up", status
-    text = generate_latest(make_registry(store)).decode()
+    text = without_install_label(generate_latest(make_registry(store)).decode())
     std = (
         f'vantage_instance="fw-1",vantage_instance_id="{instance_id}",'
         f'vantage_integration="opnsense",vantage_site="lab"'

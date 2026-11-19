@@ -332,7 +332,7 @@ Rules can be edited, disabled and deleted from the list. Changing a rule's expre
 - **NO DATA**: the alert was firing, but Vantage can't see the value any more, so it can't tell whether the problem is gone. The reason is shown: "device not reporting", "device not answering", "metric missing", "query failing", "Prometheus unreachable" or "metrics not being collected". A missing value never counts as recovered. A NO DATA message is sent after 5 minutes, with one reminder after 24 hours.
 - **RESOLVED**: the value came back and the condition was false on two different checks.
 
-**Open now** lists the firing and no-data alerts; **History** lists closed ones with how they ended. Admins can **Close** an open alert by hand (then **Confirm close**). Vantage's own alerts (Prometheus unreachable, metrics not collected, alert checks stalled) say "system alert, closes by itself" and can't be closed by hand. Timing details are in [OPERATIONS.md](OPERATIONS.md#how-alerts-resolve).
+**Open now** lists the firing and no-data alerts; **History** lists closed ones with how they ended. Admins can **Close** an open alert by hand (then **Confirm close**). Vantage's own alerts (Prometheus unreachable, metrics not collected, alert checks stalled) say "system alert, closes by itself" and can't be closed by hand. The banner for "metrics not collected" says why: Prometheus has never stored this install's metrics (check its scrape job for Vantage's `/metrics`, the token, and that nothing relabels the `vantage_` labels), or it stopped (check that it can still reach Vantage and that the token is unchanged). Timing details are in [OPERATIONS.md](OPERATIONS.md#how-alerts-resolve).
 
 ### How do I get alerts on Telegram?
 

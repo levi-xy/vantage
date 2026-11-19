@@ -35,6 +35,16 @@ GOLDEN = [
 ]
 
 
+def test_the_install_label_does_not_change_a_fingerprint() -> None:
+    """Alerts open before the label existed keep their identity on upgrade, and the label
+    never shows in an alert's stored labels."""
+    install = {"vantage_install": "11111111-1111-4111-8111-111111111111"}
+    assert fingerprint({**PORT, **install}) == fingerprint(PORT)
+    assert fingerprint({**PORT, "vantage_install": "another"}) == fingerprint(PORT)
+    assert "vantage_install" not in identity_labels({**PORT, **install})
+    assert "vantage_install" not in stored_labels({**PORT, **install})
+
+
 @pytest.mark.parametrize(("labels", "expected"), GOLDEN)
 def test_golden_vectors(labels: dict[str, str], expected: str) -> None:
     assert fingerprint(labels) == expected

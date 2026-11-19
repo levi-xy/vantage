@@ -127,6 +127,9 @@ export type PrometheusUnreachableReason =
   | "connection_failed"
   | (string & {});
 
+/** Why Prometheus isn't collecting Vantage's metrics (`delivery-status`). Later versions may add reasons. */
+export type MetricsNotCollectedReason = "never_seen" | "stale" | (string & {});
+
 export type AlertEndReason =
   "recovered" | "rule_disabled" | "rule_deleted" | "rule_changed" | "closed_by_user";
 
@@ -185,8 +188,8 @@ export interface DeliveryStatusSummary {
   system_alerts?: {
     system_kind: SystemAlertKind;
     since: string;
-    /** prometheus_unreachable only: why the probe fails. Null when not known. */
-    reason?: PrometheusUnreachableReason | null;
+    /** Why the system alert fires (a fixed code; null when not known). */
+    reason?: PrometheusUnreachableReason | MetricsNotCollectedReason | null;
   }[];
 }
 

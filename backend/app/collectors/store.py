@@ -17,7 +17,7 @@ counted), never allowed to break the exposition for every other instance.
 import math
 import re
 import uuid
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Literal
@@ -25,6 +25,8 @@ from typing import Literal
 from prometheus_client.metrics_core import Metric
 from prometheus_client.registry import Collector, CollectorRegistry
 
+from app import version
+from app.core import install
 from app.core.config import DEFAULT_DOWN_AFTER_FAILED_CYCLES
 from app.integrations.base import Sample
 
@@ -32,7 +34,9 @@ INSTANCE_ID = "vantage_instance_id"
 INSTANCE = "vantage_instance"
 INTEGRATION = "vantage_integration"
 SITE = "vantage_site"
-STANDARD_LABELS = frozenset({INSTANCE_ID, INSTANCE, INTEGRATION, SITE})
+# ``vantage_install`` (this install's id) is added to every exposed sample by
+# _InstallLabels, so an integration can't use it either.
+STANDARD_LABELS = frozenset({INSTANCE_ID, INSTANCE, INTEGRATION, SITE, install.LABEL})
 
 # Vantage's own metrics. Polled samples may never use these names.
 UP = "vantage_instance_up"
@@ -40,7 +44,8 @@ POLL_DURATION = "vantage_poll_duration_seconds"
 LAST_SUCCESS = "vantage_poll_last_success_timestamp_seconds"
 DROPPED = "vantage_poll_dropped_samples"
 FAILED_CYCLES = "vantage_poll_consecutive_failed_cycles"
-OWN_METRICS = frozenset({UP, POLL_DURATION, LAST_SUCCESS, DROPPED, FAILED_CYCLES})
+BUILD_INFO = "vantage_build_info"
+OWN_METRICS = frozenset({UP, POLL_DURATION, LAST_SUCCESS, DROPPED, FAILED_CYCLES, BUILD_INFO})
 
 # Limits on what one poll may store, so one misbehaving integration can't exhaust memory.
 MAX_SAMPLES_PER_INSTANCE = 10_000
@@ -329,8 +334,60 @@ class _StoreCollector(Collector):
         return list(self._store.collect())
 
 
-def make_registry(store: MetricsStore) -> CollectorRegistry:
-    """A dedicated registry (not prometheus_client's global one) serving ``store``."""
-    registry = CollectorRegistry(auto_describe=False)
+class _BuildInfo(Collector):
+    """``vantage_build_info{version, commit} 1``: also what the self-check reads to see that
+    Prometheus scrapes this install, whatever the scrape job is called."""
+
+    def collect(self) -> Iterable[Metric]:
+        info = version.current()
+        family = Metric(BUILD_INFO, "The running Vantage version.", "gauge")
+        family.add_sample(BUILD_INFO, {"version": info.release, "commit": info.commit or ""}, 1.0)
+        return [family]
+
+
+class _InstallLabels(Collector):
+    """Gives every sample of ``inner`` the label ``vantage_install=<id>``, overwriting any
+    value already there. Without a loaded install id it exposes nothing: a series without
+    the label would escape the install scoping."""
+
+    def __init__(self, inner: Collector, install_id: Callable[[], str | None]) -> None:
+        self._inner = inner
+        self._install_id = install_id
+
+    def collect(self) -> Iterable[Metric]:
+        install_id = self._install_id()
+        if install_id is None:
+            return []
+        out: list[Metric] = []
+        for family in self._inner.collect():
+            labelled = Metric(family.name, family.documentation, family.type, family.unit)
+            labelled.samples = [
+                sample._replace(labels={**sample.labels, install.LABEL: install_id})
+                for sample in family.samples
+            ]
+            out.append(labelled)
+        return out
+
+
+class InstallRegistry(CollectorRegistry):
+    """A registry whose every collector is wrapped in :class:`_InstallLabels` when it is
+    registered, so nothing exposed through it, ``DeliveryCollector`` and any later one
+    included, can miss the ``vantage_install`` label."""
+
+    def __init__(self, install_id: Callable[[], str | None]) -> None:
+        super().__init__(auto_describe=False)
+        self._install_id = install_id
+
+    def register(self, collector: Collector) -> None:
+        super().register(_InstallLabels(collector, self._install_id))
+
+
+def make_registry(
+    store: MetricsStore, *, install_id: Callable[[], str | None] = install.current_id
+) -> CollectorRegistry:
+    """A dedicated registry (not prometheus_client's global one) serving ``store`` and the
+    build info, every sample labelled with the install id."""
+    registry = InstallRegistry(install_id)
     registry.register(_StoreCollector(store))
+    registry.register(_BuildInfo())
     return registry

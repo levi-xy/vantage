@@ -30,6 +30,7 @@ from app.integrations.registry import Registry
 from app.models import Instance
 from tests.conftest import TEST_MASTER_KEY
 from tests.integrations.fake import FakeConfig, FakeIntegration
+from tests.promfake import without_install_label
 
 TOKEN = "example-token-poll-3e9d1a"
 INTERVAL = 0.05
@@ -286,7 +287,7 @@ async def wait_for(condition: Any, limit_seconds: float = 5.0) -> None:
 def exposition(store: MetricsStore) -> str:
     from prometheus_client import generate_latest
 
-    return generate_latest(make_registry(store)).decode()
+    return without_install_label(generate_latest(make_registry(store)).decode())
 
 
 def test_polls_detects_override() -> None:

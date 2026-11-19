@@ -60,7 +60,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 import app.models  # noqa: F401  (registers every table on Base.metadata)
-from app.core import audit, key_check
+from app.core import audit, install, key_check
 from app.core.crypto import DecryptionError, SecretBox, row_context
 from app.core.db import Base, UTCDateTime
 from app.core.key_check import KEY_CHECK_KEY
@@ -430,6 +430,13 @@ def restore(engine: Engine, backup: Backup, box: SecretBox, *, overwrite: bool) 
         # A freshly started Vantage has already written its own key check value: that
         # row doesn't make the database "not empty", and the backup brings its own.
         conn.execute(delete(Setting).where(Setting.key == KEY_CHECK_KEY))
+        # Likewise the install id: a fresh database already has one (migration 0015), which
+        # doesn't make it "not empty". The backup's id wins (it keeps matching the history
+        # in Prometheus); without one the current id is kept, so the row never goes missing.
+        current_install = conn.execute(
+            select(Setting.value).where(Setting.key == install.SETTING_KEY)
+        ).scalar_one_or_none()
+        conn.execute(delete(Setting).where(Setting.key == install.SETTING_KEY))
         # The maintenance lock (this command's own) and the heartbeat are runtime state:
         # not counted, not replaced, never taken from a backup (P0-6).
         existing = sum(
@@ -458,6 +465,7 @@ def restore(engine: Engine, backup: Backup, box: SecretBox, *, overwrite: bool) 
                 conn.execute(table.insert(), rows)
                 restored += len(rows)
         _reset_sequences(conn)
+        _keep_install_id(conn, current_install)
         with Session(bind=conn) as db:
             audit.record(
                 db,
@@ -485,6 +493,21 @@ def restore(engine: Engine, backup: Backup, box: SecretBox, *, overwrite: bool) 
         secrets_undecryptable=bad,
         key_matches=matches,
     )
+
+
+def _keep_install_id(conn: Connection, current: Any) -> None:
+    """The restored ``install_id`` row is the backup's when it holds a valid id, else the
+    database's own (or a new one): never missing, never unreadable."""
+    with Session(bind=conn) as db:
+        row = db.get(Setting, install.SETTING_KEY)
+        if row is not None and install.valid(row.value) is not None:
+            return
+        value = current if install.valid(current) is not None else install.new_value()
+        if row is None:
+            db.add(Setting(key=install.SETTING_KEY, value=value))
+        else:
+            row.value = value
+        db.flush()
 
 
 def _check_restored_key(conn: Connection, box: SecretBox, total: int, bad: int) -> bool:

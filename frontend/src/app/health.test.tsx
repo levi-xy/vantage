@@ -159,6 +159,22 @@ describe("health level", () => {
     expect(issue("a_reason_from_a_newer_backend")?.detail).toBe("");
   });
 
+  it("tells why Prometheus isn't collecting Vantage's metrics, without naming an address", () => {
+    const since = "2026-11-02T13:00:00Z";
+    const issue = (reason: string | null) =>
+      health({
+        delivery: {
+          stuck: 0,
+          system_alerts: [{ system_kind: "metrics_not_collected", since, reason }],
+        },
+      }).issues.find((i) => i.tag === "SYSTEM");
+    expect(issue("never_seen")?.detail).toMatch(/scrape job .* \/metrics/);
+    expect(issue("never_seen")?.detail).toMatch(/relabels/);
+    expect(issue("stale")?.detail).toMatch(/stopped collecting/);
+    expect(issue(null)?.detail).toBe("");
+    expect(issue("a_reason_from_a_newer_backend")?.detail).toBe("");
+  });
+
   it("claims nothing until devices, alerts and delivery status have answered", () => {
     expect(health({ alerts: undefined }).known).toBe(false);
     expect(health({ delivery: undefined })).toMatchObject({ level: "healthy", known: false });

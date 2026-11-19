@@ -11,6 +11,7 @@ from app.collectors.store import (
     standard_labels,
 )
 from app.integrations.base import Sample
+from tests.promfake import without_install_label
 
 AT = datetime(2026, 1, 1, tzinfo=UTC)
 ID_A = uuid.UUID("00000000-0000-0000-0000-00000000000a")
@@ -22,7 +23,7 @@ def labels(instance_id: uuid.UUID, name: str = "nas-1") -> dict[str, str]:
 
 
 def render(store: MetricsStore) -> str:
-    return generate_latest(make_registry(store)).decode()
+    return without_install_label(generate_latest(make_registry(store)).decode())
 
 
 def gauge(name: str, value: float = 1.0, **extra: str) -> Sample:

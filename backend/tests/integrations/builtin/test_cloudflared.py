@@ -18,6 +18,7 @@ from pydantic import ValidationError
 from sqlalchemy import Engine
 
 from app.collectors.scheduler import polls
+from app.core import install
 from app.core.db import make_session_factory
 from app.core.prometheus_auth import PrometheusToken
 from app.integrations import instance_config as ic
@@ -321,6 +322,7 @@ def test_api_to_service_discovery(admin: TestClient, engine: Engine, fake_net: F
                 "vantage_instance": "lab-tunnel-1",
                 "vantage_integration": "cloudflared",
                 "vantage_site": "lab",
+                "vantage_install": install.current_id(),
             },
         }
     ]

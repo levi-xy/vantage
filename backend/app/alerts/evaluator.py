@@ -96,7 +96,9 @@ from app.alerts.delivery import enqueue, fold_into
 from app.alerts.labels import INSTANCE_ID_LABEL, INSTANCE_NAME_LABEL, LEGACY_FINGERPRINT, REDACTED
 from app.alerts.selfcheck import (
     METRICS_QUERY,
+    METRICS_REASON_TEXT,
     RESTART_GRACE_SECONDS,
+    SEEN_QUERY,
     SelfMonitor,
     hhmm,
     minutes,
@@ -547,7 +549,13 @@ class AlertEvaluator:
         else:
             ages = [v for v in (_value(s) for s in result.series) if v is not None]
             finite = [v for v in ages if math.isfinite(v)]
-            self.monitor.record_metrics(min(finite) if finite else None, now)
+            seen = True
+            if not finite:  # no recent sample: was there ever one (stale) or not?
+                try:
+                    seen = bool((await self._query(SEEN_QUERY)).series)
+                except QueryError:
+                    seen = True
+            self.monitor.record_metrics(min(finite) if finite else None, now, seen=seen)
         down = self.monitor.metrics_down(now)
         kind = SystemKind.METRICS_NOT_COLLECTED
         if down and kind not in system_open:
@@ -559,7 +567,8 @@ class AlertEvaluator:
             )
             since = self.monitor.metrics_bad_since or now
             detail = (
-                f"Prometheus hasn't collected Vantage's metrics since {hhmm(since)}. "
+                f"Prometheus hasn't collected Vantage's metrics since {hhmm(since)} "
+                f"({METRICS_REASON_TEXT[self.monitor.metrics_reason()]}). "
                 f"{plural(alerts, 'open alert')} on polled devices can't be checked"
             )
             self.monitor.open_alert(kind, detail, since=since)

@@ -39,6 +39,7 @@ from tests.integrations.netfake import (
     http_response,
     make_ctx,
 )
+from tests.promfake import without_install_label
 from tests.test_auth import do_setup, make_client
 
 TOKEN = "example-token-http-check-7f3a"
@@ -438,7 +439,7 @@ async def test_collector_exposes_samples_with_standard_labels(
     store, spec = await collect(engine, config())
     status = store.status(spec.instance_id)
     assert status is not None and status.state == "up"
-    text = generate_latest(make_registry(store)).decode()
+    text = without_install_label(generate_latest(make_registry(store)).decode())
     labels = (
         f'vantage_instance="web-1",vantage_instance_id="{spec.instance_id}",'
         'vantage_integration="http_check",vantage_site="lab"'
@@ -460,7 +461,7 @@ async def test_collector_marks_unreachable_check_down(
     status = store.status(spec.instance_id)
     assert status is not None and status.state == "down"
     assert status.error is not None
-    text = generate_latest(make_registry(store)).decode()
+    text = without_install_label(generate_latest(make_registry(store)).decode())
     assert "vantage_http_check_success" not in text
     assert 'vantage_instance_up{vantage_instance="web-1"' in text
     assert_no_token(text, status.error, caplog.text)
