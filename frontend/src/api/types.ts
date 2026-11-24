@@ -57,6 +57,33 @@ export interface TimeSettings {
   timezones: string[];
 }
 
+/** `GET /settings/prometheus` and the response of `PUT` (admin). Never carries the secret. */
+export interface PrometheusSettings {
+  /** Server config (`VANTAGE_PROMETHEUS_URL`), read-only. */
+  url: string;
+  mode: "bundled" | "external";
+  auth: {
+    kind: PrometheusAuthKind;
+    username: string | null;
+    secret_set: boolean;
+    /** The stored credentials can't be read; every query is refused until saved again. */
+    unreadable?: boolean;
+  };
+}
+
+export type PrometheusAuthKind = "none" | "basic" | "bearer";
+
+/** `PUT /settings/prometheus`. An omitted secret means unchanged. */
+export interface PrometheusAuthUpdate {
+  auth: { kind: PrometheusAuthKind; username?: string; secret?: string };
+}
+
+/** `POST /settings/prometheus/test`: a `vector(1)` probe; `reason` is a fixed code. */
+export interface PrometheusProbe {
+  ok: boolean;
+  reason: PrometheusUnreachableReason | null;
+}
+
 /** `GET /users`, and the response of creating or updating one. Never carries a password or hash. */
 export interface UserInfo {
   id: number;
@@ -125,6 +152,8 @@ export type PrometheusUnreachableReason =
   | "timeout"
   | "server_error"
   | "connection_failed"
+  | "auth_failed"
+  | "credentials_unreadable"
   | (string & {});
 
 /** Why Prometheus isn't collecting Vantage's metrics (`delivery-status`). Later versions may add reasons. */

@@ -384,6 +384,10 @@ If the web app and the server come from different builds (different commits), a 
 
 **Settings → Time**: search for your zone (**Search timezones**), pick it under **Timezone** and press **Save**. Everyone sees times in this zone: web pages, Telegram messages and log lines. The clock itself is the host's; keep NTP running on the host. See [OPERATIONS.md](OPERATIONS.md#time).
 
+### How do I give Vantage a login for Prometheus?
+
+Only needed when your Prometheus asks for one. **Settings → Prometheus** (admins) shows the address Vantage uses (set by `VANTAGE_PROMETHEUS_URL` in the compose file, read-only) and the mode. Under **Authentication** pick **None**, **Basic** (**User name** and **Password**) or **Bearer token**, then press **Save**. The password or token is never shown again: the page only says "set" or "not set", and leaving the field empty keeps the stored one. Changing between Basic and Bearer needs a new secret. **Test** sends a harmless query with the saved settings and tells you if Prometheus refused the login (check the user name and password or token) or can't be reached. It applies at once, no restart. Over plain `http://` the password or token travels unencrypted, and the page warns about it. Viewers don't see this page.
+
 ### Where do I see who changed what?
 
 **Settings → Audit log** lists every change, newest first: who (a user, **Admin CLI** or **System**), what, and the changed values. Passwords and tokens only ever appear as `<changed>`. **Load older entries** pages back.

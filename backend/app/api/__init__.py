@@ -12,6 +12,7 @@ from app.api import (
     instances,
     integrations,
     maps,
+    prometheus_settings,
     query,
     settings,
     users,
@@ -28,6 +29,7 @@ api_router.include_router(dashboards.router)
 api_router.include_router(integrations.router)
 api_router.include_router(instances.router)
 api_router.include_router(maps.router)
+api_router.include_router(prometheus_settings.router)
 api_router.include_router(query.router)
 api_router.include_router(settings.router)
 api_router.include_router(users.router)

@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 from app.core import install
 from app.core.net_guard import NetGuard, NetGuardError, NetGuardResolveError, guarded_http_client
 from app.query import scope as query_scope
+from app.query.auth import CredentialsUnreadable, PrometheusAuth
 
 log = logging.getLogger(__name__)
 
@@ -93,6 +94,8 @@ UnreachableReason = Literal[
     "timeout",  # no answer in time
     "server_error",  # it answered, but not as a working Prometheus API (5xx, not JSON)
     "connection_failed",  # any other transport failure (TLS, reset)
+    "auth_failed",  # it answered 401/403: check Settings -> Prometheus
+    "credentials_unreadable",  # the stored credentials can't be decrypted; nothing was sent
 ]
 
 
@@ -169,11 +172,17 @@ class PrometheusClient:
     any ``httpx.AsyncClient`` (e.g. one on an ``httpx.MockTransport``)."""
 
     def __init__(
-        self, client: httpx.AsyncClient, scope: query_scope.QueryScope | None = None
+        self,
+        client: httpx.AsyncClient,
+        scope: query_scope.QueryScope | None = None,
+        auth: PrometheusAuth | None = None,
     ) -> None:
         self._client = client
         # None: this install's (app.core.install), read at every query.
         self._scope = scope
+        # Shared with the other client; read on every request, so a saved change applies
+        # at once. None = no auth (tests).
+        self._auth = auth
         self._version_cache: tuple[float, str | None] | None = None
 
     @classmethod
@@ -184,6 +193,7 @@ class PrometheusClient:
         *,
         network_backend: httpcore.AsyncNetworkBackend | None = None,
         scope: query_scope.QueryScope | None = None,
+        auth: PrometheusAuth | None = None,
     ) -> "PrometheusClient":
         """The production client: every connection is checked by ``guard``."""
         return cls(
@@ -194,7 +204,12 @@ class PrometheusClient:
                 network_backend=network_backend,
             ),
             scope,
+            auth,
         )
+
+    def _headers(self) -> dict[str, str]:
+        """Auth headers for one request; raises :class:`CredentialsUnreadable`."""
+        return self._auth.headers() if self._auth is not None else {}
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -209,7 +224,9 @@ class PrometheusClient:
         found: str | None = None
         try:
             async with asyncio.timeout(VERSION_TIMEOUT_SECONDS):
-                async with self._client.stream("GET", "/api/v1/status/buildinfo") as response:
+                async with self._client.stream(
+                    "GET", "/api/v1/status/buildinfo", headers=self._headers()
+                ) as response:
                     body = await response.aread()
                     if response.status_code == 200 and len(body) <= 64 * 1024:
                         data: Any = json.loads(body)
@@ -235,6 +252,10 @@ class PrometheusClient:
         try:
             async with asyncio.timeout(TOTAL_TIMEOUT_SECONDS):
                 status_code, body = await self._post(path, form)
+        except CredentialsUnreadable:
+            raise QueryError(
+                503, "metrics backend credentials unreadable", "credentials_unreadable"
+            ) from None
         except TimeoutError:
             raise QueryError(504, "query timed out", "timeout") from None
         except NetGuardResolveError as exc:
@@ -258,6 +279,8 @@ class PrometheusClient:
                 else "connection_failed"
             )
             raise QueryError(503, "metrics backend unavailable", reason) from None
+        if status_code in (401, 403):
+            raise QueryError(503, "metrics backend refused the credentials", "auth_failed")
         return _parse(status_code, body, max_series)
 
     def _scoped(self, query: str) -> str:
@@ -275,7 +298,8 @@ class PrometheusClient:
             raise QueryError(400, "query not supported") from None
 
     async def _post(self, path: str, form: dict[str, str]) -> tuple[int, bytes]:
-        async with self._client.stream("POST", path, data=form) as response:
+        headers = self._headers()
+        async with self._client.stream("POST", path, data=form, headers=headers) as response:
             chunks: list[bytes] = []
             size = 0
             async for chunk in response.aiter_bytes():
