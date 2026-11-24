@@ -22,3 +22,4 @@ Earlier approvals (the first contract decisions, the audit fields, the net_guard
 | [2026-11-08](2026-11-08.md) | Detailed network maps (M11), port numbering order |
 | [2026-11-10](2026-11-10.md) | One-time setup code |
 | [2026-11-13](2026-11-13.md) | Viewers read-only for dashboards, release version and About page |
+| [2026-11-24](2026-11-24.md) | Prometheus auth (lite install) |
