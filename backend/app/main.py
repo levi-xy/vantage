@@ -28,7 +28,7 @@ from app.collectors.hub import EventHub
 from app.collectors.scheduler import PollScheduler
 from app.collectors.seed import seed_last_success
 from app.collectors.store import MetricsStore, make_registry
-from app.core import timezone
+from app.core import install, timezone
 from app.core.auth import LoginRateLimiter, Passwords
 from app.core.config import Settings, get_settings, host_allowed
 from app.core.crypto import SecretBox, load_master_key
@@ -87,6 +87,12 @@ def create_app(
         # polling, live rates and delivery don't start (the key monitor starts them once
         # it matches).
         heartbeat: Heartbeat = app.state.heartbeat
+        # The install id scopes every query and labels every series. The row is made by
+        # migration 0015 (and by ensure here), so failing to load it means the database is
+        # badly wrong: refuse to start (the restart policy retries) rather than run with
+        # every query refused and a false "Prometheus unreachable".
+        with app.state.session_factory() as db:
+            install.load(db, settings.prometheus_mode)
         try:
             with app.state.session_factory() as db:
                 timezone.load(db)

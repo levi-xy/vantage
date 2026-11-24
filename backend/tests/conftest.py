@@ -1,14 +1,18 @@
 import asyncio
+import inspect
 import os
 from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
+from typing import Any
 
+import httpx
 import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import Engine, MetaData
 from sqlalchemy.orm import Session
 
+from app.core import install
 from app.core.crypto import SecretBox
 from app.core.db import make_engine, make_session_factory
 
@@ -100,3 +104,38 @@ def session(engine: Engine) -> Iterator[Session]:
 @pytest.fixture
 def secret_box() -> SecretBox:
     return SecretBox(TEST_MASTER_KEY)
+
+
+@pytest.fixture(autouse=True)
+def install_scope(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Every test starts with a known install id (bundled mode), and every fake Prometheus
+    (any ``httpx.MockTransport``) refuses a query that isn't scoped to it: an unscoped
+    query fails the test, also when the code under test swallows the error."""
+    from tests import promfake
+
+    install.configure(promfake.TEST_INSTALL_ID, "bundled")
+    promfake.violations.clear()
+    promfake.extra_ids.clear()
+    original = httpx.MockTransport.__init__
+
+    def init(self: httpx.MockTransport, handler: Any) -> None:
+        if inspect.iscoroutinefunction(handler):
+
+            async def checked_async(request: httpx.Request) -> httpx.Response:
+                promfake.check_request(request)
+                return await handler(request)  # type: ignore[no-any-return]
+
+            original(self, checked_async)
+            return
+
+        def checked(request: httpx.Request) -> httpx.Response:
+            promfake.check_request(request)
+            return handler(request)  # type: ignore[no-any-return]
+
+        original(self, checked)
+
+    monkeypatch.setattr(httpx.MockTransport, "__init__", init)
+    yield
+    assert not promfake.violations, (
+        f"unscoped queries reached a fake Prometheus: {promfake.violations}"
+    )

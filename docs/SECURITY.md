@@ -645,6 +645,25 @@ credentials, checked at startup), the API paths are fixed, a request supplies on
 PromQL text and numbers (sent as form fields), redirects aren't followed and proxy
 environment variables are ignored.
 
+**Install scope.** Every PromQL query Vantage sends (cards, maps, About, alert rules and
+their witness and probe queries, the self-check, the startup seed) goes through
+`PrometheusClient.query`, which first rewrites it (`backend/app/query/scope.py`) so that
+**every vector selector** carries `vantage_install` matching this install's id (the
+`settings` row `install_id`, made once). Every series Vantage exposes (`/metrics`,
+`/sd/targets`) carries the label, so one Prometheus can hold several installs, or other
+data, and Vantage reads only its own. In the bundled Prometheus the matcher also accepts
+series without the label (`vantage_install=~"<id>|"`), so history stored before the label
+existed stays visible; with `VANTAGE_PROMETHEUS_MODE=external` the match is exact. Unset,
+the mode is `bundled` only when `VANTAGE_PROMETHEUS_URL` is unset or the bundled default
+(`http://prometheus:9090`); any other URL is `external`, so pointing Vantage at a shared
+Prometheus never falls back to the tolerant matcher by accident. `info()` is refused: it
+joins `target_info` series no selector names, which the rewriter can't scope. A
+`vantage_install` matcher in a query is replaced, never kept: a query can't widen its
+scope. The rewriter **fails closed**: a query it can't place with confidence (unknown
+characters, a quoted label name, an expression inside `[...]`, a `by` after a non-aggregation)
+is refused with 400 `query not supported` and never sent. The label is left out of alert
+fingerprints, so alerts opened before it existed keep their identity.
+
 Budget (constants in `backend/app/query/proxy.py`); a query over it gets a 4xx with a
 short message and never reaches Prometheus:
 
@@ -840,7 +859,7 @@ curl -fsS -o /dev/null --max-time 10 https://vantage.example.com:8443/healthz \
 | Failure | Detected by | After | Result |
 |---|---|---|---|
 | Prometheus unreachable (refused, timeout, HTTP 5xx) | the evaluator's per-tick probe | 2 min of failed probes | system alert "Prometheus unreachable" |
-| Prometheus up but not scraping Vantage | age of the newest `up{job="vantage-backend"} == 1` | older than 2 min, or none for 2 min | system alert "Metrics not being collected" |
+| Prometheus up but not scraping Vantage | age of the newest `vantage_build_info` sample of this install (any scrape job name) | older than 2 min, or none for 2 min | system alert "Metrics not being collected", with the reason `never_seen` (no sample within the last hour: scrape job, token or relabeling) or `stale` (seen before, the scrape stopped) |
 | Alert evaluation hung or crashed | a watchdog task: the evaluator's last progress (a query answered or failed, a tick finished), so a slow but working tick isn't a stall | 90 s (3 intervals) | system alert "Alert evaluation stopped"; the evaluator is restarted once |
 | One rule's query keeps failing | per-rule counter | 3 ticks in a row | the rule shows the error on the Alerts page; no message (a configuration problem) |
 

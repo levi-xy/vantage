@@ -81,10 +81,21 @@ const UNREACHABLE_CAUSE: Record<string, string> = {
     "The connection fails (TLS or reset). Check VANTAGE_PROMETHEUS_URL and the Prometheus log.",
 };
 
+// Why Prometheus isn't collecting Vantage's metrics. The install's own build info is the
+// signal, so the scrape job's name doesn't matter.
+const METRICS_CAUSE: Record<string, string> = {
+  never_seen:
+    "Prometheus has never stored this install's metrics. Check that it has a scrape job for Vantage's /metrics, that the token and certificate are right, and that nothing relabels the vantage_ labels.",
+  stale:
+    "Prometheus stopped collecting them. Check that it can still reach Vantage and that the token hasn't changed.",
+};
+
 /** The cause and fix for a system alert, "" when there is none to tell. */
 export function systemAlertCause(kind: string, reason: string | null | undefined): string {
-  if (kind !== "prometheus_unreachable" || !reason) return "";
-  return UNREACHABLE_CAUSE[reason] ?? "";
+  if (!reason) return "";
+  if (kind === "prometheus_unreachable") return UNREACHABLE_CAUSE[reason] ?? "";
+  if (kind === "metrics_not_collected") return METRICS_CAUSE[reason] ?? "";
+  return "";
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;

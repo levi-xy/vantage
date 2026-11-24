@@ -42,6 +42,7 @@ from app.integrations.registry import Registry
 from app.integrations.schema import config_json_schema
 from tests.conftest import TEST_MASTER_KEY
 from tests.integrations.netfake import FakeIcmp, drop, fake_guards, make_ctx
+from tests.promfake import without_install_label
 from tests.test_auth import do_setup, make_client
 
 HOST = "ping.example.internal"
@@ -363,7 +364,7 @@ async def test_collector_exposes_samples_with_standard_labels(
     store, spec = await collect(engine, config(), site=site)
     status = store.status(spec.instance_id)
     assert status is not None and status.state == "up"
-    text = generate_latest(make_registry(store)).decode()
+    text = without_install_label(generate_latest(make_registry(store)).decode())
     # A site-less instance gets vantage_site="" (absent to Prometheus), never a placeholder.
     labels = (
         f'vantage_instance="gw-1",vantage_instance_id="{spec.instance_id}",'
@@ -384,7 +385,7 @@ async def test_collector_marks_silent_host_down(
     assert status.error == f"no reply from {HOST} (1 packets sent, ICMP may be blocked)"
     assert status.error == (await run_test()).message  # reads as test_connection does
     assert fake_icmp.sent  # echo requests went out (to the fake socket), none answered
-    text = generate_latest(make_registry(store)).decode()
+    text = without_install_label(generate_latest(make_registry(store)).decode())
     assert "vantage_ping_check_packet_loss_ratio" not in text
     assert 'vantage_instance_up{vantage_instance="gw-1"' in text
 
@@ -461,7 +462,7 @@ async def test_collector_degrades_config_made_invalid_by_upgrade(
     assert good_status is not None and good_status.state == "up"
     # Only the valid instance pinged; the invalid one never reached the network.
     assert len(fake_icmp.opened) == 1
-    text = generate_latest(make_registry(store)).decode()
+    text = without_install_label(generate_latest(make_registry(store)).decode())
     assert 'vantage_ping_check_packets_received{vantage_instance="gw-2"' in text
     assert 'vantage_instance_up{vantage_instance="old-gw"' in text
     assert 'vantage_ping_check_packets_received{vantage_instance="old-gw"' not in text

@@ -60,6 +60,7 @@ from tests.integrations.netfake import (
     http_response,
     make_ctx,
 )
+from tests.promfake import without_install_label
 from tests.test_auth import do_setup, make_client
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -1144,7 +1145,7 @@ async def test_collector_exposes_samples_with_standard_labels(
     store, spec = await collect(engine, cfg(), site=site)
     status = store.status(spec.instance_id)
     assert status is not None and status.state == "up", status
-    text = generate_latest(make_registry(store)).decode()
+    text = without_install_label(generate_latest(make_registry(store)).decode())
     std = (
         f'vantage_instance="pve-1",vantage_instance_id="{spec.instance_id}",'
         f'vantage_integration="proxmox",vantage_site="{label}"'
@@ -1170,7 +1171,7 @@ async def test_collector_marks_bad_token_down(
     status = store.status(spec.instance_id)
     assert status is not None and status.state == "down"
     assert status.error == pve._msg_auth(f"{HOST}:8006")
-    text = generate_latest(make_registry(store)).decode()
+    text = without_install_label(generate_latest(make_registry(store)).decode())
     assert f"{PREFIX}_node_up" not in text
     assert_no_secret(status, text, caplog.text)
 

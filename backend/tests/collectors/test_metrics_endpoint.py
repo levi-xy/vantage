@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 
+from app.core import install
 from app.core.auth import Passwords
 from app.core.config import Settings, normalize_database_url
 from app.core.crypto import SecretBox
@@ -117,17 +118,23 @@ def test_polls_end_to_end(engine: Engine, db_url: str) -> None:
                 break
             time.sleep(0.02)
 
+    # Labels are exposed sorted: vantage_install comes before vantage_instance.
+    mine = f'vantage_install="{install.current_id()}"'
     std_good = (
-        f'vantage_instance="nas-1",vantage_instance_id="{good}",'
+        f'{mine},vantage_instance="nas-1",vantage_instance_id="{good}",'
         'vantage_integration="poller",vantage_site="lab"'
     )
     std_bad = (
-        f'vantage_instance="fw-1",vantage_instance_id="{bad}",'
+        f'{mine},vantage_instance="fw-1",vantage_instance_id="{bad}",'
         'vantage_integration="raiser",vantage_site="lab"'
     )
     assert f"vantage_instance_up{{{std_good}}} 1.0" in text
     assert f"vantage_instance_up{{{std_bad}}} 0.0" in text
     assert f'vantage_poller_temp{{s="cpu",{std_good}}} 40.0' in text
+    # Every sample carries the install label, the build info included.
+    assert f'vantage_build_info{{commit="",{mine},version="dev"}} 1.0' in text
+    samples = [ln for ln in text.splitlines() if ln and not ln.startswith("#")]
+    assert samples and all(mine in ln for ln in samples)
     assert DEVICE_TOKEN not in text
     assert PROM_TOKEN not in text
     assert TEST_MASTER_KEY.decode() not in text

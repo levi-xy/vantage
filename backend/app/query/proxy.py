@@ -22,7 +22,9 @@ import httpcore
 import httpx
 from pydantic import BaseModel, Field
 
+from app.core import install
 from app.core.net_guard import NetGuard, NetGuardError, NetGuardResolveError, guarded_http_client
+from app.query import scope as query_scope
 
 log = logging.getLogger(__name__)
 
@@ -166,8 +168,12 @@ class PrometheusClient:
     """Calls the configured Prometheus. Build it with :meth:`guarded`; tests may pass
     any ``httpx.AsyncClient`` (e.g. one on an ``httpx.MockTransport``)."""
 
-    def __init__(self, client: httpx.AsyncClient) -> None:
+    def __init__(
+        self, client: httpx.AsyncClient, scope: query_scope.QueryScope | None = None
+    ) -> None:
         self._client = client
+        # None: this install's (app.core.install), read at every query.
+        self._scope = scope
         self._version_cache: tuple[float, str | None] | None = None
 
     @classmethod
@@ -177,6 +183,7 @@ class PrometheusClient:
         guard: NetGuard,
         *,
         network_backend: httpcore.AsyncNetworkBackend | None = None,
+        scope: query_scope.QueryScope | None = None,
     ) -> "PrometheusClient":
         """The production client: every connection is checked by ``guard``."""
         return cls(
@@ -185,7 +192,8 @@ class PrometheusClient:
                 base_url=base_url,
                 total_timeout=TOTAL_TIMEOUT_SECONDS,
                 network_backend=network_backend,
-            )
+            ),
+            scope,
         )
 
     async def aclose(self) -> None:
@@ -215,8 +223,11 @@ class PrometheusClient:
 
     async def query(self, req: QueryRequest, *, max_series: int = MAX_SERIES) -> QueryResult:
         """Run ``req`` within the budget. ``max_series`` may be raised for the backend's
-        own queries only (e.g. seeding at startup), never from a request."""
-        form = check_budget(req)
+        own queries only (e.g. seeding at startup), never from a request.
+
+        Every query is scoped to this install first (:mod:`app.query.scope`): none reaches
+        Prometheus unscoped, and one that can't be scoped is refused."""
+        form = check_budget(req.model_copy(update={"query": self._scoped(req.query)}))
         path = "/api/v1/query_range" if "start" in form else "/api/v1/query"
         form["timeout"] = f"{QUERY_TIMEOUT_SECONDS}s"
         # One more than allowed, so "too many" is detectable without a huge answer.
@@ -248,6 +259,20 @@ class PrometheusClient:
             )
             raise QueryError(503, "metrics backend unavailable", reason) from None
         return _parse(status_code, body, max_series)
+
+    def _scoped(self, query: str) -> str:
+        scope = self._scope
+        if scope is None:
+            install_id = install.current_id()
+            if install_id is None:  # fail closed: never send a query without a scope
+                log.error("a query was refused: the install id isn't loaded")
+                raise QueryError(503, "metrics backend unavailable")
+            scope = query_scope.QueryScope(install_id, install.current_mode())
+        try:
+            return query_scope.rewrite(query, scope)
+        except query_scope.Unsupported as exc:
+            log.info("query refused, it can't be scoped: %s", exc)
+            raise QueryError(400, "query not supported") from None
 
     async def _post(self, path: str, form: dict[str, str]) -> tuple[int, bytes]:
         async with self._client.stream("POST", path, data=form) as response:

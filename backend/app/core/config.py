@@ -9,6 +9,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import Literal
 from urllib.parse import urlsplit
 
 from app.core.client_address import IPNetwork, TrustedProxiesError, parse_trusted_proxies
@@ -51,6 +52,10 @@ class Settings:
     # Where the /query proxy reaches Prometheus (VANTAGE_PROMETHEUS_URL). Server config only:
     # no request can change it.
     prometheus_url: str = DEFAULT_PROMETHEUS_URL
+    # ``bundled`` or ``external`` (VANTAGE_PROMETHEUS_MODE): decides how queries are scoped
+    # to this install (app.query.scope). Unset, it follows the URL: ``bundled`` only for the
+    # bundled default (http://prometheus:9090), any other URL is ``external``.
+    prometheus_mode: Literal["bundled", "external"] = "bundled"
     # Host names (optionally host:port) the dashboard is reached by (VANTAGE_PUBLIC_HOSTS).
     # Empty = any Host. When set, /api/* and /ws requests with another Host are refused,
     # which stops DNS-rebinding attacks from a web page the admin visits.
@@ -175,6 +180,28 @@ def _validate_retention(raw: str) -> str:
     return value
 
 
+def _is_bundled_url(url: str) -> bool:
+    """Whether ``url`` (already validated) is the bundled Prometheus' default address."""
+    parts, default = urlsplit(url), urlsplit(DEFAULT_PROMETHEUS_URL)
+    return (
+        parts.scheme.lower() == default.scheme
+        and parts.hostname == default.hostname
+        and parts.port == default.port
+        and parts.path in ("", "/")
+    )
+
+
+def _validate_prometheus_mode(raw: str, url: str) -> Literal["bundled", "external"]:
+    """The explicit ``VANTAGE_PROMETHEUS_MODE``, else derived from the URL: anything but the
+    bundled default address is someone else's Prometheus, matched exactly."""
+    value = raw.strip().lower() or ("bundled" if _is_bundled_url(url) else "external")
+    if value == "bundled":
+        return "bundled"
+    if value == "external":
+        return "external"
+    raise ConfigError("VANTAGE_PROMETHEUS_MODE must be bundled or external")
+
+
 def _validate_log_level(raw: str) -> str:
     value = raw.strip().upper() or DEFAULT_LOG_LEVEL
     if value not in LOG_LEVELS:
@@ -202,6 +229,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     except TrustedProxiesError as exc:
         raise ConfigError(str(exc)) from None
     prometheus_url = _validate_prometheus_url(env.get("VANTAGE_PROMETHEUS_URL", ""))
+    prometheus_mode = _validate_prometheus_mode(
+        env.get("VANTAGE_PROMETHEUS_MODE", ""), prometheus_url
+    )
     public_hosts = _parse_public_hosts(env.get("VANTAGE_PUBLIC_HOSTS", ""))
     prometheus_retention = _validate_retention(env.get("VANTAGE_PROMETHEUS_RETENTION", ""))
     down_after_failed_cycles = _parse_int(
@@ -220,6 +250,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         session_idle_minutes=session_idle_minutes,
         trusted_proxies=trusted_proxies,
         prometheus_url=prometheus_url,
+        prometheus_mode=prometheus_mode,
         public_hosts=public_hosts,
         prometheus_retention=prometheus_retention,
         down_after_failed_cycles=down_after_failed_cycles,

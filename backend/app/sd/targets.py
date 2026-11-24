@@ -5,7 +5,8 @@ Returns every enabled instance's ``scrape_targets()`` in the HTTP SD format::
     [{"targets": ["10.0.0.5:9100"],
       "labels": {"__metrics_path__": "/metrics", "__scheme__": "http",
                  "vantage_instance_id": "...", "vantage_instance": "nas-1",
-                 "vantage_integration": "linux_host", "vantage_site": "lab"}}]
+                 "vantage_integration": "linux_host", "vantage_site": "lab",
+                 "vantage_install": "<install id>"}}]
 
 Only Prometheus calls this, with the bearer token (:mod:`app.core.prometheus_auth`).
 
@@ -17,7 +18,8 @@ now, or a cloud host over plain http.
 One broken instance (unknown type, undecryptable secrets, a config that no longer
 validates, a raising ``scrape_targets``, a malformed target) is left out and logged by
 id and reason only; it never takes the others down. Nothing from the config is logged
-or returned except the target addresses and the four standard labels.
+or returned except the target addresses and the standard labels (the four of Contract 1
+and ``vantage_install``).
 """
 
 import asyncio
@@ -27,12 +29,13 @@ from dataclasses import dataclass
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import DbDep
+from app.core import install
 from app.core.crypto import DecryptionError, SecretBox
 from app.core.net_guard import NetGuard, NetGuardError
 from app.core.prometheus_auth import PrometheusAuthDep
@@ -166,8 +169,9 @@ async def _allowed(candidate: _Candidate) -> bool:
     return True
 
 
-def _group(candidates: list[_Candidate]) -> list[TargetGroup]:
-    """One group per instance, metrics path and scheme, in first-seen order."""
+def _group(candidates: list[_Candidate], install_id: str) -> list[TargetGroup]:
+    """One group per instance, metrics path and scheme, in first-seen order. Every group
+    carries ``vantage_install`` last, so nothing can override it."""
     groups: dict[tuple[uuid.UUID, str, str], TargetGroup] = {}
     for c in candidates:
         key = (c.instance_id, c.target.metrics_path, c.target.scheme)
@@ -179,6 +183,7 @@ def _group(candidates: list[_Candidate]) -> list[TargetGroup]:
                     "__metrics_path__": c.target.metrics_path,
                     "__scheme__": c.target.scheme,
                     **c.labels,
+                    install.LABEL: install_id,
                 },
             )
         if c.target.address not in group.targets:
@@ -187,13 +192,20 @@ def _group(candidates: list[_Candidate]) -> list[TargetGroup]:
 
 
 async def discover(
-    db: Session, registry: Registry, box: SecretBox, factory: ic.NetGuardFactory
+    db: Session,
+    registry: Registry,
+    box: SecretBox,
+    factory: ic.NetGuardFactory,
+    install_id: str | None = None,
 ) -> list[TargetGroup]:
     """Target groups for every enabled instance, ordered by instance name."""
+    install_id = install_id or install.current_id()
+    if install_id is None:  # never hand out targets without the install label
+        raise RuntimeError("the install id isn't loaded")
     rows = db.scalars(select(Instance).where(Instance.enabled).order_by(Instance.name))
     candidates = [c for row in rows for c in _instance_candidates(row, registry, box, factory)]
     allowed = await asyncio.gather(*(_allowed(c) for c in candidates))
-    return _group([c for c, ok in zip(candidates, allowed, strict=True) if ok])
+    return _group([c for c, ok in zip(candidates, allowed, strict=True) if ok], install_id)
 
 
 def _state(request: Request) -> tuple[Registry, SecretBox, ic.NetGuardFactory]:
@@ -209,4 +221,6 @@ async def sd_targets(
     _auth: PrometheusAuthDep, db: DbDep, state: StateDep, response: Response
 ) -> list[TargetGroup]:
     response.headers["Cache-Control"] = "no-store"
+    if install.current_id() is None:
+        raise HTTPException(503, "not ready")
     return await discover(db, *state)

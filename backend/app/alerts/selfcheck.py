@@ -7,8 +7,8 @@ Failure                Detected by                               Threshold
 =====================  ========================================  ===============================
 Prometheus unreachable the evaluator's per-tick probe            2 min of failed probes in a row
                        (connection refused, timeout, HTTP 5xx)
-Metrics not collected  each tick: the age of the newest           newest sample older than 2 min,
-                       ``up{job="vantage-backend"} == 1``         or none for 2 min
+Metrics not collected  each tick: the age of this install's       newest sample older than 2 min,
+                       newest ``vantage_build_info`` sample       or none for 2 min
 Evaluation stopped     :class:`Watchdog`: the evaluator's last   no progress for 3 x the
                        progress (a query answered or failed, a   interval (90 s); restarts it
                        tick finished)                            once
@@ -42,6 +42,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from enum import StrEnum
+from typing import Literal
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -75,10 +76,21 @@ WATCHDOG_SECONDS = 15.0
 RESTART_GRACE_SECONDS = 5.0
 # /healthz counts stuck notifications at most this often (it is unauthenticated).
 STUCK_CACHE_SECONDS = 5.0
-BACKEND_JOB = "vantage-backend"
-# Seconds since Prometheus last scraped Vantage successfully (computed by Prometheus, so
-# the two clocks needn't agree); empty when there is no recent successful scrape.
-METRICS_QUERY = f'min(time() - timestamp(up{{job="{BACKEND_JOB}"}} == 1))'
+# Seconds since Prometheus last stored this install's ``vantage_build_info`` (computed by
+# Prometheus, so the two clocks needn't agree); empty when there is no recent sample. The
+# query is scoped to the install like every other, so the scrape job's name doesn't matter.
+METRICS_QUERY = "min(time() - timestamp(vantage_build_info))"
+# Only when the age is empty: whether this install's build info was stored within the last
+# hour (``stale``: it was; ``never_seen``: it wasn't).
+SEEN_QUERY = "count(last_over_time(vantage_build_info[1h]))"
+# Why ``metrics_not_collected`` fires: fixed codes, turned into a cause and a fix by the UI.
+MetricsReason = Literal["never_seen", "stale"]
+METRICS_REASON_TEXT: dict[MetricsReason, str] = {
+    "never_seen": "never seen: check Prometheus's scrape job for Vantage's /metrics, its token "
+    "and that nothing relabels vantage_ labels",
+    "stale": "scraping stopped: check that Prometheus can still reach Vantage and the token "
+    "is unchanged",
+}
 
 TITLES = {
     SystemKind.PROMETHEUS_UNREACHABLE: "Prometheus unreachable",
@@ -167,6 +179,7 @@ class SelfMonitor:
         self._reachable_since: datetime | None = None
         self.metrics_bad_since: datetime | None = None
         self._metrics_age: float | None = None
+        self._metrics_seen = False
         self._metrics_known = False
         self._started_at: datetime | None = None
         self.last_tick: datetime | None = None
@@ -221,12 +234,16 @@ class SelfMonitor:
         since = self.unreachable_since
         return since is not None and now - since >= UNREACHABLE_AFTER
 
-    def record_metrics(self, age: float | None, now: datetime, *, known: bool = True) -> None:
-        """``age``: seconds since Prometheus last scraped Vantage, None if no recent
-        scrape. ``known=False``: the check itself failed; nothing changes."""
+    def record_metrics(
+        self, age: float | None, now: datetime, *, known: bool = True, seen: bool = True
+    ) -> None:
+        """``age``: seconds since Prometheus last stored this install's build info, None
+        if no recent sample (``seen``: was there one in the last hour). ``known=False``:
+        the check itself failed; nothing changes."""
         if not known:
             return
         self._metrics_known = True
+        self._metrics_seen = age is not None or seen
         self._metrics_age = age
         if age is not None and age <= METRICS_STALE_AFTER.total_seconds():
             self.metrics_bad_since = None
@@ -243,6 +260,11 @@ class SelfMonitor:
             return age > METRICS_STALE_AFTER.total_seconds()
         since = self.metrics_bad_since
         return since is not None and now - since >= METRICS_STALE_AFTER
+
+    def metrics_reason(self) -> MetricsReason:
+        """Why metrics aren't collected: never seen for this install, or seen before and
+        now older than 2 minutes."""
+        return "stale" if self._metrics_seen else "never_seen"
 
     def metrics_ok(self) -> bool:
         """The last check saw a recent scrape (what ends the system alert)."""

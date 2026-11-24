@@ -14,8 +14,9 @@ from sqlalchemy.orm import Session
 from app.alerts import selfcheck
 from app.alerts.delivery import DeliveryDispatcher
 from app.alerts.evaluator import AlertEvaluator
-from app.alerts.selfcheck import METRICS_QUERY, Health, SelfMonitor, Watchdog
+from app.alerts.selfcheck import METRICS_QUERY, SEEN_QUERY, Health, SelfMonitor, Watchdog
 from app.alerts.templates import TEMPLATES
+from app.api.alerts import _system_reason
 from app.api.deps import CSRF_HEADER
 from app.collectors.hub import EventHub
 from app.core.crypto import SecretBox
@@ -268,6 +269,51 @@ async def test_metrics_not_collected(engine: Engine, db: Session, prom: FakeProm
     assert w.alert().state == AlertState.FIRING
     assert w.rows()[-1].text.startswith("RESOLVED: Metrics collected again after ")
     assert w.rows()[-1].text.endswith("1 alert still firing.")
+
+
+@pytest.mark.parametrize(
+    ("seen", "reason", "cause"),
+    [
+        ([], "never_seen", "never seen: check Prometheus's scrape job"),
+        ([({}, "1")], "stale", "scraping stopped: check that Prometheus can still reach"),
+    ],
+)
+async def test_metrics_not_collected_says_why(
+    engine: Engine,
+    db: Session,
+    prom: FakeProm,
+    seen: list[tuple[dict[str, str], str]],
+    reason: str,
+    cause: str,
+) -> None:
+    w = SW(engine, db, prom)
+    w.states[INSTANCE_UUID] = "up"
+    await w.fire()
+    prom.answers[METRICS_QUERY] = []  # no recent build info for this install
+    prom.answers[SEEN_QUERY] = seen  # ... but one within the last hour, or none at all
+    for _ in range(5):
+        await w.tick(30)
+    (system,) = w.systems()
+    assert system.system_kind == "metrics_not_collected"
+    assert cause in w.rows()[1].text  # one line in the Telegram message, no address
+    monitor = w.ev.monitor
+    assert monitor.metrics_reason() == reason
+    assert _system_reason(monitor, "metrics_not_collected") == reason
+    assert _system_reason(monitor, "evaluator_stalled") is None
+
+
+async def test_a_renamed_scrape_job_still_counts_as_collected(
+    engine: Engine, db: Session, prom: FakeProm
+) -> None:
+    """The check reads this install's ``vantage_build_info``, whatever job it was scraped
+    under: the query names no job, and a fresh sample keeps the alert from firing."""
+    assert "job" not in METRICS_QUERY and "job" not in SEEN_QUERY
+    w = SW(engine, db, prom)
+    prom.answers[METRICS_QUERY] = [({}, "4")]  # e.g. scraped under job="my-vantage"
+    for _ in range(8):
+        await w.tick(30)
+    assert w.systems() == []
+    assert not any("vantage-backend" in q for q in prom.queries)
 
 
 async def test_old_scrape_right_after_prometheus_returns_is_not_an_alarm(
