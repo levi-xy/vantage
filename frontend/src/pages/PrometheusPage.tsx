@@ -150,10 +150,10 @@ function AuthForm({ data }: { data: PrometheusSettings }) {
           </p>
         </div>
       )}
-      {kind === "basic" && plainHttp && (
+      {kind !== "none" && plainHttp && (
         <p role="note" className={alertInfo}>
-          This Prometheus address uses plain http://, so the password travels unencrypted. Use
-          https:// if you can.
+          This Prometheus address uses plain http://, so the{" "}
+          {kind === "basic" ? "password" : "token"} travels unencrypted. Use https:// if you can.
         </p>
       )}
       {save.isError && (

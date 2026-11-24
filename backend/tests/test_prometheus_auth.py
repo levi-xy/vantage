@@ -5,6 +5,7 @@ line; a stored secret that can't be read stops all queries instead of sending a
 half-configured request; rotation and restore treat the secret like every other one.
 """
 
+import asyncio
 import base64
 import logging
 from collections.abc import Iterator
@@ -16,13 +17,15 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
 
 from app.api.deps import CSRF_HEADER
-from app.core import key_check
+from app.core import install, key_check
 from app.core.crypto import SecretBox
 from app.core.db import make_session_factory
 from app.models import AuditLog, Role, Setting
 from app.query import auth as pa
 from app.query.proxy import PrometheusClient, QueryError, QueryRequest
+from app.query.scope import QueryScope
 from tests.conftest import TEST_MASTER_KEY
+from tests.promfake import TEST_INSTALL_ID, query_of
 from tests.test_auth import add_user, do_setup, login, make_client
 from tests.test_key_check import OTHER_KEY, add_instance, run_cli, seal_with
 
@@ -38,10 +41,13 @@ SECRETS = (PASSWORD, TOKEN)
 class FakePrometheus:
     def __init__(self) -> None:
         self.seen: list[dict[str, str]] = []
+        self.queries: list[str] = []
         self.status = 200
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.seen.append(dict(request.headers))
+        if request.method == "POST":
+            self.queries.append(query_of(request))
         if self.status != 200:
             return httpx.Response(self.status, text="denied")
         body = {"status": "success", "data": {"resultType": "scalar", "result": [1, "1"]}}
@@ -157,6 +163,41 @@ def test_headers_for_both_clients_and_no_restart(admin: TestClient, prom: FakePr
     put(admin, kind="none")
     probe(admin)
     assert "authorization" not in prom.seen[-1]
+
+
+def test_a_scoped_query_carries_the_auth_header() -> None:
+    """The scope rewriter and the auth header meet in one request: the query that leaves
+    the client is scoped to the install AND carries the credentials."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        body = {"status": "success", "data": {"resultType": "vector", "result": []}}
+        return httpx.Response(200, json=body)
+
+    holder = pa.PrometheusAuth()
+    holder.set({"Authorization": f"Bearer {TOKEN}"})
+    client = PrometheusClient(
+        httpx.AsyncClient(base_url=URL, transport=httpx.MockTransport(handler)),
+        QueryScope(TEST_INSTALL_ID, "bundled"),
+        auth=holder,
+    )
+    asyncio.run(client.query(QueryRequest(query='up{job="x"}')))
+    assert len(seen) == 1
+    assert seen[0].headers["authorization"] == f"Bearer {TOKEN}"
+    assert query_of(seen[0]) == f'up{{job="x",vantage_install=~"{TEST_INSTALL_ID}|"}}'
+
+
+def test_the_apps_clients_scope_and_authenticate_every_query(
+    admin: TestClient, prom: FakePrometheus
+) -> None:
+    """The same through the running app: both clients, this install's id, saved auth."""
+    assert put(admin, kind="basic", username=USER, secret=PASSWORD).status_code == 200
+    for which in ("prometheus", "alert_prometheus"):
+        client: PrometheusClient = getattr(admin.app.state, which)  # type: ignore[attr-defined]
+        asyncio.run(client.query(QueryRequest(query="vantage_build_info")))
+        assert prom.seen[-1]["authorization"] == basic(USER, PASSWORD)
+        assert f'vantage_install=~"{install.current_id()}|"' in prom.queries[-1]
 
 
 def test_401_is_auth_failed_and_the_test_button_says_so(

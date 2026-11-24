@@ -41,7 +41,9 @@ describe("settings: prometheus", () => {
     expect(screen.getByText("external")).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("Authentication"), { target: { value: "basic" } });
-    expect(screen.getByText(/plain http:\/\//)).toBeInTheDocument();
+    expect(screen.getByText(/plain http:\/\//)).toHaveTextContent(
+      "the password travels unencrypted",
+    );
     expect(screen.getByTestId("secret-state")).toHaveTextContent("not set");
     fireEvent.change(screen.getByLabelText("User name"), { target: { value: "example-user" } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: FAKE_SECRET } });
@@ -56,6 +58,23 @@ describe("settings: prometheus", () => {
     await waitFor(() => expect(screen.getByTestId("secret-state")).toHaveTextContent("set"));
     expect((screen.getByLabelText("Password") as HTMLInputElement).value).toBe("");
     expect(document.body.innerHTML).not.toContain(FAKE_SECRET);
+  });
+
+  it("warns about plain http:// for a bearer token too, and not over https://", async () => {
+    renderApp("/settings/prometheus", promBackend());
+    await screen.findByTestId("prom-url");
+    expect(screen.queryByText(/plain http:\/\//)).not.toBeInTheDocument(); // no auth yet
+    fireEvent.change(screen.getByLabelText("Authentication"), { target: { value: "bearer" } });
+    expect(screen.getByText(/plain http:\/\//)).toHaveTextContent("the token travels unencrypted");
+  });
+
+  it("shows no plain-http warning for an https:// address", async () => {
+    renderApp("/settings/prometheus", promBackend("https://192.0.2.10:9090"));
+    await screen.findByTestId("prom-url");
+    for (const kind of ["basic", "bearer"]) {
+      fireEvent.change(screen.getByLabelText("Authentication"), { target: { value: kind } });
+      expect(screen.queryByText(/plain http:\/\//)).not.toBeInTheDocument();
+    }
   });
 
   it("tests the saved settings and explains a refusal", async () => {

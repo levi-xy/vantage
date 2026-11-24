@@ -16,7 +16,6 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, m
 from app.api.deps import AdminDep, Authenticated, DbDep, SettingsDep
 from app.api.instances import SecretBoxDep
 from app.core import audit, key_check
-from app.core.config import DEFAULT_PROMETHEUS_URL
 from app.core.crypto import SecretBox
 from app.models import Setting
 from app.query import auth as pa
@@ -116,11 +115,10 @@ def _unreadable(db: DbDep, box: SecretBox) -> bool:
 
 
 def _view(request: Request, stored: pa.StoredAuth, unreadable: bool = False) -> PrometheusView:
-    url = request.app.state.settings.prometheus_url
+    settings = request.app.state.settings
     return PrometheusView(
-        url=url,
-        # TODO(maintainer): read VANTAGE_PROMETHEUS_MODE once PR A/C add it.
-        mode="bundled" if url == DEFAULT_PROMETHEUS_URL else "external",
+        url=settings.prometheus_url,
+        mode=settings.prometheus_mode,
         auth=AuthOut(
             kind=stored.kind,
             username=stored.username,
